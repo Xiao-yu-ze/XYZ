@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PVZ2 Auto</string>
+
+    <string name="accessibility_service_label">PVZ2 Auto (fallback input)</string>
+    <string name="accessibility_service_description">Used only when Shizuku is unavailable: injects taps and swipes for the PVZ2 automation loop.</string>
+
+    <string name="notification_channel_name">Automation loop</string>
+    <string name="notification_channel_description">Shown while the PVZ2 automation loop is running.</string>
+    <string name="notification_title">PVZ2 Auto is running</string>
+
+    <string name="overlay_title">PVZ2 Auto</string>
+    <string name="overlay_start">Start</string>
+    <string name="overlay_stop">Stop</string>
+</resources>

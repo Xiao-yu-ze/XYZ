@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvShizukuState"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnShizuku"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="1. Authorise Shizuku" />
+
+        <Button
+            android:id="@+id/btnOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="2. Allow floating panel" />
+
+        <Button
+            android:id="@+id/btnAccessibility"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="3. Enable fallback accessibility service" />
+
+        <Button
+            android:id="@+id/btnNotifications"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="4. Allow notifications (Android 13+)" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginVertical="16dp"
+            android:background="#33888888" />
+
+        <Button
+            android:id="@+id/btnShowOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Show floating panel" />
+
+        <Button
+            android:id="@+id/btnStartShizuku"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Start (Shizuku)" />
+
+        <Button
+            android:id="@+id/btnStartFallback"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Start (MediaProjection fallback)" />
+
+        <Button
+            android:id="@+id/btnStop"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Stop" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginVertical="16dp"
+            android:background="#33888888" />
+
+        <Button
+            android:id="@+id/btnGrabFrame"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grab one screenshot (to crop templates from)" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:textSize="12sp"
+            android:text="Screenshots are saved to this app's external files dir / shots. Crop the 720p-relative regions you want to match and drop the PNGs into app/src/main/assets/templates/." />
+
+    </LinearLayout>
+</ScrollView>

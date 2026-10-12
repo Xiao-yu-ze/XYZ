@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ============================ Permissions ============================ -->
+
+    <!-- Lets the Shizuku app hand our process the Shizuku binder.
+         Declared automatically by the :provider AAR, repeated here for clarity. -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
+    <!-- Draggable always-on-top control panel -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- The automation loop runs inside a foreground service.
+         Android 14 requires one permission per declared foreground service type. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+    <!-- API 33+: the foreground service notification is only shown if this is granted -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Pvz2Auto">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Hosts the capture -> match -> tap loop.
+
+             android:foregroundServiceType lists every type this service may ever be
+             started with. At runtime startForeground() is called with exactly one of them:
+
+               specialUse      -> Shizuku path (no MediaProjection session involved)
+               mediaProjection -> fallback path, started only after the user granted
+                                  createScreenCaptureIntent()
+
+             specialUse additionally requires the <property> below
+             (android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE). -->
+        <service
+            android:name=".service.AutomationService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse|mediaProjection">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="continuous_on_device_screen_automation_loop" />
+        </service>
+
+        <!-- Fallback touch injection, used only when Shizuku is unavailable.
+             android:canPerformGestures is enabled in res/xml/accessibility_service_config.xml. -->
+        <service
+            android:name=".fallback.Pvz2AccessibilityService"
+            android:exported="true"
+            android:label="@string/accessibility_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!-- Official Shizuku registration. Authority must be "${applicationId}.shizuku"
+             and the INTERACT_ACROSS_USERS_FULL permission keeps other apps out.
+             See Shizuku-API README -> "Acquire the Binder" -> "Shizuku". -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!-- NOTE: com.pvz2.auto.shizuku.Pvz2UserService is intentionally NOT declared here.
+             Shizuku starts it inside its own app_process (as shell/root), it is not an
+             android.app.Service and is never bound through the ActivityManager. -->
+    </application>
+
+</manifest>

@@ -1,0 +1,29 @@
+# ---- Android / Gradle build output ----
+*.iml
+.gradle/
+.kotlin/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# ---- Local machine configuration (never commit) ----
+local.properties
+.idea/
+.DS_Store
+
+# ---- Scratch / heavy local-only directories ----
+# _toolchain holds the JDK + Android SDK downloaded for headless builds (~1.9 GB)
+_toolchain/
+# _probe holds adb screenshots and throwaway device scripts
+_probe/
+_hosts-backup.txt
+
+# ---- MaaPVZ assets are NOT committed (see tools/sync-maapvz-assets.ps1) ----
+# The template images are screenshots of a commercial game whose artwork remains the
+# property of the game publisher; MaaPVZ's own README grants them non-commercial use
+# only. Rather than redistribute them, run the sync script to copy them out of a local
+# MaaPVZ install. The OCR models are large binaries for the same reason.
+app/src/main/assets/coords.json
+app/src/main/assets/maapvz/
+app/src/main/assets/ocr/

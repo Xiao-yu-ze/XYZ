@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Adaptive-icon foreground: keep artwork inside the safe 72x72 centre zone. -->
+    <group android:translateX="30" android:translateY="30">
+        <path
+            android:fillColor="#FFD54F"
+            android:pathData="M24,2A22,22 0 1,0 46,24A22,22 0 0,0 24,2zM24,8A16,16 0 1,1 8,24A16,16 0 0,1 24,8z" />
+        <path
+            android:fillColor="#FFF59D"
+            android:pathData="M24,14A10,10 0 1,0 34,24A10,10 0 0,0 24,14z" />
+    </group>
+</vector>
