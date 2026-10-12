@@ -182,6 +182,45 @@ BUILD SUCCESSFUL in 46s
 
 ---
 
+## 运行时验证状态（Shizuku 全链路，真机实测）
+
+编译通过不等于能用，所以整条权限链路在 MuMu 模拟器（Android 12 / x86_64 / 1280×720）上实测过。
+**两种权限身份都验证了**，因为目标用户是没有 root 的普通手机：
+
+| 环节 | root 路线 (uid 0) | **ADB 路线 (uid 2000，普通手机)** |
+|---|---|---|
+| Shizuku 服务端进程 | `root shizuku_server` | **`shell shizuku_server`** |
+| 我们的 UserService 进程 | `root com.pvz2.auto:pvz2` | **`shell com.pvz2.auto:pvz2`** |
+| binder 送达 | ✅ `ShizukuProvider: binder received` | ✅ |
+| 权限申请弹窗 | ✅「要允许PVZ2 Auto使用 Shizuku吗？」 | ✅ |
+| 授权回调 | ✅ `dispatchPermissionConfirmationResult allowed=true` | ✅ |
+| App 侧状态 | `Shizuku: ready (uid 0)` | **`Shizuku: ready (uid 2000)`** |
+| UserService 绑定 | ✅ `user service connected` | ✅ |
+| **特权截图** | ✅ | ✅ 48009 字节 PNG，1280×720 |
+| **`input tap`** | ✅ | ✅ |
+| 主循环 | ✅ `Running @ 1280x720` | ✅ `Running @ 1280x720` |
+
+**结论：核心功能不需要 root。** `screencap`、`input`、`wm size` 本来就是 `shell` 自带的能力，
+我们只用了这三样。root 与否只影响「读其他应用私有目录」这类我们不需要的能力。
+
+### 关键实现点（都是实测踩出来的）
+
+1. **`Shizuku.newProcess` 在 API 13 是 `private`**，官方 README 明确要求改用 `UserService`。
+   所以 `Pvz2UserService` 跑在 Shizuku 的 `app_process` 里，通过 AIDL 通信。
+2. **`UserServiceArgs` 必须调 `processNameSuffix()`**，否则 `forAdd()` 里的
+   `Objects.requireNonNull(processName)` 直接 NPE。
+3. **截图走 `ParcelFileDescriptor` 管道**，不是 `byte[]` —— Binder 事务上限约 1 MB，
+   全分辨率 PNG 会 `TransactionTooLargeException`；且拷贝必须在**独立线程**做，
+   因为 pipe 缓冲区只有 64 KB，同步拷贝会在 Binder 调用里死锁。
+4. **启动 Shizuku 服务端的参数顺序有坑**：`-Dshizuku.library.path` 必须放在
+   `/system/bin` **前面**，放后面会被 `app_process` 当成启动类名，
+   报 `ClassNotFoundException: -Dshizuku.library.path=...`。
+
+复现整条链路的开发脚本见 [`tools/shizuku/`](tools/shizuku/README.md)。
+
+---
+
+
 ## 已知限制（未在真机验证）
 
 本机没有 Android 设备，也没有 PVZ2 环境，所以**运行时行为未经验证**：
