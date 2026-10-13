@@ -33,7 +33,14 @@ class NodeGraph(
     private val recognizer: Recognizer,
     private val nodes: Map<String, NodeDef>,
     /** 自定义动作实现表，key = MaaPVZ 注册名（JobSetLoad / BatchSwipe / ...）。 */
-    private val customActions: Map<String, CustomActionHandler> = emptyMap()
+    private val customActions: Map<String, CustomActionHandler> = emptyMap(),
+    /**
+     * true = 只走识别与决策，**不真正点击**，把「本该点哪里」打进日志。
+     *
+     * 首次在真机验证一条新链时务必打开：pipeline、模板、ROI、坐标任何一处错了，
+     * 干跑都能看出来，而不会在游戏里乱点。
+     */
+    private val dryRun: Boolean = false
 ) {
 
     /** 每个节点在本轮任务里被命中的次数，用于 max_hit。 */
@@ -168,8 +175,15 @@ class NodeGraph(
                     val p = adapter.toScreen(lx.toFloat(), ly.toFloat())
                     val px = p.x.roundToInt() + TapJitter.dx()
                     val py = p.y.roundToInt() + TapJitter.dy()
-                    Log.i(TAG, "点击 [${node.name}] 逻辑(${lx.roundToInt()},${ly.roundToInt()}) -> 屏幕($px,$py)")
-                    injector.tap(px.toFloat(), py.toFloat())
+                    if (dryRun) {
+                        Log.i(TAG, "[干跑] 点击 [${node.name}] " +
+                            "命中分数=%.4f 逻辑(${lx.roundToInt()},${ly.roundToInt()}) " +
+                            "-> 本该点屏幕($px,$py)（未执行）".format(hit.score))
+                        BotState.setStatus("[干跑] ${node.name} %.2f".format(hit.score))
+                    } else {
+                        Log.i(TAG, "点击 [${node.name}] 逻辑(${lx.roundToInt()},${ly.roundToInt()}) -> 屏幕($px,$py)")
+                        injector.tap(px.toFloat(), py.toFloat())
+                    }
                     true
                 }
             }
@@ -182,8 +196,13 @@ class NodeGraph(
                     val b = action.end
                     val from = adapter.toScreen(a[0].toFloat(), a[1].toFloat())
                     val to = adapter.toScreen(b[0].toFloat(), b[1].toFloat())
-                    Log.i(TAG, "滑动 [${node.name}] (${a[0]},${a[1]}) -> (${b[0]},${b[1]}) ${action.durationMs}ms")
-                    injector.swipe(from.x, from.y, to.x, to.y, action.durationMs)
+                    if (dryRun) {
+                        Log.i(TAG, "[干跑] 滑动 [${node.name}] " +
+                            "(${a[0]},${a[1]}) -> (${b[0]},${b[1]}) ${action.durationMs}ms（未执行）")
+                    } else {
+                        Log.i(TAG, "滑动 [${node.name}] (${a[0]},${a[1]}) -> (${b[0]},${b[1]}) ${action.durationMs}ms")
+                        injector.swipe(from.x, from.y, to.x, to.y, action.durationMs)
+                    }
                     if (action.endHoldMs > 0) delay(action.endHoldMs)
                     true
                 }

@@ -23,10 +23,19 @@ class CoordTable {
 
     val names: Set<String> get() = points.keys
 
-    /** 从 assets 读取坐标表。解析失败时抛异常，避免后面用空表静默跑错。 */
+    /**
+     * 从 assets 读取坐标表。解析失败时抛异常，避免后面用空表静默跑错。
+     *
+     * **必须显式指定 UTF-8**：坐标表的键名是中文（`种植物_初始化_格子6_3` 等）。
+     * `bufferedReader()` 不带参数时用平台默认编码，在中文 Windows / 部分 ROM 上
+     * 会按 GBK 解码 —— 键名全部变成乱码，`point()` 查表必然抛
+     * 「坐标表中不存在」，而且症状是「表里有这个键但就是找不到」，极难排查。
+     */
     fun load(context: Context, assetPath: String = DEFAULT_ASSET) {
         points.clear()
-        val text = context.assets.open(assetPath).bufferedReader().use { it.readText() }
+        val text = context.assets.open(assetPath)
+            .bufferedReader(Charsets.UTF_8)
+            .use { it.readText() }
         val root = JSONObject(text)
         val keys = root.keys()
         while (keys.hasNext()) {

@@ -25,9 +25,12 @@ import com.pvz2.auto.core.TemplateMatcher
 import com.pvz2.auto.core.TouchInjector
 import com.pvz2.auto.fallback.MediaProjectionCapturer
 import com.pvz2.auto.fallback.Pvz2AccessibilityService
+import com.pvz2.auto.maa.OcrEngine
+import com.pvz2.auto.maa.PipelineRunner
 import com.pvz2.auto.maa.ProbeTargets
 import com.pvz2.auto.maa.RecognitionProbe
 import com.pvz2.auto.maa.Recognizer
+import com.pvz2.auto.maa.VerifyChain
 import com.pvz2.auto.overlay.FloatingWindow
 import com.pvz2.auto.shizuku.ShizukuBridge
 import com.pvz2.auto.shizuku.ShizukuScreenCapturer
@@ -126,6 +129,20 @@ class AutomationService : Service() {
             ACTION_GRAB_FRAME -> scope.launch { grabOneFrame() }
 
             ACTION_PROBE -> scope.launch { runProbe() }
+
+            // 方案 C：识别链验证。干跑（只识别不点）与实跑（会点击）分开两个入口，
+            // 避免误触 —— 第一次上真机必须走干跑。
+            ACTION_VERIFY_DRY -> {
+                startForegroundCompat(mediaProjection = false)
+                showPanel()
+                launchLoop { withBootstrap { runVerifyChain(dryRun = true) } }
+            }
+
+            ACTION_VERIFY_RUN -> {
+                startForegroundCompat(mediaProjection = false)
+                showPanel()
+                launchLoop { withBootstrap { runVerifyChain(dryRun = false) } }
+            }
         }
         // Never restart with a null intent: the loop's parameters live in the intent.
         return START_NOT_STICKY
@@ -215,12 +232,82 @@ class AutomationService : Service() {
         runLoop()
     }
 
+    /**
+     * 旧的「识别到就点」线性循环。
+     *
+     * 保留它是因为 maa/ 那条链还没在真机验证过 —— 删掉等于把唯一跑通过的退路拆了。
+     * 等 pipeline 路径稳定后再删。
+     */
     private suspend fun runLoop() {
         if (!loadMatcher()) return
         val activeCapturer = capturer ?: return
         val activeInjector = injector ?: return
         val activeMatcher = matcher ?: return
         Pvz2Bot(activeCapturer, activeInjector, activeMatcher, Pvz2Tasks.defaultActions()).run()
+    }
+
+    /**
+     * Shizuku 绑定 + 截图后端就绪检查，成功后才执行 [block]。
+     *
+     * 抽出来是因为验证链、干跑、实跑三条路径都要这段前置：绑定 UserService、
+     * 确认特权 shell 真的能响应（`getDisplaySize` 往返是最便宜的端到端证明）。
+     */
+    private suspend fun withBootstrap(block: suspend () -> Unit) {
+        if (!ShizukuBridge.hasPermission()) {
+            fail("需要 Shizuku 权限（用来截图与点击）")
+            return
+        }
+        shizukuClient.bind()
+        val service = shizukuClient.await()
+        if (service == null) {
+            fail("Shizuku UserService 未连接：${shizukuClient.lastError ?: "超时"}")
+            return
+        }
+        val displaySize = runCatching { service.getDisplaySize() }.getOrNull().orEmpty()
+        if (displaySize.isEmpty()) {
+            fail("特权 shell 无响应")
+            return
+        }
+        BotState.setStatus("Shizuku 就绪 ($displaySize)")
+
+        capturer = ShizukuScreenCapturer(shizukuClient)
+        injector = ShizukuTouchInjector(shizukuClient)
+        block()
+    }
+
+    /**
+     * 方案 C：跑无尽挑战入口的**声明式识别链**（不做任何 Custom 动作）。
+     *
+     * 这条链覆盖模板匹配 / 多模板 / OCR 三种识别通道，用于回答
+     * 「识别层在真机上到底准不准」—— 这是决定要不要移植 MaaPVZ 完整引擎的前提。
+     */
+    private suspend fun runVerifyChain(dryRun: Boolean) {
+        if (!OpenCVLoader.initLocal()) {
+            fail("OpenCV 原生库加载失败")
+            return
+        }
+        val activeCapturer = capturer ?: return
+        val activeInjector = injector ?: return
+
+        val recognizer = Recognizer(this)
+        // OCR 加载失败不阻断：模板匹配那两条节点仍然会跑，只是 OCR 节点永远不命中。
+        val ocr = OcrEngine(this).also { it.load() }
+        recognizer.ocr = ocr
+
+        try {
+            BotState.setStatus(if (dryRun) "干跑中（不点击）" else "运行中（会点击）")
+            PipelineRunner(
+                context = this,
+                capturer = activeCapturer,
+                injector = activeInjector,
+                recognizer = recognizer,
+                dryRun = dryRun
+            ).run(VerifyChain.ENTRY)
+            BotState.setStatus("识别链走完（详见日志 PipelineRunner / NodeGraph）")
+        } finally {
+            runCatching { ocr.close() }
+            runCatching { recognizer.release() }
+        }
     }
 
     /**
@@ -422,6 +509,8 @@ class AutomationService : Service() {
         private const val ACTION_START_FALLBACK = "com.pvz2.auto.START_FALLBACK"
         private const val ACTION_GRAB_FRAME = "com.pvz2.auto.GRAB_FRAME"
         private const val ACTION_PROBE = "com.pvz2.auto.PROBE"
+        private const val ACTION_VERIFY_DRY = "com.pvz2.auto.VERIFY_DRY"
+        private const val ACTION_VERIFY_RUN = "com.pvz2.auto.VERIFY_RUN"
 
         private const val EXTRA_RESULT_CODE = "result_code"
         private const val EXTRA_RESULT_DATA = "result_data"
@@ -460,6 +549,22 @@ class AutomationService : Service() {
          */
         fun probe(context: Context) {
             context.startService(intent(context, ACTION_PROBE))
+        }
+
+        /**
+         * 方案 C 干跑：跑识别链但**不点击**，把「本该点哪里」打进日志。
+         * 第一次在真机验证 pipeline 时用这个。
+         *
+         * 走 startForegroundService：这条路径要绑定 UserService 并持续截图，
+         * 是长时间操作，不是一次性只读操作，必须有前台服务保活。
+         */
+        fun verifyDryRun(context: Context) {
+            ContextCompat.startForegroundService(context, intent(context, ACTION_VERIFY_DRY))
+        }
+
+        /** 方案 C 实跑：识别链会**真的点击**。确认干跑日志无误后再用。 */
+        fun verifyRun(context: Context) {
+            ContextCompat.startForegroundService(context, intent(context, ACTION_VERIFY_RUN))
         }
 
         /** `stopService` is always permitted, unlike starting a service from the background. */

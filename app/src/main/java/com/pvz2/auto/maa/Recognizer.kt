@@ -128,25 +128,33 @@ class Recognizer(private val context: Context) {
             val mm = Core.minMaxLoc(result)
             if (mm.maxVal < recognition.threshold) return null
 
-            // maxLoc 是相对 ROI 的最佳对齐左上角，转成 ROI 内的中心再映射回逻辑坐标。
+            // 这里有两套坐标系，务必分清：
+            //   boxX/boxY/centerX/centerY —— **物理像素**（roi 和 maxLoc 都是物理的）
+            //   Hit.box / Hit.centerX/Y   —— **720p 逻辑坐标**（对外统一口径）
             val boxX = roi.x + mm.maxLoc.x
             val boxY = roi.y + mm.maxLoc.y
-            val centerX = boxX + template.width() / 2.0
-            val centerY = boxY + template.height() / 2.0
+            val centerXpx = boxX + template.width() / 2.0
+            val centerYpx = boxY + template.height() / 2.0
 
-            val logical = current.toLogical(centerX.toFloat(), centerY.toFloat())
-            val topLeft = current.toLogical(boxX.toFloat(), boxY.toFloat())
-            val size = template.width().toFloat() * current.scale
-            val sizeY = template.height().toFloat() * current.scale
+            val centerLogical = current.toLogical(centerXpx.toFloat(), centerYpx.toFloat())
+            val topLeftLogical = current.toLogical(boxX.toFloat(), boxY.toFloat())
+
+            // 模板的**逻辑**尺寸。缩放前模板就活在 720p 逻辑空间里，
+            // 所以它的逻辑宽高就是本体的宽高。
+            // （曾写成 template.width() * scale / scale 这种自相抵消的形式，
+            //   结果虽然一样，但两套坐标系混在一行里，改一半就会静默错位。）
+            val logicalWidth = template.width()
+            val logicalHeight = template.height()
 
             return Hit(
                 score = mm.maxVal,
-                centerX = logical.x.toDouble(),
-                centerY = logical.y.toDouble(),
+                centerX = centerLogical.x.toDouble(),
+                centerY = centerLogical.y.toDouble(),
                 box = android.graphics.Rect(
-                    topLeft.x.toInt(), topLeft.y.toInt(),
-                    (topLeft.x + size / current.scale).toInt(),
-                    (topLeft.y + sizeY / current.scale).toInt()
+                    topLeftLogical.x.toInt(),
+                    topLeftLogical.y.toInt(),
+                    (topLeftLogical.x + logicalWidth).toInt(),
+                    (topLeftLogical.y + logicalHeight).toInt()
                 )
             )
         } finally {

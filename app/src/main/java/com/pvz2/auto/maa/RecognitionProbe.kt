@@ -98,9 +98,13 @@ class RecognitionProbe(
 /** 探测用的候选清单：全部来自 MaaPVZ 无尽挑战流程实际引用的模板。 */
 object ProbeTargets {
 
-    /** assets 根目录前缀，素材由 tools/sync-maapvz-assets.ps1 同步进来。 */
-    const val PREFIX = "maapvz/"
-
+    /**
+     * 路径**不加任何前缀**。
+     *
+     * 这些字符串和 pipeline JSON 里写的完全一致，因为 `assets/` 已与 MaaPVZ 的
+     * `resource/image/` 一一对应（见 tools/sync-maapvz-assets.ps1）。
+     * 探测路径与实跑路径共用同一套，避免"探测能过、实跑找不到"的分叉。
+     */
     val ALL: List<String> = listOf(
         // 主界面 / 入口
         "create_yard/竞技.png",
@@ -116,5 +120,5 @@ object ProbeTargets {
         "Endless/out.png",
         "Endless/yes.png",
         "Start_game/叉叉.png"
-    ).map { PREFIX + it }
+    )
 }

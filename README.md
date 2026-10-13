@@ -11,6 +11,20 @@
 
 ---
 
+## 📌 文档导航
+
+| 文档 | 内容 |
+|---|---|
+| **[docs/HANDOFF.md](docs/HANDOFF.md)** | **项目交接文档** —— 每次改动做了什么、验证到什么程度、留下什么坑。接手前先读这个。 |
+| [docs/VERIFY_CHAIN.md](docs/VERIFY_CHAIN.md) | 「方案 C 识别链」的真机验证操作手册（含分数判读表） |
+| [tools/shizuku/README.md](tools/shizuku/README.md) | Shizuku 服务端的启动脚本与踩坑记录 |
+
+> ⚠️ 本 README 描述的是**项目骨架与权限链路**，其中「构建验证状态 / 运行时验证状态」
+> 两节记录的是最初脚手架的真机实测结果。`maa/` 包的开发进展、方案 C 验证、
+> 以及尚未接入主循环的部分，**以 `docs/HANDOFF.md` 为准**。
+
+---
+
 ## ⚠️ 一处必须说明的方案修正
 
 任务清单里写的是「Shizuku + `screencap` 命令 / `input` 命令」，隐含使用

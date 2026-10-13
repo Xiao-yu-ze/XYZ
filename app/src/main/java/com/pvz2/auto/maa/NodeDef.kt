@@ -1,6 +1,7 @@
 package com.pvz2.auto.maa
 
 import android.graphics.Rect
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import org.opencv.core.Mat
@@ -84,7 +85,7 @@ sealed interface Action {
 object PipelineParser {
 
     fun parse(json: String): Map<String, NodeDef> {
-        val root = JSONObject(json)
+        val root = JSONObject(stripJsonComments(json))
         val result = LinkedHashMap<String, NodeDef>()
         val keys = root.keys()
         while (keys.hasNext()) {
@@ -102,6 +103,65 @@ object PipelineParser {
         val merged = LinkedHashMap<String, NodeDef>()
         for (json in jsons) merged.putAll(parse(json))
         return merged
+    }
+
+    /**
+     * 剥掉 `//` 行注释和 `/* */` 块注释。
+     *
+     * **这是必需的，不是可选优化**：MaaPVZ 的 pipeline JSON 里大量使用
+     * `//` 注释写设计说明（`0300Endless_fight.json` 有 40 多行），
+     * Android 的 `org.json.JSONObject` 是严格解析器，遇到注释直接抛
+     * `JSONException`，整个文件作废 → 节点全部消失 → 流程静默跑不起来。
+     *
+     * 实现要点：必须**跳过字符串字面量内部**，否则值里出现的 `//`
+     * （比如 URL `http://...`）会被误当注释起点，把后面的内容全吃掉。
+     */
+    internal fun stripJsonComments(raw: String): String {
+        val out = StringBuilder(raw.length)
+        var i = 0
+        var inString = false
+        var escaped = false
+
+        while (i < raw.length) {
+            val c = raw[i]
+
+            if (inString) {
+                out.append(c)
+                when {
+                    escaped -> escaped = false
+                    c == '\\' -> escaped = true
+                    c == '"' -> inString = false
+                }
+                i++
+                continue
+            }
+
+            when {
+                c == '"' -> {
+                    inString = true
+                    out.append(c)
+                    i++
+                }
+
+                // 行注释：吃到换行（换行保留，避免破坏行号）
+                c == '/' && i + 1 < raw.length && raw[i + 1] == '/' -> {
+                    while (i < raw.length && raw[i] != '\n') i++
+                }
+
+                // 块注释
+                c == '/' && i + 1 < raw.length && raw[i + 1] == '*' -> {
+                    i += 2
+                    while (i + 1 < raw.length && !(raw[i] == '*' && raw[i + 1] == '/')) i++
+                    i = (i + 2).coerceAtMost(raw.length)
+                }
+
+                else -> {
+                    out.append(c)
+                    i++
+                }
+            }
+        }
+        return out.toString()
     }
 
     private fun parseNode(name: String, obj: JSONObject): NodeDef {
@@ -151,7 +211,9 @@ object PipelineParser {
             )
 
             "OCR" -> Recognition.Ocr(
-                // expected 支持字符串或数组
+                // expected 支持字符串或数组；**空数组表示「有任意文字就算命中」**
+                // （MaaPVZ 用它做「这个区域里有没有字」的判断，例如无尽_切换编队序号）。
+                // optStringList 对空数组返回空列表，语义正好对应，不需要额外处理。
                 expected = params.optStringList("expected"),
                 roi = roi,
                 threshold = params.optDouble("threshold", 0.3)
@@ -165,6 +227,8 @@ object PipelineParser {
                 count = params.optInt("count", 1)
             )
 
+            // any_of 里的每一项可能是 v2（type+param）也可能是 v1（扁平），
+            // parseRecognition 两者都认，所以直接递归即可。
             "Or" -> Recognition.AnyOf(
                 params.optJSONArray("any_of")?.let { arr ->
                     (0 until arr.length()).mapNotNull { i ->
@@ -177,8 +241,13 @@ object PipelineParser {
             "DirectHit" -> Recognition.DirectHit
 
             else -> {
-                // 不支持的类型退化成 DirectHit 会静默改变行为，宁可当未命中处理。
-                Recognition.DirectHit
+                // ⚠️ 不要退化成 DirectHit：DirectHit 等价于「永远命中」，
+                // 一个我们不支持的识别类型会立刻被当成命中，然后执行动作、
+                // 跳到一个完全错误的节点 —— 这比「不命中」危险得多。
+                // 用永假的识别（阈值 2.0 在 TM_CCOEFF_NORMED 下不可能达到）
+                // 表达「这个节点我们跑不了」，行为上等于从不命中，并留下日志。
+                Log.w("PipelineParser", "不支持的识别类型 [$type]，该节点将被视为永不命中")
+                Recognition.Template(templates = emptyList(), roi = roi)
             }
         }
     }

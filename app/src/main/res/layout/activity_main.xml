@@ -104,6 +104,31 @@
             android:layout_height="wrap_content"
             android:text="识别自检（把模板匹配分数打到日志）" />
 
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginVertical="16dp"
+            android:background="#33888888" />
+
+        <Button
+            android:id="@+id/btnVerifyDry"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="① 识别链·干跑（只识别不点击）← 先用这个" />
+
+        <Button
+            android:id="@+id/btnVerifyRun"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="② 识别链·实跑（会真的点击）" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:textSize="12sp"
+            android:text="识别链 = 无尽挑战入口的三个节点（点击竞技 → 点击无尽挑战 → 点击开始挑战），覆盖模板匹配 / 多模板 / OCR 三种识别通道，不含任何 Custom 动作。先跑干跑，看日志里的「命中分数」和「本该点哪里」，确认无误再跑实跑。日志标签：PipelineRunner / NodeGraph / Recognizer / OcrEngine。" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

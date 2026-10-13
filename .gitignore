@@ -24,6 +24,45 @@ _hosts-backup.txt
 # property of the game publisher; MaaPVZ's own README grants them non-commercial use
 # only. Rather than redistribute them, run the sync script to copy them out of a local
 # MaaPVZ install. The OCR models are large binaries for the same reason.
+#
+# The game image folders sit directly at the assets root, mirroring MaaPVZ's
+# resource/image/ layout so pipeline JSON paths resolve unchanged
+# (e.g. "Endless/无尽挑战.png" opens as-is).
 app/src/main/assets/coords.json
-app/src/main/assets/maapvz/
 app/src/main/assets/ocr/
+app/src/main/assets/jobs/
+app/src/main/assets/pipeline/
+
+# --- resource/image/ subfolders (mirrored at the assets root) ---
+app/src/main/assets/Activity/
+app/src/main/assets/back_to_home/
+app/src/main/assets/create_yard/
+app/src/main/assets/Daily_Diamonds_Free_Version/
+app/src/main/assets/Detection_Order/
+app/src/main/assets/Endless/
+app/src/main/assets/Fragment_Challenge/
+app/src/main/assets/Fragment_Challenge_plant/
+app/src/main/assets/General/
+app/src/main/assets/get_gold_coins/
+app/src/main/assets/land_gong_one/
+app/src/main/assets/Land_gong_two/
+app/src/main/assets/Lucky_Treasure/
+app/src/main/assets/pair_duel/
+app/src/main/assets/Panni_free/
+app/src/main/assets/plants_explore/
+app/src/main/assets/plants_explore_slide_and_click/
+app/src/main/assets/sign_in/
+app/src/main/assets/Start_game/
+app/src/main/assets/star_game/
+app/src/main/assets/Travel_Wood/
+app/src/main/assets/video_card_costume_genetics/
+app/src/main/assets/video_card_red_crystal/
+app/src/main/assets/vido_card_super_z_key/
+app/src/main/assets/logo.ico
+
+# resource/image/ 根目录下的散图（不被 pipeline 引用，同步脚本会清掉）
+app/src/main/assets/神器一阶.png
+app/src/main/assets/神器二阶.png
+app/src/main/assets/神器三阶.png
+app/src/main/assets/神器四阶.png
+app/src/main/assets/不要搬运这四个图片.txt

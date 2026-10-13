@@ -100,6 +100,12 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnProbe).setOnClickListener {
             AutomationService.probe(this)
         }
+        findViewById<Button>(R.id.btnVerifyDry).setOnClickListener {
+            AutomationService.verifyDryRun(this)
+        }
+        findViewById<Button>(R.id.btnVerifyRun).setOnClickListener {
+            AutomationService.verifyRun(this)
+        }
 
         // Shizuku can arrive or disappear while we are on screen, so track both edges.
         ShizukuBridge.addPermissionResultListener(shizukuPermissionListener)
