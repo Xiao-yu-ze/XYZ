@@ -98,6 +98,12 @@
             android:layout_height="wrap_content"
             android:text="Grab one screenshot (to crop templates from)" />
 
+        <Button
+            android:id="@+id/btnProbe"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="识别自检（把模板匹配分数打到日志）" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

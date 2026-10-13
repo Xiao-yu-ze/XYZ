@@ -25,6 +25,9 @@ import com.pvz2.auto.core.TemplateMatcher
 import com.pvz2.auto.core.TouchInjector
 import com.pvz2.auto.fallback.MediaProjectionCapturer
 import com.pvz2.auto.fallback.Pvz2AccessibilityService
+import com.pvz2.auto.maa.ProbeTargets
+import com.pvz2.auto.maa.RecognitionProbe
+import com.pvz2.auto.maa.Recognizer
 import com.pvz2.auto.overlay.FloatingWindow
 import com.pvz2.auto.shizuku.ShizukuBridge
 import com.pvz2.auto.shizuku.ShizukuScreenCapturer
@@ -121,6 +124,8 @@ class AutomationService : Service() {
             }
 
             ACTION_GRAB_FRAME -> scope.launch { grabOneFrame() }
+
+            ACTION_PROBE -> scope.launch { runProbe() }
         }
         // Never restart with a null intent: the loop's parameters live in the intent.
         return START_NOT_STICKY
@@ -245,6 +250,40 @@ class AutomationService : Service() {
     }
 
     // -------------------------------------------------------------- one-shot
+
+    /**
+     * 识别自检：抓一帧，逐个模板打分并写日志。
+     *
+     * 存在的意义是让识别层**可验证**：模板匹配会给出 0~1 的分数，
+     * 分数本身就是证据 —— 不需要"看"截图也能确认模板、缩放、ROI 是否正确。
+     * 纯只读，不点击任何东西。
+     */
+    private suspend fun runProbe() {
+        if (!OpenCVLoader.initLocal()) {
+            fail("OpenCV 原生库加载失败")
+            return
+        }
+        if (!ShizukuBridge.hasPermission()) {
+            fail("识别自检需要 Shizuku 权限（用来截图）")
+            return
+        }
+
+        shizukuClient.bind()
+        val service = shizukuClient.await()
+        if (service == null) {
+            fail("Shizuku UserService 未连接")
+            return
+        }
+
+        val recognizer = Recognizer(this)
+        try {
+            RecognitionProbe(this, ShizukuScreenCapturer(shizukuClient), recognizer)
+                .probeAndLog(ProbeTargets.ALL)
+            BotState.setStatus("识别自检完成，见日志 RecognitionProbe")
+        } finally {
+            recognizer.release()
+        }
+    }
 
     /** Saves a single frame so the user can crop templates out of it. */
     private suspend fun grabOneFrame() {
@@ -382,6 +421,7 @@ class AutomationService : Service() {
         private const val ACTION_START_SHIZUKU = "com.pvz2.auto.START_SHIZUKU"
         private const val ACTION_START_FALLBACK = "com.pvz2.auto.START_FALLBACK"
         private const val ACTION_GRAB_FRAME = "com.pvz2.auto.GRAB_FRAME"
+        private const val ACTION_PROBE = "com.pvz2.auto.PROBE"
 
         private const val EXTRA_RESULT_CODE = "result_code"
         private const val EXTRA_RESULT_DATA = "result_data"
@@ -408,6 +448,18 @@ class AutomationService : Service() {
 
         fun grabFrame(context: Context) {
             context.startService(intent(context, ACTION_GRAB_FRAME))
+        }
+
+        /**
+         * 识别自检：抓一帧，把每个模板的匹配分数打进日志。
+         * 开发期用来验证「模板 + 缩放 + ROI + 匹配算法」这条链路，不做任何点击。
+         *
+         * 用 startService 而不是 startForegroundService：这是一次性的只读操作，
+         * 不需要常驻前台服务。用后者会在 app 处于后台（游戏在前台）时抛
+         * ForegroundServiceStartNotAllowedException。
+         */
+        fun probe(context: Context) {
+            context.startService(intent(context, ACTION_PROBE))
         }
 
         /** `stopService` is always permitted, unlike starting a service from the background. */

@@ -70,4 +70,8 @@ dependencies {
 
     // Official OpenCV Android artifact published on Maven Central since 4.9.0.
     implementation("org.opencv:opencv:4.13.0")
+
+    // PaddleOCR inference for the Chinese UI text the Endless flow reads
+    // (开始挑战 / 清空卡牌 / 继续挑战 / 第 / 确定 / 最后一关 / 0/80).
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 }

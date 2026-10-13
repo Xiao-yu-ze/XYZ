@@ -1,16 +1,16 @@
 #!/system/bin/sh
-# Stops the Shizuku server and resets authorisation, so the next app launch behaves like
-# a first run. Development helper - see tools/shizuku/README.md.
+# 停止 Shizuku 服务端并清空授权记录，让下次启动 App 时表现为「首次运行」。
+# 这是开发辅助脚本，详见 tools/shizuku/README.md。
 
 pkill -f shizuku_server
 sleep 1
 
-# The UserService the app started lives in its own process (package:suffix).
+# App 启动的 UserService 运行在独立进程里（进程名形如 包名:后缀）。
 pkill -f "com.pvz2.auto:pvz2"
 sleep 1
 
-# Shizuku stores granted permissions here. Removing it forces a fresh consent dialog.
+# Shizuku 把已授予的权限记录在这里，删掉即可强制重新弹授权框。
 rm -f /data/user_de/0/com.android.shell/shizuku.json
 
-echo "--- remaining processes ---"
+echo "--- 剩余进程 ---"
 ps -A | grep -iE "shizuku|pvz2"

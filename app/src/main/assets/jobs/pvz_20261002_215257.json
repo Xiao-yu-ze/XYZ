@@ -1,0 +1,3150 @@
+{
+  "code": "pvz_20261002_215257",
+  "name": "塔焦",
+  "version": "1.0",
+  "worlds": [
+    "神秘埃及",
+    "海盗港湾",
+    "狂野西部",
+    "功夫世界",
+    "未来世界",
+    "黑暗时代",
+    "巨浪沙滩",
+    "冰河世界",
+    "天空之城",
+    "失落之城",
+    "摇滚年代",
+    "恐龙危机",
+    "摩登世界"
+  ],
+  "max_level": 149,
+  "everyN": 10,
+  "swipeMs": 10,
+  "outer_pick": {
+    "plants": [
+      "能量花",
+      "电鳗香蕉",
+      "伏僵塔黄",
+      "超级机枪射手",
+      "电能豌豆",
+      "瓷砖萝卜",
+      "胆小菇",
+      "守卫菇",
+      "仙人掌",
+      "保龄泡泡",
+      "充能柚子",
+      "兔极",
+      "冬青骑士",
+      "冰西瓜投手",
+      "原始大王花",
+      "剑叶龙血树",
+      "刺眼花艺伎",
+      "凤梨链刃",
+      "凤凰木花车",
+      "双枪松果",
+      "双生卯兔",
+      "吸血牛肝菌",
+      "喇叭花",
+      "女娲蛇尾草",
+      "天使星星果",
+      "地锯草",
+      "地星发射井",
+      "宝石商石榴",
+      "寒冰地刺",
+      "寒冰醋栗",
+      "寒冰菇",
+      "忧郁藤蔓",
+      "强酸柠檬",
+      "庆典汽水椰",
+      "幽暮投手",
+      "尖刺秋葵",
+      "寒霜白毛丹",
+      "悬浮洋芋",
+      "扇贝兰法师",
+      "斯巴达竹",
+      "日月金银花",
+      "暗夜菇",
+      "暗物质火龙果",
+      "树灵护卫",
+      "杰克南瓜灯",
+      "机枪豌豆",
+      "暴君火龙果",
+      "桑葚爆破手",
+      "毁灭菇",
+      "橄榄坑",
+      "毒液豌豆射手",
+      "油菜花投手",
+      "深渊海葵",
+      "海豌豆",
+      "流星花",
+      "泡泡姬珊瑚",
+      "激光皇冠花",
+      "火焰花女王",
+      "火鸡投手",
+      "炙热山葵",
+      "烈焰火蕨",
+      "火龙草",
+      "玉米加农炮",
+      "猫尾草",
+      "电流醋栗",
+      "牛蒡击球手",
+      "电力绿茶",
+      "爆裂葡萄",
+      "电击鹰爪花",
+      "球果训练家",
+      "熊果臼炮",
+      "留声曼陀罗",
+      "疯狂炮仗花",
+      "粉丝心叶兰",
+      "白瓜相扑手",
+      "白鹭花战机",
+      "祥云飞莲",
+      "芦藜药师",
+      "气流水仙花",
+      "黄金蓓蕾"
+    ],
+    "mode": "auto",
+    "order": []
+  },
+  "tables": [
+    {
+      "from_level": 1,
+      "to_level": 46,
+      "label": "",
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45
+      ],
+      "cover": {
+        "picks": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45
+        ]
+      },
+      "lineup": {
+        "plants": [],
+        "deck": "3",
+        "artifact": null
+      },
+      "boss_lineup": {
+        "plants": [],
+        "deck": "3",
+        "artifact": null
+      },
+      "slots": {
+        "1": "能量花",
+        "2": "电鳗香蕉",
+        "3": "伏僵塔黄",
+        "4": "超级机枪射手",
+        "5": "电能豌豆",
+        "6": "瓷砖萝卜",
+        "7": "胆小菇",
+        "8": "守卫菇"
+      },
+      "squad": 3,
+      "boss_squad": 3,
+      "bossLineupMode": "deck",
+      "bossDeckNo": 3,
+      "bossSlots": {},
+      "artifact": null,
+      "artifact_en": null,
+      "artifact_body": null,
+      "bossArtifact": null,
+      "boss_artifact_en": null,
+      "boss_artifact_body": null,
+      "slotModes": {
+        "artifactswipe": "once",
+        "card1": "once",
+        "card2": "once",
+        "card3": "loop",
+        "card4": "once",
+        "card5": "once",
+        "card6": "once",
+        "card7": "loop",
+        "card8": "once",
+        "feed": "loop",
+        "shovel": "loop",
+        "tapcell": "loop"
+      },
+      "slotOrder": [
+        {
+          "key": "ga:speed",
+          "ga": "speed"
+        },
+        {
+          "key": "card1",
+          "from": 0,
+          "to": 1
+        },
+        {
+          "key": "card4",
+          "from": 0,
+          "to": 1
+        },
+        {
+          "key": "card5",
+          "from": 0,
+          "to": 1
+        },
+        {
+          "key": "card2",
+          "from": -1,
+          "to": -1,
+          "picked": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "key": "card8",
+          "from": -1,
+          "to": -1,
+          "picked": [
+            0,
+            1,
+            2
+          ]
+        },
+        {
+          "key": "card6",
+          "from": -1,
+          "to": -1,
+          "picked": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ]
+        },
+        {
+          "key": "card7",
+          "from": -1,
+          "to": -1,
+          "picked": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        }
+      ],
+      "loopOrder": [
+        {
+          "key": "feed",
+          "from": 0,
+          "to": 1
+        },
+        {
+          "key": "ga:wave",
+          "ga": "wave",
+          "times": 30,
+          "comboWatch": false
+        },
+        {
+          "key": "ga:custom",
+          "ga": "custom",
+          "ms": 50,
+          "times": 50,
+          "comboWatch": false,
+          "act": "swipe",
+          "from": "2阳光起始点",
+          "to": "4阳光终点"
+        }
+      ],
+      "endOrder": [],
+      "waitAfter": {},
+      "endType": "detect",
+      "endPostDelay": 15000,
+      "endLoopCount": 3,
+      "endAfterAction": "sub",
+      "endSettleMs": 15000,
+      "endSubAction": "loop",
+      "bossSlotModes": {},
+      "bossSlotOrder": [
+        {
+          "comboWatch": false,
+          "from": 0,
+          "key": "feed",
+          "to": 1
+        },
+        {
+          "ga": "speed",
+          "key": "ga:speed"
+        }
+      ],
+      "bossLoopOrder": [
+        {
+          "from": 0,
+          "key": "card1",
+          "to": 1
+        },
+        {
+          "ga": "bean",
+          "key": "ga:bean"
+        },
+        {
+          "ga": "wait",
+          "key": "ga:wait",
+          "ms": 4000
+        }
+      ],
+      "bossWaitAfter": {},
+      "supplyPicks": [
+        {
+          "id": "all",
+          "img": "全部植物.png",
+          "name": "全部植物"
+        },
+        {
+          "id": "orange",
+          "img": "橙色植物.png",
+          "name": "橙色植物"
+        },
+        {
+          "id": "purple",
+          "img": "紫色植物.png",
+          "name": "紫色植物"
+        },
+        {
+          "id": "blue",
+          "img": "蓝色植物.png",
+          "name": "蓝色植物"
+        },
+        {
+          "id": "green",
+          "img": "绿色植物.png",
+          "name": "绿色植物"
+        }
+      ],
+      "boardEarly": [
+        [
+          [
+            {
+              "col": 1,
+              "id": "card2",
+              "label": "电鳗香蕉",
+              "mode": "once",
+              "ord": 1,
+              "plant": {
+                "img": "static/plant/electricpeel.webp",
+                "name": "电鳗香蕉",
+                "rare": 4
+              },
+              "row": 1,
+              "seq": 1,
+              "type": "plant"
+            },
+            {
+              "col": 1,
+              "id": "card6",
+              "label": "瓷砖萝卜",
+              "mode": "once",
+              "ord": 8,
+              "plant": {
+                "img": "static/plant/powerplant.webp",
+                "name": "瓷砖萝卜",
+                "rare": 4
+              },
+              "row": 1,
+              "seq": 1,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 2,
+              "id": "card1",
+              "label": "能量花",
+              "mode": "once",
+              "ord": 0,
+              "plant": {
+                "img": "static/plant/powerlily.webp",
+                "name": "能量花",
+                "rare": 2
+              },
+              "row": 1,
+              "seq": 1,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [
+            {
+              "col": 1,
+              "id": "card2",
+              "label": "电鳗香蕉",
+              "mode": "once",
+              "ord": 2,
+              "plant": {
+                "img": "static/plant/electricpeel.webp",
+                "name": "电鳗香蕉",
+                "rare": 4
+              },
+              "row": 2,
+              "seq": 2,
+              "type": "plant"
+            },
+            {
+              "col": 1,
+              "id": "card6",
+              "label": "瓷砖萝卜",
+              "mode": "once",
+              "ord": 9,
+              "plant": {
+                "img": "static/plant/powerplant.webp",
+                "name": "瓷砖萝卜",
+                "rare": 4
+              },
+              "row": 2,
+              "seq": 2,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 2,
+              "id": "card8",
+              "label": "守卫菇",
+              "mode": "once",
+              "ord": 6,
+              "plant": {
+                "img": "static/plant/guardshroom.webp",
+                "name": "守卫菇",
+                "rare": 4
+              },
+              "row": 2,
+              "seq": 1,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 3,
+              "id": "card6",
+              "label": "瓷砖萝卜",
+              "mode": "once",
+              "ord": 29,
+              "plant": {
+                "img": "static/plant/powerplant.webp",
+                "name": "瓷砖萝卜",
+                "rare": 4
+              },
+              "row": 2,
+              "seq": 10,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 4,
+              "id": "card7",
+              "label": "胆小菇",
+              "mode": "once",
+              "ord": 19,
+              "plant": {
+                "img": "static/plant/scaredyshroom.webp",
+                "name": "胆小菇",
+                "rare": 3
+              },
+              "row": 2,
+              "seq": 1,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 5,
+              "id": "card7",
+              "label": "胆小菇",
+              "mode": "once",
+              "ord": 24,
+              "plant": {
+                "img": "static/plant/scaredyshroom.webp",
+                "name": "胆小菇",
+                "rare": 3
+              },
+              "row": 2,
+              "seq": 6,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 6,
+              "id": "card7",
+              "label": "胆小菇",
+              "mode": "once",
+              "ord": 26,
+              "plant": {
+                "img": "static/plant/scaredyshroom.webp",
+                "name": "胆小菇",
+                "rare": 3
+              },
+              "row": 2,
+              "seq": 7,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          []
+        ],
+        [
+          [
+            {
+              "col": 1,
+              "id": "card2",
+              "label": "电鳗香蕉",
+              "mode": "once",
+              "ord": 3,
+              "plant": {
+                "img": "static/plant/electricpeel.webp",
+                "name": "电鳗香蕉",
+                "rare": 4
+              },
+              "row": 3,
+              "seq": 3,
+              "type": "plant"
+            },
+            {
+              "col": 1,
+              "id": "card6",
+              "label": "瓷砖萝卜",
+              "mode": "once",
+              "ord": 10,
+              "plant": {
+                "img": "static/plant/powerplant.webp",
+                "name": "瓷砖萝卜",
+                "rare": 4
+              },
+              "row": 3,
+              "seq": 3,
+              "type": "plant"
+            }
+          ],
+          [],
+          [
+            {
+              "col": 3,
+              "id": "card6",
+              "label": "瓷砖萝卜",
+              "mode": "once",
+              "ord": 14,
+              "plant": {
+                "img": "static/plant/powerplant.webp",
+                "name": "瓷砖萝卜",
+                "rare": 4
+              },
+              "row": 3,
+              "seq": 7,
+              "type": "plant"
+            },
+            {
+              "col": 3,
+              "id": "card4",
+              "label": "超级机枪射手",
+              "mode": "once",
+              "ord": 17,
+              "plant": {
+                "img": "static/plant/megagatling.webp",
+                "name": "超级机枪射手",
+                "rare": 4
+              },
+              "row": 3,
+              "seq": 1,
+              "type": "plant"
+            },
+            {
+              "col": 3,
+              "id": "card5",
+              "label": "电能豌豆",
+              "mode": "once",
+              "ord": 18,
+              "plant": {
+                "img": "static/plant/electricpeashooter.webp",
+                "name": "电能豌豆",
+                "rare": 4
+              },
+              "row": 3,
+              "seq": 1,
+              "type": "plant"
+            },
+            {
+              "col": 3,
+              "id": "feed",
+              "label": "喂豆",
+              "mode": "loop",
+              "ord": 28,
+              "row": 3,
+              "seq": 1,
+              "type": "feed"
+            }
+          ],
+          [
+            {
+              "col": 4,
+              "id": "card8",
+              "label": "守卫菇",
+              "mode": "once",
+              "ord": 27,
+              "plant": {
+                "img": "static/plant/guardshroom.webp",
+                "name": "守卫菇",
+                "rare": 4
+              },
+              "row": 3,
+              "seq": 3,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 5,
+              "id": "card7",
+              "label": "胆小菇",
+              "mode": "once",
+              "ord": 23,
+              "plant": {
+                "img": "static/plant/scaredyshroom.webp",
+                "name": "胆小菇",
+                "rare": 3
+              },
+              "row": 3,
+              "seq": 5,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [
+            {
+              "col": 1,
+              "id": "card2",
+              "label": "电鳗香蕉",
+              "mode": "once",
+              "ord": 4,
+              "plant": {
+                "img": "static/plant/electricpeel.webp",
+                "name": "电鳗香蕉",
+                "rare": 4
+              },
+              "row": 4,
+              "seq": 4,
+              "type": "plant"
+            },
+            {
+              "col": 1,
+              "id": "card6",
+              "label": "瓷砖萝卜",
+              "mode": "once",
+              "ord": 11,
+              "plant": {
+                "img": "static/plant/powerplant.webp",
+                "name": "瓷砖萝卜",
+                "rare": 4
+              },
+              "row": 4,
+              "seq": 4,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 2,
+              "id": "card8",
+              "label": "守卫菇",
+              "mode": "once",
+              "ord": 7,
+              "plant": {
+                "img": "static/plant/guardshroom.webp",
+                "name": "守卫菇",
+                "rare": 4
+              },
+              "row": 4,
+              "seq": 2,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 3,
+              "id": "card6",
+              "label": "瓷砖萝卜",
+              "mode": "once",
+              "ord": 15,
+              "plant": {
+                "img": "static/plant/powerplant.webp",
+                "name": "瓷砖萝卜",
+                "rare": 4
+              },
+              "row": 4,
+              "seq": 8,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 4,
+              "id": "card7",
+              "label": "胆小菇",
+              "mode": "once",
+              "ord": 21,
+              "plant": {
+                "img": "static/plant/scaredyshroom.webp",
+                "name": "胆小菇",
+                "rare": 3
+              },
+              "row": 4,
+              "seq": 3,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 5,
+              "id": "card7",
+              "label": "胆小菇",
+              "mode": "once",
+              "ord": 22,
+              "plant": {
+                "img": "static/plant/scaredyshroom.webp",
+                "name": "胆小菇",
+                "rare": 3
+              },
+              "row": 4,
+              "seq": 4,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [
+            {
+              "col": 1,
+              "id": "card2",
+              "label": "电鳗香蕉",
+              "mode": "once",
+              "ord": 5,
+              "plant": {
+                "img": "static/plant/electricpeel.webp",
+                "name": "电鳗香蕉",
+                "rare": 4
+              },
+              "row": 5,
+              "seq": 5,
+              "type": "plant"
+            },
+            {
+              "col": 1,
+              "id": "card6",
+              "label": "瓷砖萝卜",
+              "mode": "once",
+              "ord": 12,
+              "plant": {
+                "img": "static/plant/powerplant.webp",
+                "name": "瓷砖萝卜",
+                "rare": 4
+              },
+              "row": 5,
+              "seq": 5,
+              "type": "plant"
+            }
+          ],
+          [],
+          [
+            {
+              "col": 3,
+              "id": "card6",
+              "label": "瓷砖萝卜",
+              "mode": "once",
+              "ord": 16,
+              "plant": {
+                "img": "static/plant/powerplant.webp",
+                "name": "瓷砖萝卜",
+                "rare": 4
+              },
+              "row": 5,
+              "seq": 9,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ]
+      ],
+      "boardLate": [
+        [
+          [],
+          [
+            {
+              "col": 2,
+              "id": "card1",
+              "label": "能量花",
+              "mode": "loop",
+              "ord": 1,
+              "plant": {
+                "img": "static/plant/powerlily.webp",
+                "name": "能量花",
+                "rare": 2
+              },
+              "row": 1,
+              "seq": 1,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [
+            {
+              "col": 3,
+              "id": "feed",
+              "label": "喂豆",
+              "mode": "once",
+              "ord": 0,
+              "row": 3,
+              "seq": 1,
+              "type": "feed"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ]
+      ],
+      "non_boss": {
+        "plant": [
+          {
+            "slot": "1",
+            "cells": [
+              "格子2_1"
+            ]
+          },
+          {
+            "slot": "2",
+            "cells": [
+              "格子1_1",
+              "格子1_2",
+              "格子1_3",
+              "格子1_4",
+              "格子1_5"
+            ]
+          },
+          {
+            "slot": "4",
+            "cells": [
+              "格子3_3"
+            ]
+          },
+          {
+            "slot": "5",
+            "cells": [
+              "格子3_3"
+            ]
+          },
+          {
+            "slot": "6",
+            "cells": [
+              "格子1_1",
+              "格子1_2",
+              "格子3_2",
+              "格子1_3",
+              "格子3_3",
+              "格子1_4",
+              "格子3_4",
+              "格子1_5",
+              "格子3_5"
+            ]
+          },
+          {
+            "slot": "7",
+            "cells": [
+              "格子4_2",
+              "格子5_2",
+              "格子6_2",
+              "格子5_3",
+              "格子4_4",
+              "格子5_4"
+            ]
+          },
+          {
+            "slot": "8",
+            "cells": [
+              "格子2_2",
+              "格子4_3",
+              "格子2_4"
+            ]
+          }
+        ],
+        "feed": [
+          "格子3_3"
+        ],
+        "shovel": [],
+        "wave": false,
+        "once_chain": [
+          {
+            "key": "ga:speed",
+            "slot": null,
+            "type": "action",
+            "action": "speed",
+            "label": "加速",
+            "mode": "once",
+            "cells": []
+          },
+          {
+            "key": "card1",
+            "slot": 1,
+            "type": "plant",
+            "label": "能量花",
+            "mode": "once",
+            "cells": [
+              "格子2_1"
+            ]
+          },
+          {
+            "key": "card4",
+            "slot": 4,
+            "type": "plant",
+            "label": "超级机枪射手",
+            "mode": "once",
+            "cells": [
+              "格子3_3"
+            ]
+          },
+          {
+            "key": "card5",
+            "slot": 5,
+            "type": "plant",
+            "label": "电能豌豆",
+            "mode": "once",
+            "cells": [
+              "格子3_3"
+            ]
+          },
+          {
+            "key": "card2",
+            "slot": 2,
+            "type": "plant",
+            "label": "电鳗香蕉",
+            "mode": "once",
+            "cells": [
+              "格子1_1",
+              "格子1_2",
+              "格子1_3",
+              "格子1_4",
+              "格子1_5"
+            ]
+          },
+          {
+            "key": "card8",
+            "slot": 8,
+            "type": "plant",
+            "label": "守卫菇",
+            "mode": "once",
+            "cells": [
+              "格子2_2",
+              "格子2_4",
+              "格子4_3"
+            ]
+          },
+          {
+            "key": "card6",
+            "slot": 6,
+            "type": "plant",
+            "label": "瓷砖萝卜",
+            "mode": "once",
+            "cells": [
+              "格子1_1",
+              "格子1_2",
+              "格子1_3",
+              "格子1_4",
+              "格子1_5",
+              "格子3_3",
+              "格子3_4",
+              "格子3_5",
+              "格子3_2"
+            ]
+          },
+          {
+            "key": "card7",
+            "slot": 7,
+            "type": "plant",
+            "label": "胆小菇",
+            "mode": "once",
+            "cells": [
+              "格子4_2",
+              "格子4_4",
+              "格子5_4",
+              "格子5_3",
+              "格子5_2",
+              "格子6_2"
+            ]
+          }
+        ],
+        "loop_chain": [
+          {
+            "key": "feed",
+            "slot": null,
+            "type": "feed",
+            "label": "喂豆",
+            "mode": "loop",
+            "cells": [
+              "格子3_3"
+            ]
+          },
+          {
+            "key": "ga:wave",
+            "slot": null,
+            "type": "action",
+            "action": "wave",
+            "label": "点波",
+            "mode": "loop",
+            "cells": [],
+            "times": 30,
+            "comboWatch": false
+          },
+          {
+            "key": "ga:custom",
+            "slot": null,
+            "type": "action",
+            "action": "custom",
+            "label": "自定义动作",
+            "mode": "loop",
+            "cells": [],
+            "act": "swipe",
+            "from": "2阳光起始点",
+            "to": "4阳光终点",
+            "times": 50,
+            "ms": 50,
+            "comboWatch": false
+          }
+        ],
+        "end_chain": [],
+        "sequence": [
+          {
+            "slot": 1,
+            "order": 1,
+            "type": "plant",
+            "label": "能量花",
+            "cell": "格子2_1",
+            "mode": "once"
+          },
+          {
+            "slot": 4,
+            "order": 1,
+            "type": "plant",
+            "label": "超级机枪射手",
+            "cell": "格子3_3",
+            "mode": "once"
+          },
+          {
+            "slot": 5,
+            "order": 1,
+            "type": "plant",
+            "label": "电能豌豆",
+            "cell": "格子3_3",
+            "mode": "once"
+          },
+          {
+            "slot": 2,
+            "order": 1,
+            "type": "plant",
+            "label": "电鳗香蕉",
+            "cell": "格子1_1",
+            "mode": "once"
+          },
+          {
+            "slot": 2,
+            "order": 2,
+            "type": "plant",
+            "label": "电鳗香蕉",
+            "cell": "格子1_2",
+            "mode": "once"
+          },
+          {
+            "slot": 2,
+            "order": 3,
+            "type": "plant",
+            "label": "电鳗香蕉",
+            "cell": "格子1_3",
+            "mode": "once"
+          },
+          {
+            "slot": 2,
+            "order": 4,
+            "type": "plant",
+            "label": "电鳗香蕉",
+            "cell": "格子1_4",
+            "mode": "once"
+          },
+          {
+            "slot": 2,
+            "order": 5,
+            "type": "plant",
+            "label": "电鳗香蕉",
+            "cell": "格子1_5",
+            "mode": "once"
+          },
+          {
+            "slot": 8,
+            "order": 1,
+            "type": "plant",
+            "label": "守卫菇",
+            "cell": "格子2_2",
+            "mode": "once"
+          },
+          {
+            "slot": 8,
+            "order": 2,
+            "type": "plant",
+            "label": "守卫菇",
+            "cell": "格子2_4",
+            "mode": "once"
+          },
+          {
+            "slot": 8,
+            "order": 3,
+            "type": "plant",
+            "label": "守卫菇",
+            "cell": "格子4_3",
+            "mode": "once"
+          },
+          {
+            "slot": 6,
+            "order": 1,
+            "type": "plant",
+            "label": "瓷砖萝卜",
+            "cell": "格子1_1",
+            "mode": "once"
+          },
+          {
+            "slot": 6,
+            "order": 2,
+            "type": "plant",
+            "label": "瓷砖萝卜",
+            "cell": "格子1_2",
+            "mode": "once"
+          },
+          {
+            "slot": 6,
+            "order": 3,
+            "type": "plant",
+            "label": "瓷砖萝卜",
+            "cell": "格子1_3",
+            "mode": "once"
+          },
+          {
+            "slot": 6,
+            "order": 4,
+            "type": "plant",
+            "label": "瓷砖萝卜",
+            "cell": "格子1_4",
+            "mode": "once"
+          },
+          {
+            "slot": 6,
+            "order": 5,
+            "type": "plant",
+            "label": "瓷砖萝卜",
+            "cell": "格子1_5",
+            "mode": "once"
+          },
+          {
+            "slot": 6,
+            "order": 6,
+            "type": "plant",
+            "label": "瓷砖萝卜",
+            "cell": "格子3_3",
+            "mode": "once"
+          },
+          {
+            "slot": 6,
+            "order": 7,
+            "type": "plant",
+            "label": "瓷砖萝卜",
+            "cell": "格子3_4",
+            "mode": "once"
+          },
+          {
+            "slot": 6,
+            "order": 8,
+            "type": "plant",
+            "label": "瓷砖萝卜",
+            "cell": "格子3_5",
+            "mode": "once"
+          },
+          {
+            "slot": 6,
+            "order": 9,
+            "type": "plant",
+            "label": "瓷砖萝卜",
+            "cell": "格子3_2",
+            "mode": "once"
+          },
+          {
+            "slot": 7,
+            "order": 1,
+            "type": "plant",
+            "label": "胆小菇",
+            "cell": "格子4_2",
+            "mode": "once"
+          },
+          {
+            "slot": 7,
+            "order": 2,
+            "type": "plant",
+            "label": "胆小菇",
+            "cell": "格子4_4",
+            "mode": "once"
+          },
+          {
+            "slot": 7,
+            "order": 3,
+            "type": "plant",
+            "label": "胆小菇",
+            "cell": "格子5_4",
+            "mode": "once"
+          },
+          {
+            "slot": 7,
+            "order": 4,
+            "type": "plant",
+            "label": "胆小菇",
+            "cell": "格子5_3",
+            "mode": "once"
+          },
+          {
+            "slot": 7,
+            "order": 5,
+            "type": "plant",
+            "label": "胆小菇",
+            "cell": "格子5_2",
+            "mode": "once"
+          },
+          {
+            "slot": 7,
+            "order": 6,
+            "type": "plant",
+            "label": "胆小菇",
+            "cell": "格子6_2",
+            "mode": "once"
+          },
+          {
+            "slot": null,
+            "order": 1,
+            "type": "feed",
+            "label": "喂豆",
+            "cell": "格子3_3",
+            "mode": "loop"
+          }
+        ]
+      },
+      "boss": {
+        "plant": [
+          {
+            "slot": "1",
+            "cells": [
+              "格子2_1"
+            ]
+          }
+        ],
+        "feed": [
+          "格子3_3"
+        ],
+        "shovel": [],
+        "wave": false,
+        "once_chain": [
+          {
+            "key": "feed",
+            "slot": null,
+            "type": "feed",
+            "label": "喂豆",
+            "mode": "once",
+            "cells": [
+              "格子3_3"
+            ],
+            "comboWatch": false
+          },
+          {
+            "key": "ga:speed",
+            "slot": null,
+            "type": "action",
+            "action": "speed",
+            "label": "加速",
+            "mode": "once",
+            "cells": []
+          }
+        ],
+        "loop_chain": [
+          {
+            "key": "card1",
+            "slot": 1,
+            "type": "plant",
+            "label": "能量花",
+            "mode": "loop",
+            "cells": [
+              "格子2_1"
+            ]
+          },
+          {
+            "key": "ga:bean",
+            "slot": null,
+            "type": "action",
+            "action": "bean",
+            "label": "捡豆",
+            "mode": "loop",
+            "cells": []
+          },
+          {
+            "key": "ga:wait",
+            "slot": null,
+            "type": "action",
+            "action": "wait",
+            "label": "等待",
+            "mode": "loop",
+            "cells": [],
+            "ms": 4000
+          }
+        ],
+        "sequence": [
+          {
+            "slot": null,
+            "order": 1,
+            "type": "feed",
+            "label": "喂豆",
+            "cell": "格子3_3",
+            "mode": "once"
+          },
+          {
+            "slot": 1,
+            "order": 1,
+            "type": "plant",
+            "label": "能量花",
+            "cell": "格子2_1",
+            "mode": "loop"
+          }
+        ]
+      },
+      "compiled": {
+        "v": 3,
+        "normal": {
+          "无尽挑战_进入到局内": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "开头不识别;every:10;guard:无尽局内_恭喜过关|无尽局内_继续挑战_守卫|无尽训练_继续训练@@roi:642,580,312,135|312,583,312,135;ref:无尽局内_继续挑战_守卫|无尽挑战_失败|无尽训练_继续训练;click:加速;swipe:种植物_初始化_第一个槽位,种植物_初始化_格子2_1,10;swipe:种植物_初始化_第四个槽位,种植物_初始化_格子3_3,10;swipe:种植物_初始化_第五个槽位,种植物_初始化_格子3_3,10;swipe:种植物_初始化_第二个槽位,种植物_初始化_格子1_1,10;swipe:种植物_初始化_第二个槽位,种植物_初始化_格子1_2,10;swipe:种植物_初始化_第二个槽位,种植物_初始化_格子1_3,10;swipe:种植物_初始化_第二个槽位,种植物_初始化_格子1_4,10;swipe:种植物_初始化_第二个槽位,种植物_初始化_格子1_5,10;swipe:种植物_初始化_第八个槽位,种植物_初始化_格子2_2,10;swipe:种植物_初始化_第八个槽位,种植物_初始化_格子2_4,10;swipe:种植物_初始化_第八个槽位,种植物_初始化_格子4_3,10;swipe:种植物_初始化_第六个槽位,种植物_初始化_格子1_1,10;swipe:种植物_初始化_第六个槽位,种植物_初始化_格子1_2,10;swipe:种植物_初始化_第六个槽位,种植物_初始化_格子1_3,10;swipe:种植物_初始化_第六个槽位,种植物_初始化_格子1_4,10;swipe:种植物_初始化_第六个槽位,种植物_初始化_格子1_5,10;swipe:种植物_初始化_第六个槽位,种植物_初始化_格子3_3,10;swipe:种植物_初始化_第六个槽位,种植物_初始化_格子3_4,10;swipe:种植物_初始化_第六个槽位,种植物_初始化_格子3_5,10;swipe:种植物_初始化_第六个槽位,种植物_初始化_格子3_2,10;swipe:种植物_初始化_第七个槽位,种植物_初始化_格子4_2,10;swipe:种植物_初始化_第七个槽位,种植物_初始化_格子4_4,10;swipe:种植物_初始化_第七个槽位,种植物_初始化_格子5_4,10;swipe:种植物_初始化_第七个槽位,种植物_初始化_格子5_3,10;swipe:种植物_初始化_第七个槽位,种植物_初始化_格子5_2,10;swipe:种植物_初始化_第七个槽位,种植物_初始化_格子6_2,10",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环"
+            ]
+          },
+          "无尽挑战_组合动作_循环": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "every:10;guard:无尽局内_恭喜过关|无尽局内_继续挑战_守卫|无尽训练_继续训练@@roi:642,580,312,135|312,583,312,135;ref:无尽局内_继续挑战_守卫|无尽挑战_失败|无尽训练_继续训练;swipe:种植物_初始化_能量豆位置,种植物_初始化_格子3_3,10;click:下一波*30;swipe:2阳光起始点,4阳光终点,50*50",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环"
+            ]
+          },
+          "无尽挑战_收尾": {
+            "enabled": false
+          },
+          "无尽挑战_收尾重开": {
+            "enabled": false
+          }
+        },
+        "boss": {
+          "无尽挑战_进入到局内_boss": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "开头不识别;every:10;guard:无尽局内_恭喜过关|无尽局内_继续挑战_守卫|无尽训练_继续训练@@roi:642,580,312,135|312,583,312,135;ref:无尽局内_继续挑战_守卫|无尽挑战_失败|无尽训练_继续训练;swipe:种植物_初始化_能量豆位置,种植物_初始化_格子3_3,10;click:加速",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环_boss"
+            ]
+          },
+          "无尽挑战_组合动作_循环_boss": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "every:10;guard:无尽局内_恭喜过关|无尽局内_继续挑战_守卫|无尽训练_继续训练@@roi:642,580,312,135|312,583,312,135;ref:无尽局内_继续挑战_守卫|无尽挑战_失败|无尽训练_继续训练;swipe:种植物_初始化_第一个槽位,种植物_初始化_格子2_1,10;multi:(1阳光起始点,1阳光终点,100;2阳光起始点,2阳光终点,100;3阳光起始点,3阳光终点,100;4阳光起始点,4阳光终点,100;5阳光起始点,5阳光终点,100);sleep:4",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环_boss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "from_level": 46,
+      "to_level": 47,
+      "label": "",
+      "levels": [
+        46
+      ],
+      "cover": {
+        "picks": [
+          46
+        ]
+      },
+      "lineup": {
+        "plants": [],
+        "deck": "3",
+        "artifact": null
+      },
+      "boss_lineup": {
+        "plants": [],
+        "deck": "3",
+        "artifact": null
+      },
+      "slots": {
+        "1": "能量花",
+        "2": "电鳗香蕉",
+        "3": "伏僵塔黄",
+        "4": "超级机枪射手",
+        "5": "电能豌豆",
+        "6": "瓷砖萝卜",
+        "7": "胆小菇",
+        "8": "守卫菇"
+      },
+      "squad": 3,
+      "boss_squad": 3,
+      "bossLineupMode": "deck",
+      "bossDeckNo": 3,
+      "bossSlots": {},
+      "artifact": null,
+      "artifact_en": null,
+      "artifact_body": null,
+      "bossArtifact": null,
+      "boss_artifact_en": null,
+      "boss_artifact_body": null,
+      "slotModes": {
+        "artifactswipe": "once",
+        "card1": "loop",
+        "card2": "loop",
+        "card3": "loop",
+        "card4": "loop",
+        "card5": "loop",
+        "card6": "loop",
+        "card7": "loop",
+        "card8": "loop",
+        "feed": "loop",
+        "shovel": "loop",
+        "tapcell": "loop"
+      },
+      "slotOrder": [
+        {
+          "ga": "speed",
+          "key": "ga:speed"
+        },
+        {
+          "from": -1,
+          "key": "shovel",
+          "picked": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "to": -1
+        },
+        {
+          "from": -1,
+          "key": "card3",
+          "picked": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "to": -1
+        },
+        {
+          "from": 0,
+          "key": "card7",
+          "to": 1
+        }
+      ],
+      "loopOrder": [
+        {
+          "from": 0,
+          "key": "feed",
+          "to": 1
+        },
+        {
+          "ga": "wait",
+          "key": "ga:wait",
+          "ms": 1000
+        },
+        {
+          "comboWatch": false,
+          "ga": "wave",
+          "key": "ga:wave",
+          "times": 50
+        }
+      ],
+      "endOrder": [],
+      "waitAfter": {},
+      "endType": "detect",
+      "endPostDelay": 15000,
+      "endLoopCount": 3,
+      "endAfterAction": "sub",
+      "endSettleMs": 15000,
+      "endSubAction": "loop",
+      "bossSlotModes": {},
+      "bossSlotOrder": [],
+      "bossLoopOrder": [],
+      "bossWaitAfter": {},
+      "supplyPicks": [
+        {
+          "id": "all",
+          "img": "全部植物.png",
+          "name": "全部植物"
+        },
+        {
+          "id": "orange",
+          "img": "橙色植物.png",
+          "name": "橙色植物"
+        },
+        {
+          "id": "purple",
+          "img": "紫色植物.png",
+          "name": "紫色植物"
+        },
+        {
+          "id": "blue",
+          "img": "蓝色植物.png",
+          "name": "蓝色植物"
+        },
+        {
+          "id": "green",
+          "img": "绿色植物.png",
+          "name": "绿色植物"
+        }
+      ],
+      "boardEarly": [
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [
+            {
+              "col": 2,
+              "id": "shovel",
+              "label": "铲子",
+              "mode": "once",
+              "ord": 0,
+              "row": 2,
+              "seq": 1,
+              "type": "shovel"
+            }
+          ],
+          [
+            {
+              "col": 3,
+              "id": "shovel",
+              "label": "铲子",
+              "mode": "once",
+              "ord": 3,
+              "row": 2,
+              "seq": 4,
+              "type": "shovel"
+            },
+            {
+              "col": 3,
+              "id": "card3",
+              "label": "伏僵塔黄",
+              "mode": "once",
+              "ord": 8,
+              "plant": {
+                "img": "static/plant/rheumnobile.webp",
+                "name": "伏僵塔黄",
+                "rare": 4
+              },
+              "row": 2,
+              "seq": 1,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [
+            {
+              "col": 1,
+              "id": "feed",
+              "label": "喂豆",
+              "mode": "loop",
+              "ord": 13,
+              "row": 3,
+              "seq": 1,
+              "type": "feed"
+            }
+          ],
+          [],
+          [
+            {
+              "col": 3,
+              "id": "shovel",
+              "label": "铲子",
+              "mode": "once",
+              "ord": 5,
+              "row": 3,
+              "seq": 6,
+              "type": "shovel"
+            },
+            {
+              "col": 3,
+              "id": "card3",
+              "label": "伏僵塔黄",
+              "mode": "once",
+              "ord": 9,
+              "plant": {
+                "img": "static/plant/rheumnobile.webp",
+                "name": "伏僵塔黄",
+                "rare": 4
+              },
+              "row": 3,
+              "seq": 2,
+              "type": "plant"
+            }
+          ],
+          [
+            {
+              "col": 4,
+              "id": "shovel",
+              "label": "铲子",
+              "mode": "once",
+              "ord": 7,
+              "row": 3,
+              "seq": 8,
+              "type": "shovel"
+            },
+            {
+              "col": 4,
+              "id": "card7",
+              "label": "胆小菇",
+              "mode": "once",
+              "ord": 12,
+              "plant": {
+                "img": "static/plant/scaredyshroom.webp",
+                "name": "胆小菇",
+                "rare": 3
+              },
+              "row": 3,
+              "seq": 1,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [
+            {
+              "col": 2,
+              "id": "shovel",
+              "label": "铲子",
+              "mode": "once",
+              "ord": 1,
+              "row": 4,
+              "seq": 2,
+              "type": "shovel"
+            }
+          ],
+          [
+            {
+              "col": 3,
+              "id": "shovel",
+              "label": "铲子",
+              "mode": "once",
+              "ord": 4,
+              "row": 4,
+              "seq": 5,
+              "type": "shovel"
+            },
+            {
+              "col": 3,
+              "id": "card3",
+              "label": "伏僵塔黄",
+              "mode": "once",
+              "ord": 10,
+              "plant": {
+                "img": "static/plant/rheumnobile.webp",
+                "name": "伏僵塔黄",
+                "rare": 4
+              },
+              "row": 4,
+              "seq": 3,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [
+            {
+              "col": 3,
+              "id": "shovel",
+              "label": "铲子",
+              "mode": "once",
+              "ord": 6,
+              "row": 5,
+              "seq": 7,
+              "type": "shovel"
+            },
+            {
+              "col": 3,
+              "id": "card3",
+              "label": "伏僵塔黄",
+              "mode": "once",
+              "ord": 11,
+              "plant": {
+                "img": "static/plant/rheumnobile.webp",
+                "name": "伏僵塔黄",
+                "rare": 4
+              },
+              "row": 5,
+              "seq": 4,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ]
+      ],
+      "boardLate": [
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ]
+      ],
+      "non_boss": {
+        "plant": [
+          {
+            "slot": "3",
+            "cells": [
+              "格子3_2",
+              "格子3_3",
+              "格子3_4",
+              "格子3_5"
+            ]
+          },
+          {
+            "slot": "7",
+            "cells": [
+              "格子4_3"
+            ]
+          }
+        ],
+        "feed": [
+          "格子1_3"
+        ],
+        "shovel": [
+          "格子2_2",
+          "格子3_2",
+          "格子3_3",
+          "格子4_3",
+          "格子2_4",
+          "格子3_4",
+          "格子3_5"
+        ],
+        "wave": false,
+        "once_chain": [
+          {
+            "key": "ga:speed",
+            "slot": null,
+            "type": "action",
+            "action": "speed",
+            "label": "加速",
+            "mode": "once",
+            "cells": []
+          },
+          {
+            "key": "shovel",
+            "slot": null,
+            "type": "shovel",
+            "label": "铲子",
+            "mode": "once",
+            "cells": [
+              "格子2_2",
+              "格子2_4",
+              "格子3_2",
+              "格子3_4",
+              "格子3_3",
+              "格子3_5",
+              "格子4_3"
+            ]
+          },
+          {
+            "key": "card3",
+            "slot": 3,
+            "type": "plant",
+            "label": "伏僵塔黄",
+            "mode": "once",
+            "cells": [
+              "格子3_2",
+              "格子3_3",
+              "格子3_4",
+              "格子3_5"
+            ]
+          },
+          {
+            "key": "card7",
+            "slot": 7,
+            "type": "plant",
+            "label": "胆小菇",
+            "mode": "once",
+            "cells": [
+              "格子4_3"
+            ]
+          }
+        ],
+        "loop_chain": [
+          {
+            "key": "feed",
+            "slot": null,
+            "type": "feed",
+            "label": "喂豆",
+            "mode": "loop",
+            "cells": [
+              "格子1_3"
+            ]
+          },
+          {
+            "key": "ga:wait",
+            "slot": null,
+            "type": "action",
+            "action": "wait",
+            "label": "等待",
+            "mode": "loop",
+            "cells": [],
+            "ms": 1000
+          },
+          {
+            "key": "ga:wave",
+            "slot": null,
+            "type": "action",
+            "action": "wave",
+            "label": "点波",
+            "mode": "loop",
+            "cells": [],
+            "times": 50,
+            "comboWatch": false
+          }
+        ],
+        "end_chain": [],
+        "sequence": [
+          {
+            "slot": null,
+            "order": 1,
+            "type": "shovel",
+            "label": "铲子",
+            "cell": "格子2_2",
+            "mode": "once"
+          },
+          {
+            "slot": null,
+            "order": 2,
+            "type": "shovel",
+            "label": "铲子",
+            "cell": "格子2_4",
+            "mode": "once"
+          },
+          {
+            "slot": null,
+            "order": 3,
+            "type": "shovel",
+            "label": "铲子",
+            "cell": "格子3_2",
+            "mode": "once"
+          },
+          {
+            "slot": null,
+            "order": 4,
+            "type": "shovel",
+            "label": "铲子",
+            "cell": "格子3_4",
+            "mode": "once"
+          },
+          {
+            "slot": null,
+            "order": 5,
+            "type": "shovel",
+            "label": "铲子",
+            "cell": "格子3_3",
+            "mode": "once"
+          },
+          {
+            "slot": null,
+            "order": 6,
+            "type": "shovel",
+            "label": "铲子",
+            "cell": "格子3_5",
+            "mode": "once"
+          },
+          {
+            "slot": null,
+            "order": 7,
+            "type": "shovel",
+            "label": "铲子",
+            "cell": "格子4_3",
+            "mode": "once"
+          },
+          {
+            "slot": 3,
+            "order": 1,
+            "type": "plant",
+            "label": "伏僵塔黄",
+            "cell": "格子3_2",
+            "mode": "once"
+          },
+          {
+            "slot": 3,
+            "order": 2,
+            "type": "plant",
+            "label": "伏僵塔黄",
+            "cell": "格子3_3",
+            "mode": "once"
+          },
+          {
+            "slot": 3,
+            "order": 3,
+            "type": "plant",
+            "label": "伏僵塔黄",
+            "cell": "格子3_4",
+            "mode": "once"
+          },
+          {
+            "slot": 3,
+            "order": 4,
+            "type": "plant",
+            "label": "伏僵塔黄",
+            "cell": "格子3_5",
+            "mode": "once"
+          },
+          {
+            "slot": 7,
+            "order": 1,
+            "type": "plant",
+            "label": "胆小菇",
+            "cell": "格子4_3",
+            "mode": "once"
+          },
+          {
+            "slot": null,
+            "order": 1,
+            "type": "feed",
+            "label": "喂豆",
+            "cell": "格子1_3",
+            "mode": "loop"
+          }
+        ]
+      },
+      "boss": {
+        "plant": [],
+        "feed": [],
+        "shovel": [],
+        "wave": false,
+        "once_chain": [],
+        "loop_chain": [],
+        "sequence": []
+      },
+      "compiled": {
+        "v": 3,
+        "normal": {
+          "无尽挑战_进入到局内": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "开头不识别;every:10;guard:无尽局内_恭喜过关|无尽局内_继续挑战_守卫|无尽训练_继续训练@@roi:642,580,312,135|312,583,312,135;ref:无尽局内_继续挑战_守卫|无尽挑战_失败|无尽训练_继续训练;click:加速;swipe:种植物_初始化_铲子位置,种植物_初始化_格子2_2,10;swipe:种植物_初始化_铲子位置,种植物_初始化_格子2_4,10;swipe:种植物_初始化_铲子位置,种植物_初始化_格子3_2,10;swipe:种植物_初始化_铲子位置,种植物_初始化_格子3_4,10;swipe:种植物_初始化_铲子位置,种植物_初始化_格子3_3,10;swipe:种植物_初始化_铲子位置,种植物_初始化_格子3_5,10;swipe:种植物_初始化_铲子位置,种植物_初始化_格子4_3,10;swipe:种植物_初始化_第三个槽位,种植物_初始化_格子3_2,10;swipe:种植物_初始化_第三个槽位,种植物_初始化_格子3_3,10;swipe:种植物_初始化_第三个槽位,种植物_初始化_格子3_4,10;swipe:种植物_初始化_第三个槽位,种植物_初始化_格子3_5,10;swipe:种植物_初始化_第七个槽位,种植物_初始化_格子4_3,10",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环"
+            ]
+          },
+          "无尽挑战_组合动作_循环": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "every:10;guard:无尽局内_恭喜过关|无尽局内_继续挑战_守卫|无尽训练_继续训练@@roi:642,580,312,135|312,583,312,135;ref:无尽局内_继续挑战_守卫|无尽挑战_失败|无尽训练_继续训练;swipe:种植物_初始化_能量豆位置,种植物_初始化_格子1_3,10;sleep:1;click:下一波*50",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环"
+            ]
+          },
+          "无尽挑战_收尾": {
+            "enabled": false
+          },
+          "无尽挑战_收尾重开": {
+            "enabled": false
+          }
+        },
+        "boss": {
+          "无尽挑战_进入到局内_boss": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "开头不识别;sleep:5",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环_boss"
+            ]
+          },
+          "无尽挑战_组合动作_循环_boss": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "sleep:5",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环_boss"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "from_level": 47,
+      "to_level": 150,
+      "label": "",
+      "levels": [
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        120,
+        121,
+        122,
+        123,
+        124,
+        125,
+        126,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147,
+        148,
+        149
+      ],
+      "cover": {
+        "picks": [
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          88,
+          89,
+          90,
+          91,
+          92,
+          93,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126,
+          127,
+          128,
+          129,
+          130,
+          131,
+          132,
+          133,
+          134,
+          135,
+          136,
+          137,
+          138,
+          139,
+          140,
+          141,
+          142,
+          143,
+          144,
+          145,
+          146,
+          147,
+          148,
+          149
+        ]
+      },
+      "lineup": {
+        "plants": [],
+        "deck": "3",
+        "artifact": null
+      },
+      "boss_lineup": {
+        "plants": [],
+        "deck": "3",
+        "artifact": null
+      },
+      "slots": {
+        "1": "能量花",
+        "2": "电鳗香蕉",
+        "3": "伏僵塔黄",
+        "4": "超级机枪射手",
+        "5": "电能豌豆",
+        "6": "瓷砖萝卜",
+        "7": "胆小菇",
+        "8": "守卫菇"
+      },
+      "squad": 3,
+      "boss_squad": 3,
+      "bossLineupMode": "deck",
+      "bossDeckNo": 3,
+      "bossSlots": {},
+      "artifact": null,
+      "artifact_en": null,
+      "artifact_body": null,
+      "bossArtifact": null,
+      "boss_artifact_en": null,
+      "boss_artifact_body": null,
+      "slotModes": {
+        "artifactswipe": "once",
+        "card1": "once",
+        "card2": "loop",
+        "card3": "once",
+        "card4": "loop",
+        "card5": "loop",
+        "card6": "loop",
+        "card7": "once",
+        "card8": "loop",
+        "feed": "loop",
+        "shovel": "loop",
+        "tapcell": "loop"
+      },
+      "slotOrder": [
+        {
+          "ga": "speed",
+          "key": "ga:speed"
+        },
+        {
+          "from": -1,
+          "key": "card3",
+          "picked": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "to": -1
+        },
+        {
+          "from": -1,
+          "key": "card7",
+          "picked": [
+            0,
+            1
+          ],
+          "to": -1
+        },
+        {
+          "from": 0,
+          "key": "card1",
+          "to": 1
+        }
+      ],
+      "loopOrder": [
+        {
+          "from": 0,
+          "key": "feed",
+          "to": 1
+        },
+        {
+          "ga": "wait",
+          "key": "ga:wait",
+          "ms": 1000
+        },
+        {
+          "comboWatch": false,
+          "ga": "wave",
+          "key": "ga:wave",
+          "times": 50
+        },
+        {
+          "act": "swipe",
+          "comboWatch": false,
+          "from": "4阳光终点",
+          "ga": "custom",
+          "key": "ga:custom",
+          "ms": 10,
+          "times": 50,
+          "to": "5阳光终点"
+        }
+      ],
+      "endOrder": [
+        {
+          "from": 0,
+          "key": "card7",
+          "to": null
+        }
+      ],
+      "waitAfter": {},
+      "endType": "detect",
+      "endPostDelay": 15000,
+      "endLoopCount": 3,
+      "endAfterAction": "sub",
+      "endSettleMs": 15000,
+      "endSubAction": "loop",
+      "bossSlotModes": {
+        "card1": "once"
+      },
+      "bossSlotOrder": [
+        {
+          "ga": "speed",
+          "key": "ga:speed"
+        },
+        {
+          "from": 0,
+          "key": "card1",
+          "to": 1
+        }
+      ],
+      "bossLoopOrder": [
+        {
+          "from": 0,
+          "key": "feed",
+          "to": 1
+        },
+        {
+          "ga": "wait",
+          "key": "ga:wait",
+          "ms": 5000
+        }
+      ],
+      "bossWaitAfter": {},
+      "supplyPicks": [
+        {
+          "id": "all",
+          "img": "全部植物.png",
+          "name": "全部植物"
+        },
+        {
+          "id": "orange",
+          "img": "橙色植物.png",
+          "name": "橙色植物"
+        },
+        {
+          "id": "blue",
+          "img": "蓝色植物.png",
+          "name": "蓝色植物"
+        },
+        {
+          "id": "purple",
+          "img": "紫色植物.png",
+          "name": "紫色植物"
+        },
+        {
+          "id": "sun",
+          "img": "能量豆.png",
+          "name": "能量豆"
+        },
+        {
+          "id": "green",
+          "img": "绿色植物.png",
+          "name": "绿色植物"
+        },
+        {
+          "id": "white",
+          "img": "白色植物.png",
+          "name": "白色植物"
+        },
+        {
+          "id": "artifact",
+          "img": "神器.png",
+          "name": "神器"
+        }
+      ],
+      "boardEarly": [
+        [
+          [],
+          [
+            {
+              "col": 2,
+              "id": "card1",
+              "label": "能量花",
+              "mode": "once",
+              "ord": 6,
+              "plant": {
+                "img": "static/plant/powerlily.webp",
+                "name": "能量花",
+                "rare": 2
+              },
+              "row": 1,
+              "seq": 1,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [
+            {
+              "col": 1,
+              "id": "feed",
+              "label": "喂豆",
+              "mode": "loop",
+              "ord": 7,
+              "row": 3,
+              "seq": 1,
+              "type": "feed"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [
+            {
+              "col": 6,
+              "id": "card7",
+              "label": "胆小菇",
+              "mode": "once",
+              "ord": 4,
+              "plant": {
+                "img": "static/plant/scaredyshroom.webp",
+                "name": "胆小菇",
+                "rare": 3
+              },
+              "row": 3,
+              "seq": 1,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [
+            {
+              "col": 6,
+              "id": "card7",
+              "label": "胆小菇",
+              "mode": "once",
+              "ord": 5,
+              "plant": {
+                "img": "static/plant/scaredyshroom.webp",
+                "name": "胆小菇",
+                "rare": 3
+              },
+              "row": 4,
+              "seq": 2,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ]
+      ],
+      "boardLate": [
+        [
+          [],
+          [
+            {
+              "col": 2,
+              "id": "card1",
+              "label": "能量花",
+              "mode": "once",
+              "ord": 1,
+              "plant": {
+                "img": "static/plant/powerlily.webp",
+                "name": "能量花",
+                "rare": 2
+              },
+              "row": 1,
+              "seq": 1,
+              "type": "plant"
+            }
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [
+            {
+              "col": 5,
+              "id": "feed",
+              "label": "喂豆",
+              "mode": "loop",
+              "ord": 0,
+              "row": 3,
+              "seq": 1,
+              "type": "feed"
+            }
+          ],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ]
+      ],
+      "non_boss": {
+        "plant": [
+          {
+            "slot": "1",
+            "cells": [
+              "格子2_1"
+            ]
+          },
+          {
+            "slot": "7",
+            "cells": [
+              "格子6_3",
+              "格子6_4"
+            ]
+          }
+        ],
+        "feed": [
+          "格子1_3"
+        ],
+        "shovel": [],
+        "wave": false,
+        "once_chain": [
+          {
+            "key": "ga:speed",
+            "slot": null,
+            "type": "action",
+            "action": "speed",
+            "label": "加速",
+            "mode": "once",
+            "cells": []
+          },
+          {
+            "key": "card7",
+            "slot": 7,
+            "type": "plant",
+            "label": "胆小菇",
+            "mode": "once",
+            "cells": [
+              "格子6_3",
+              "格子6_4"
+            ]
+          },
+          {
+            "key": "card1",
+            "slot": 1,
+            "type": "plant",
+            "label": "能量花",
+            "mode": "once",
+            "cells": [
+              "格子2_1"
+            ]
+          }
+        ],
+        "loop_chain": [
+          {
+            "key": "feed",
+            "slot": null,
+            "type": "feed",
+            "label": "喂豆",
+            "mode": "loop",
+            "cells": [
+              "格子1_3"
+            ]
+          },
+          {
+            "key": "ga:wait",
+            "slot": null,
+            "type": "action",
+            "action": "wait",
+            "label": "等待",
+            "mode": "loop",
+            "cells": [],
+            "ms": 1000
+          },
+          {
+            "key": "ga:wave",
+            "slot": null,
+            "type": "action",
+            "action": "wave",
+            "label": "点波",
+            "mode": "loop",
+            "cells": [],
+            "times": 50,
+            "comboWatch": false
+          },
+          {
+            "key": "ga:custom",
+            "slot": null,
+            "type": "action",
+            "action": "custom",
+            "label": "自定义动作",
+            "mode": "loop",
+            "cells": [],
+            "act": "swipe",
+            "from": "4阳光终点",
+            "to": "5阳光终点",
+            "times": 50,
+            "ms": 10,
+            "comboWatch": false
+          }
+        ],
+        "end_chain": [],
+        "sequence": [
+          {
+            "slot": 7,
+            "order": 1,
+            "type": "plant",
+            "label": "胆小菇",
+            "cell": "格子6_3",
+            "mode": "once"
+          },
+          {
+            "slot": 7,
+            "order": 2,
+            "type": "plant",
+            "label": "胆小菇",
+            "cell": "格子6_4",
+            "mode": "once"
+          },
+          {
+            "slot": 1,
+            "order": 1,
+            "type": "plant",
+            "label": "能量花",
+            "cell": "格子2_1",
+            "mode": "once"
+          },
+          {
+            "slot": null,
+            "order": 1,
+            "type": "feed",
+            "label": "喂豆",
+            "cell": "格子1_3",
+            "mode": "loop"
+          }
+        ]
+      },
+      "boss": {
+        "plant": [
+          {
+            "slot": "1",
+            "cells": [
+              "格子2_1"
+            ]
+          }
+        ],
+        "feed": [
+          "格子5_3"
+        ],
+        "shovel": [],
+        "wave": false,
+        "once_chain": [
+          {
+            "key": "ga:speed",
+            "slot": null,
+            "type": "action",
+            "action": "speed",
+            "label": "加速",
+            "mode": "once",
+            "cells": []
+          },
+          {
+            "key": "card1",
+            "slot": 1,
+            "type": "plant",
+            "label": "能量花",
+            "mode": "once",
+            "cells": [
+              "格子2_1"
+            ]
+          }
+        ],
+        "loop_chain": [
+          {
+            "key": "feed",
+            "slot": null,
+            "type": "feed",
+            "label": "喂豆",
+            "mode": "loop",
+            "cells": [
+              "格子5_3"
+            ]
+          },
+          {
+            "key": "ga:wait",
+            "slot": null,
+            "type": "action",
+            "action": "wait",
+            "label": "等待",
+            "mode": "loop",
+            "cells": [],
+            "ms": 5000
+          }
+        ],
+        "sequence": [
+          {
+            "slot": 1,
+            "order": 1,
+            "type": "plant",
+            "label": "能量花",
+            "cell": "格子2_1",
+            "mode": "once"
+          },
+          {
+            "slot": null,
+            "order": 1,
+            "type": "feed",
+            "label": "喂豆",
+            "cell": "格子5_3",
+            "mode": "loop"
+          }
+        ]
+      },
+      "compiled": {
+        "v": 3,
+        "normal": {
+          "无尽挑战_进入到局内": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "开头不识别;every:10;guard:无尽局内_恭喜过关|无尽局内_继续挑战_守卫|无尽训练_继续训练@@roi:642,580,312,135|312,583,312,135;ref:无尽局内_继续挑战_守卫|无尽挑战_失败|无尽训练_继续训练;click:加速;swipe:种植物_初始化_第七个槽位,种植物_初始化_格子6_3,10;swipe:种植物_初始化_第七个槽位,种植物_初始化_格子6_4,10;swipe:种植物_初始化_第一个槽位,种植物_初始化_格子2_1,10",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环"
+            ]
+          },
+          "无尽挑战_组合动作_循环": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "every:10;guard:无尽局内_恭喜过关|无尽局内_继续挑战_守卫|无尽训练_继续训练@@roi:642,580,312,135|312,583,312,135;ref:无尽局内_继续挑战_守卫|无尽挑战_失败|无尽训练_继续训练;swipe:种植物_初始化_能量豆位置,种植物_初始化_格子1_3,10;sleep:1;click:下一波*50;swipe:4阳光终点,5阳光终点,50*50",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环"
+            ]
+          },
+          "无尽挑战_收尾": {
+            "enabled": false
+          },
+          "无尽挑战_收尾重开": {
+            "enabled": false
+          }
+        },
+        "boss": {
+          "无尽挑战_进入到局内_boss": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "开头不识别;every:10;guard:无尽局内_恭喜过关|无尽局内_继续挑战_守卫|无尽训练_继续训练@@roi:642,580,312,135|312,583,312,135;ref:无尽局内_继续挑战_守卫|无尽挑战_失败|无尽训练_继续训练;click:加速;swipe:种植物_初始化_第一个槽位,种植物_初始化_格子2_1,10",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环_boss"
+            ]
+          },
+          "无尽挑战_组合动作_循环_boss": {
+            "action": "Custom",
+            "custom_action": "BatchSwipe",
+            "custom_action_param": "every:10;guard:无尽局内_恭喜过关|无尽局内_继续挑战_守卫|无尽训练_继续训练@@roi:642,580,312,135|312,583,312,135;ref:无尽局内_继续挑战_守卫|无尽挑战_失败|无尽训练_继续训练;swipe:种植物_初始化_能量豆位置,种植物_初始化_格子5_3,10;sleep:5",
+            "pre_delay": 0,
+            "post_delay": 0,
+            "next": [
+              "无尽局内_继续挑战",
+              "无尽挑战_失败",
+              "无尽挑战_组合动作_循环_boss"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "format": 2
+}
