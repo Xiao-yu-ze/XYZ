@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  卡片背景：白面 + 极细描边 + 极浅阴影。
+
+  不用常见的 rgba(0,0,0,.1) 大阴影 —— 那是 SaaS 模板脸的典型特征，
+  而且在这个浅绿底上会显脏。改用 0.6dp 的绿灰描边把卡片"切"出来，
+  既干净又能和底色共存。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/surface" />
+    <corners android:radius="14dp" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/hairline" />
+</shape>

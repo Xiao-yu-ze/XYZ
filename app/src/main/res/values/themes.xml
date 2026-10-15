@@ -1,21 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      用 Material 主题，因为 styles.xml 里的按钮样式继承
-      Widget.MaterialComponents.Button。继承 AppCompat 主题会导致
-      按钮找不到这些属性而报错。
+      用 Material 主题，因为布局里的按钮是 MaterialButton。
+      继承 AppCompat 主题会导致按钮属性解析失败。
 
-      刻意不跟随深色模式：界面用的是固定浅色配色（#F5F6F8 底 + 白卡），
-      跟随 DayNight 反而会出现"浅色卡片贴在深色底上"的割裂。等界面颜色
-      都走主题属性后再开。
+      刻意不跟随深色模式：配色是一套固定的浅色"纸感"系统
+      （浅绿纸底 + 白卡 + 草坪绿主色），跟随 DayNight 会出现
+      "浅色卡片贴在深色底上"的割裂。等所有颜色都走主题属性后再开。
     -->
     <style name="Theme.Pvz2Auto" parent="Theme.MaterialComponents.Light.NoActionBar">
-        <item name="colorPrimary">#2C6E49</item>
-        <item name="colorPrimaryVariant">#1F4F35</item>
-        <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorSecondary">#2C6E49</item>
-        <item name="colorOnSecondary">#FFFFFF</item>
-        <item name="android:statusBarColor">#F5F6F8</item>
+        <item name="colorPrimary">@color/lawn</item>
+        <item name="colorPrimaryVariant">@color/lawn_pressed</item>
+        <item name="colorOnPrimary">@color/on_lawn</item>
+        <item name="colorSecondary">@color/sun</item>
+        <item name="colorOnSecondary">@color/ink</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnSurface">@color/ink</item>
+        <item name="android:colorBackground">@color/paper</item>
+        <item name="android:textColorPrimary">@color/ink</item>
+        <item name="android:textColorSecondary">@color/ink_muted</item>
+        <!-- 状态栏跟着纸底走，不留一条割裂的深色带 -->
+        <item name="android:statusBarColor">@color/paper</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/paper</item>
     </style>
 </resources>

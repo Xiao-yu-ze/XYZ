@@ -33,6 +33,14 @@
 
     <string name="hint_permissions">顺序做完这四项。前两项是必须的；后两项只在 Shizuku 不可用时才需要。</string>
 
+    <!-- 准备清单的行状态 -->
+    <string name="step_done">已完成</string>
+    <string name="step_granted">已授权</string>
+    <string name="step_enabled">已启用</string>
+    <string name="step_todo_auth">去授权</string>
+    <string name="step_todo_enable">去启用</string>
+    <string name="step_progress">已完成 %1$d/%2$d</string>
+
     <!-- ==================== 主界面 · 运行 ==================== -->
     <string name="btn_show_panel">显示悬浮面板</string>
     <string name="btn_start_shizuku">启动（Shizuku）</string>

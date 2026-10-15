@@ -1,176 +1,307 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  主界面布局。
+  主界面。
 
-  结构：一屏之内按「状态卡 → 准备工作 → 运行 → 调试工具」分区。
-  每个分区有标题 + 一句话说明，按钮按主次区分：
-    主要动作  -> 实心（MaterialButton，背景色填充）
-    次要动作  -> 描边
-    调试动作  -> 描边 + 更小
-  这样"该点哪个"一眼能看出来，而不是一排等权重的按钮。
+  结构决策（不是"把按钮排一排"）：
+
+  · **四个权限项是序列，不是并列的四个按钮。** 提示里写着"顺序做完这四项"，
+    所以用带序号和完成状态的清单行 —— 序号在这里是**有信息量的**
+    （它标出顺序和进度），不是为了装饰。
+    这样把 4 个等权重的大按钮压成 4 行轻量文本，视觉噪音大幅下降。
+
+  · **整屏只有一个实心按钮**（启动自动化）。其它一律安静：
+    停止是文字按钮，降级/悬浮面板是描边按钮。
+    一眼就能看出"主路径在哪"。
+
+  · **调试工具默认折叠。** 它不是主流程的一部分，
+    常驻展开只会把主路径挤到屏幕外面（之前就是这样，得滚动才找得到）。
+
+  · 状态用**一个卡片 + 状态点**承载，而不是散落的几行文字。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F5F6F8"
+    android:background="@color/paper"
     android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:paddingHorizontal="20dp"
+        android:paddingTop="28dp"
+        android:paddingBottom="32dp">
 
         <!-- ==================== 标题 ==================== -->
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/ui_title"
-            android:textColor="#1A1A1A"
-            android:textSize="22sp"
-            android:textStyle="bold" />
+            style="@style/Text.Display"
+            android:layout_width="match_parent"
+            android:text="@string/ui_title" />
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:text="@string/ui_subtitle"
-            android:textColor="#8A8A8E"
-            android:textSize="13sp" />
+            style="@style/Text.Subtitle"
+            android:text="@string/ui_subtitle" />
 
         <!-- ==================== 状态卡 ==================== -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:background="@drawable/bg_status_card"
-            android:orientation="vertical"
-            android:padding="14dp">
+            style="@style/Card"
+            android:layout_marginTop="20dp"
+            android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/tvShizukuState"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textColor="#1A1A1A"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                tools:ignore="HardcodedText" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginVertical="10dp"
-                android:background="#1A000000" />
+                <View
+                    android:id="@+id/statusDot"
+                    android:layout_width="9dp"
+                    android:layout_height="9dp"
+                    android:background="@drawable/bg_dot_todo" />
+
+                <TextView
+                    android:id="@+id/tvShizukuState"
+                    style="@style/Text.Body"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="9dp"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/tvStatus"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:textColor="#5A5A5E"
-                android:textSize="13sp"
-                tools:ignore="HardcodedText" />
+                style="@style/Text.Hint"
+                android:layout_marginTop="6dp"
+                android:layout_marginStart="18dp" />
         </LinearLayout>
 
-        <!-- ==================== 准备工作 ==================== -->
-        <TextView
-            style="@style/SectionTitle"
-            android:text="@string/section_permissions" />
-
-        <TextView
-            style="@style/SectionHint"
-            android:text="@string/hint_permissions" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnShizuku"
-            style="@style/ActionButton.Primary"
-            android:text="@string/btn_authorise_shizuku" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnOverlay"
-            style="@style/ActionButton.Secondary"
-            android:text="@string/btn_allow_overlay" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnAccessibility"
-            style="@style/ActionButton.Secondary"
-            android:text="@string/btn_enable_accessibility" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnNotifications"
-            style="@style/ActionButton.Secondary"
-            android:text="@string/btn_allow_notifications" />
-
-        <!-- ==================== 运行 ==================== -->
-        <TextView
-            style="@style/SectionTitle"
-            android:text="@string/section_run" />
-
-        <TextView
-            style="@style/SectionHint"
-            android:text="@string/hint_run" />
-
+        <!-- ==================== 主操作 ==================== -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnStartShizuku"
-            style="@style/ActionButton.Primary"
+            style="@style/AppButton.Primary"
+            android:layout_marginTop="20dp"
             android:text="@string/btn_start_shizuku" />
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnStop"
+            style="@style/AppButton.Quiet"
+            android:layout_marginTop="2dp"
+            android:text="@string/btn_stop" />
+
+        <!-- ==================== 准备工作（清单） ==================== -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="26dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                style="@style/Text.Section"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_marginTop="0dp"
+                android:text="@string/section_permissions" />
+
+            <TextView
+                android:id="@+id/tvProgress"
+                style="@style/Text.RowAction"
+                android:textColor="@color/sun" />
+        </LinearLayout>
+
+        <TextView
+            style="@style/Text.Hint"
+            android:text="@string/hint_permissions" />
+
+        <!-- ① -->
+        <LinearLayout
+            android:id="@+id/rowStep1"
+            style="@style/StepRow"
+            android:layout_marginTop="6dp">
+
+            <TextView
+                android:id="@+id/stepNum1"
+                style="@style/StepNumber"
+                android:text="1" />
+
+            <TextView
+                android:id="@+id/stepLabel1"
+                style="@style/Text.Body"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_marginStart="12dp"
+                android:text="@string/btn_authorise_shizuku" />
+
+            <TextView
+                android:id="@+id/stepAction1"
+                style="@style/Text.RowAction"
+                android:textColor="@color/sun" />
+        </LinearLayout>
+
+        <View style="@style/StepDivider" />
+
+        <!-- ② -->
+        <LinearLayout
+            android:id="@+id/rowStep2"
+            style="@style/StepRow">
+
+            <TextView
+                android:id="@+id/stepNum2"
+                style="@style/StepNumber"
+                android:text="2" />
+
+            <TextView
+                android:id="@+id/stepLabel2"
+                style="@style/Text.Body"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_marginStart="12dp"
+                android:text="@string/btn_allow_overlay" />
+
+            <TextView
+                android:id="@+id/stepAction2"
+                style="@style/Text.RowAction"
+                android:textColor="@color/sun" />
+        </LinearLayout>
+
+        <View style="@style/StepDivider" />
+
+        <!-- ③ -->
+        <LinearLayout
+            android:id="@+id/rowStep3"
+            style="@style/StepRow">
+
+            <TextView
+                android:id="@+id/stepNum3"
+                style="@style/StepNumber"
+                android:text="3" />
+
+            <TextView
+                android:id="@+id/stepLabel3"
+                style="@style/Text.Body"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_marginStart="12dp"
+                android:text="@string/btn_enable_accessibility" />
+
+            <TextView
+                android:id="@+id/stepAction3"
+                style="@style/Text.RowAction"
+                android:textColor="@color/sun" />
+        </LinearLayout>
+
+        <View style="@style/StepDivider" />
+
+        <!-- ④ -->
+        <LinearLayout
+            android:id="@+id/rowStep4"
+            style="@style/StepRow">
+
+            <TextView
+                android:id="@+id/stepNum4"
+                style="@style/StepNumber"
+                android:text="4" />
+
+            <TextView
+                android:id="@+id/stepLabel4"
+                style="@style/Text.Body"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_marginStart="12dp"
+                android:text="@string/btn_allow_notifications" />
+
+            <TextView
+                android:id="@+id/stepAction4"
+                style="@style/Text.RowAction"
+                android:textColor="@color/sun" />
+        </LinearLayout>
+
+        <!-- ==================== 降级方案 ==================== -->
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnStartFallback"
-            style="@style/ActionButton.Secondary"
+            style="@style/AppButton.Outline"
+            android:layout_marginTop="22dp"
             android:text="@string/btn_start_fallback" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnShowOverlay"
-            style="@style/ActionButton.Secondary"
+            style="@style/AppButton.Outline"
+            android:layout_marginTop="8dp"
             android:text="@string/btn_show_panel" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnStop"
-            style="@style/ActionButton.Danger"
-            android:text="@string/btn_stop" />
-
-        <!-- ==================== 调试工具 ==================== -->
-        <TextView
-            style="@style/SectionTitle"
-            android:text="@string/section_tools" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnVerifyDry"
-            style="@style/ActionButton.Primary"
-            android:text="@string/btn_verify_dry" />
-
-        <TextView
-            style="@style/SectionHint"
-            android:text="@string/hint_verify" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnVerifyRun"
-            style="@style/ActionButton.Secondary"
-            android:text="@string/btn_verify_run" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnProbe"
-            style="@style/ActionButton.Secondary"
-            android:text="@string/btn_probe" />
-
-        <TextView
-            style="@style/SectionHint"
-            android:text="@string/hint_probe" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnGrabFrame"
-            style="@style/ActionButton.Secondary"
-            android:text="@string/btn_grab_frame" />
-
-        <TextView
-            style="@style/SectionHint"
-            android:text="@string/hint_grab_frame" />
-
-        <View
+        <!-- ==================== 调试工具（默认折叠） ==================== -->
+        <LinearLayout
+            android:id="@+id/debugHeader"
             android:layout_width="match_parent"
-            android:layout_height="24dp" />
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingVertical="8dp">
+
+            <TextView
+                android:id="@+id/debugArrow"
+                style="@style/Text.RowAction"
+                android:text="▸"
+                android:textColor="@color/ink_faint" />
+
+            <TextView
+                style="@style/Text.Section"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_marginTop="0dp"
+                android:layout_marginStart="8dp"
+                android:text="@string/section_tools" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/debugBody"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnVerifyDry"
+                style="@style/AppButton.Outline"
+                android:layout_marginTop="4dp"
+                android:text="@string/btn_verify_dry" />
+
+            <TextView
+                style="@style/Text.Hint"
+                android:layout_marginTop="6dp"
+                android:text="@string/hint_verify" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnVerifyRun"
+                style="@style/AppButton.Outline"
+                android:layout_marginTop="4dp"
+                android:text="@string/btn_verify_run" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnProbe"
+                style="@style/AppButton.Outline"
+                android:layout_marginTop="8dp"
+                android:text="@string/btn_probe" />
+
+            <TextView
+                style="@style/Text.Hint"
+                android:layout_marginTop="6dp"
+                android:text="@string/hint_probe" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnGrabFrame"
+                style="@style/AppButton.Outline"
+                android:layout_marginTop="8dp"
+                android:text="@string/btn_grab_frame" />
+
+            <TextView
+                style="@style/Text.Hint"
+                android:layout_marginTop="6dp"
+                android:text="@string/hint_grab_frame" />
+        </LinearLayout>
 
     </LinearLayout>
 </ScrollView>

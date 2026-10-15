@@ -1,70 +1,156 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  界面样式。
+  字阶与组件样式。
 
-  目标：让「该点哪个」一眼可见，而不是一排等权重按钮。
-    主按钮   实心深色    —— 当前该做的主要动作
-    次按钮   描边浅色    —— 可选动作
-    危险按钮 描边红色    —— 停止
-  另加分区标题与说明文字两个文本样式。
+  字体本身用系统字体（Roboto / Noto Sans CJK）—— 这是现实约束：
+  APK 已经 182 MB，再塞一套中文字体的代价不值得。
+  所以"设计感"完全靠**字阶、字重、颜色、间距**来做，不靠换字体。
+
+  字阶（跟随常规比例，不是随手挑的）：
+    20 / 12 / 13 / 14 / 12
+    标题到副标题跨度大（8sp），建立明确的第一层级
 -->
 <resources>
 
-    <!-- ==================== 分区标题 ==================== -->
-    <style name="SectionTitle">
-        <item name="android:layout_width">match_parent</item>
+    <!-- ==================== 字阶 ==================== -->
+    <style name="Text" parent="">
+        <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">22dp</item>
-        <item name="android:textColor">#1A1A1A</item>
-        <item name="android:textSize">15sp</item>
+        <item name="android:textColor">@color/ink</item>
+    </style>
+
+    <!-- 页面标题 -->
+    <style name="Text.Display">
+        <item name="android:textSize">21sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">-0.01</item>
+    </style>
+
+    <!-- 标题下的定位说明 -->
+    <style name="Text.Subtitle">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/ink_faint</item>
+        <item name="android:layout_marginTop">1dp</item>
+    </style>
+
+    <!-- 分区标题 -->
+    <style name="Text.Section">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:layout_marginTop">24dp</item>
+    </style>
+
+    <!-- 分区说明 -->
+    <style name="Text.Hint">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/ink_faint</item>
+        <item name="android:lineSpacingMultiplier">1.3</item>
+    </style>
+
+    <!-- 清单项文字 -->
+    <style name="Text.Body">
+        <item name="android:textSize">14sp</item>
+    </style>
+
+    <!-- 清单项右侧动作 -->
+    <style name="Text.RowAction">
+        <item name="android:textSize">13sp</item>
         <item name="android:textStyle">bold</item>
     </style>
 
-    <!-- ==================== 说明文字 ==================== -->
-    <style name="SectionHint">
+    <!-- ==================== 卡片 ==================== -->
+    <style name="Card">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">4dp</item>
-        <item name="android:layout_marginBottom">8dp</item>
-        <item name="android:textColor">#8A8A8E</item>
-        <item name="android:textSize">12sp</item>
-        <item name="android:lineSpacingMultiplier">1.25</item>
+        <item name="android:background">@drawable/bg_card</item>
+        <item name="android:padding">16dp</item>
     </style>
 
-    <!-- ==================== 按钮基类 ==================== -->
-    <style name="ActionButton" parent="Widget.MaterialComponents.Button">
+    <!-- ==================== 按钮 ==================== -->
+    <!--
+      命名说明：基类叫 AppButton，变体叫 AppButton.Xxx。
+      Android 的点号样式名会**隐式继承**同名前缀（AppButton.Primary 继承 AppButton），
+      所以基类名不能取成 Button —— 那会让 Button.Primary 去找系统里不存在的
+      style/Button，直接资源链接失败。
+    -->
+    <style name="AppButton" parent="Widget.MaterialComponents.Button">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">8dp</item>
-        <item name="android:textSize">14sp</item>
         <item name="android:textAllCaps">false</item>
-        <item name="android:letterSpacing">0</item>
-        <item name="android:paddingTop">12dp</item>
-        <item name="android:paddingBottom">12dp</item>
+        <item name="android:letterSpacing">0.01</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:paddingTop">13dp</item>
+        <item name="android:paddingBottom">13dp</item>
         <item name="cornerRadius">10dp</item>
         <item name="elevation">0dp</item>
     </style>
 
-    <!-- 主要动作：实心 -->
-    <style name="ActionButton.Primary">
-        <item name="backgroundTint">#2C6E49</item>
-        <item name="android:textColor">#FFFFFFFF</item>
+    <!-- 主操作：整屏唯一一个实心大按钮 -->
+    <style name="AppButton.Primary">
+        <item name="android:textSize">16sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:paddingTop">15dp</item>
+        <item name="android:paddingBottom">15dp</item>
+        <item name="backgroundTint">@color/lawn</item>
+        <item name="android:textColor">@color/on_lawn</item>
+        <item name="rippleColor">@color/lawn_pressed</item>
+        <item name="cornerRadius">12dp</item>
     </style>
 
-    <!-- 次要动作：描边 -->
-    <style name="ActionButton.Secondary">
-        <item name="backgroundTint">#FFFFFFFF</item>
-        <item name="android:textColor">#1A1A1A</item>
-        <item name="strokeColor">#D8DAE0</item>
+    <!-- 次要操作：描边，弱于主操作 -->
+    <style name="AppButton.Outline">
+        <item name="backgroundTint">@color/surface</item>
+        <item name="android:textColor">@color/ink_muted</item>
+        <item name="strokeColor">@color/hairline</item>
         <item name="strokeWidth">1dp</item>
+        <item name="rippleColor">@color/lawn_tint</item>
     </style>
 
-    <!-- 危险动作：红色描边 -->
-    <style name="ActionButton.Danger">
-        <item name="backgroundTint">#FFFFFFFF</item>
-        <item name="android:textColor">#C0392B</item>
-        <item name="strokeColor">#E8B4AE</item>
-        <item name="strokeWidth">1dp</item>
+    <!--
+      安静的操作（停止）：文字按钮。
+      显式声明 parent，避免继承 AppButton 的实心样式。
+      因此这里要把 AppButton 的通用属性重述一遍。
+    -->
+    <style name="AppButton.Quiet" parent="Widget.MaterialComponents.Button.TextButton">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0.01</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:paddingTop">10dp</item>
+        <item name="android:paddingBottom">10dp</item>
+        <item name="android:textColor">@color/state_bad</item>
+        <item name="rippleColor">@color/sun_tint</item>
+    </style>
+
+    <!-- ==================== 清单行 ==================== -->
+    <style name="StepRow">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingVertical">11dp</item>
+    </style>
+
+    <!-- 序号圆点 -->
+    <style name="StepNumber">
+        <item name="android:layout_width">22dp</item>
+        <item name="android:layout_height">22dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:background">@drawable/bg_step_number</item>
+        <item name="android:textColor">@color/ink_muted</item>
+    </style>
+
+    <!-- 清单行之间的细分隔：让 4 行能被快速扫读，而不是糊成一段 -->
+    <style name="StepDivider">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:layout_marginStart">34dp</item>
+        <item name="android:background">@color/divider</item>
     </style>
 
 </resources>
