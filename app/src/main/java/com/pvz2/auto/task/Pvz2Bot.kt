@@ -33,7 +33,7 @@ class Pvz2Bot(
 
     suspend fun run() {
         Log.i(TAG, "loop start with ${actions.size} rule(s), templates=${matcher.templateNames}")
-        BotState.setStatus("Running (${matcher.loadedCount} templates)")
+        BotState.setStatus("运行中（${matcher.loadedCount} 个模板）")
 
         while (currentCoroutineContext().isActive) {
             try {
@@ -55,7 +55,7 @@ class Pvz2Bot(
             // The frame carries the true screen size, so this also handles rotation and
             // multi-window without asking the WindowManager anything.
             if (matcher.setScreen(frame.width(), frame.height())) {
-                BotState.setStatus("Running @ ${frame.width()}x${frame.height()}")
+                BotState.setStatus("运行中 @ ${frame.width()}x${frame.height()}")
             }
 
             val adapter = matcher.adapter ?: return

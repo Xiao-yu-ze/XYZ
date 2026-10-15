@@ -8,10 +8,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.widget.Button
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.button.MaterialButton
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -33,7 +33,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var shizukuStateView: TextView
     private lateinit var statusView: TextView
-    private lateinit var authorizeButton: Button
+    private lateinit var authorizeButton: MaterialButton
 
     /** MediaProjection consent: the result must be forwarded straight to the service. */
     private val captureConsentLauncher = registerForActivityResult(
@@ -43,7 +43,7 @@ class MainActivity : AppCompatActivity() {
         if (result.resultCode == RESULT_OK && data != null) {
             AutomationService.startFallback(this, result.resultCode, data)
         } else {
-            BotState.setStatus("Screen capture consent denied")
+            BotState.setStatus(getString(R.string.msg_capture_denied))
         }
     }
 
@@ -51,8 +51,10 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         BotState.setStatus(
-            if (granted) "Notifications allowed"
-            else "Notifications denied - the foreground service still runs"
+            getString(
+                if (granted) R.string.msg_notifications_granted
+                else R.string.msg_notifications_denied
+            )
         )
     }
 
@@ -60,8 +62,10 @@ class MainActivity : AppCompatActivity() {
         Shizuku.OnRequestPermissionResultListener { _, grantResult ->
             refreshShizukuState()
             BotState.setStatus(
-                if (grantResult == PackageManager.PERMISSION_GRANTED) "Shizuku permission granted"
-                else "Shizuku permission denied"
+                getString(
+                    if (grantResult == PackageManager.PERMISSION_GRANTED) R.string.msg_permission_granted
+                    else R.string.msg_permission_denied
+                )
             )
         }
 
@@ -78,32 +82,32 @@ class MainActivity : AppCompatActivity() {
         authorizeButton = findViewById(R.id.btnShizuku)
 
         authorizeButton.setOnClickListener { requestShizukuPermission() }
-        findViewById<Button>(R.id.btnOverlay).setOnClickListener { requestOverlayPermission() }
-        findViewById<Button>(R.id.btnAccessibility).setOnClickListener {
+        findViewById<MaterialButton>(R.id.btnOverlay).setOnClickListener { requestOverlayPermission() }
+        findViewById<MaterialButton>(R.id.btnAccessibility).setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
-        findViewById<Button>(R.id.btnNotifications).setOnClickListener {
+        findViewById<MaterialButton>(R.id.btnNotifications).setOnClickListener {
             requestNotificationPermission()
         }
 
-        findViewById<Button>(R.id.btnShowOverlay).setOnClickListener {
+        findViewById<MaterialButton>(R.id.btnShowOverlay).setOnClickListener {
             AutomationService.showPanel(this)
         }
-        findViewById<Button>(R.id.btnStartShizuku).setOnClickListener {
+        findViewById<MaterialButton>(R.id.btnStartShizuku).setOnClickListener {
             AutomationService.startShizuku(this)
         }
-        findViewById<Button>(R.id.btnStartFallback).setOnClickListener { startFallback() }
-        findViewById<Button>(R.id.btnStop).setOnClickListener { AutomationService.stop(this) }
-        findViewById<Button>(R.id.btnGrabFrame).setOnClickListener {
+        findViewById<MaterialButton>(R.id.btnStartFallback).setOnClickListener { startFallback() }
+        findViewById<MaterialButton>(R.id.btnStop).setOnClickListener { AutomationService.stop(this) }
+        findViewById<MaterialButton>(R.id.btnGrabFrame).setOnClickListener {
             AutomationService.grabFrame(this)
         }
-        findViewById<Button>(R.id.btnProbe).setOnClickListener {
+        findViewById<MaterialButton>(R.id.btnProbe).setOnClickListener {
             AutomationService.probe(this)
         }
-        findViewById<Button>(R.id.btnVerifyDry).setOnClickListener {
+        findViewById<MaterialButton>(R.id.btnVerifyDry).setOnClickListener {
             AutomationService.verifyDryRun(this)
         }
-        findViewById<Button>(R.id.btnVerifyRun).setOnClickListener {
+        findViewById<MaterialButton>(R.id.btnVerifyRun).setOnClickListener {
             AutomationService.verifyRun(this)
         }
 
@@ -131,11 +135,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestShizukuPermission() {
         if (!ShizukuBridge.isBinderAlive()) {
-            BotState.setStatus("Shizuku is not running - install and start it first")
+            BotState.setStatus(getString(R.string.msg_shizuku_not_alive))
             return
         }
         if (ShizukuBridge.hasPermission()) {
-            BotState.setStatus("Shizuku already granted")
+            BotState.setStatus(getString(R.string.msg_already_granted))
             return
         }
         ShizukuBridge.requestPermission()
@@ -143,7 +147,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestOverlayPermission() {
         if (Settings.canDrawOverlays(this)) {
-            BotState.setStatus("Overlay permission already granted")
+            BotState.setStatus(getString(R.string.msg_overlay_granted))
             return
         }
         startActivity(
@@ -156,7 +160,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            BotState.setStatus("Notifications are not gated before Android 13")
+            BotState.setStatus(getString(R.string.msg_notifications_not_needed))
             return
         }
         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -164,7 +168,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun startFallback() {
         if (!Pvz2AccessibilityService.isEnabled(this)) {
-            BotState.setStatus("Enable the accessibility service first (step 3)")
+            BotState.setStatus(getString(R.string.msg_need_accessibility))
             return
         }
         val manager = getSystemService(MediaProjectionManager::class.java)
@@ -173,14 +177,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshShizukuState() {
         shizukuStateView.text = when {
-            !ShizukuBridge.isBinderAlive() ->
-                "Shizuku: not running. Install/start Shizuku, then reopen this screen."
+            !ShizukuBridge.isBinderAlive() -> getString(R.string.shizuku_not_running)
 
-            ShizukuBridge.hasPermission() ->
-                "Shizuku: ready (uid ${runCatching { Shizuku.getUid() }.getOrDefault(-1)})"
+            ShizukuBridge.hasPermission() -> getString(
+                R.string.shizuku_ready,
+                runCatching { Shizuku.getUid() }.getOrDefault(-1)
+            )
 
-            else -> "Shizuku: running, permission not granted"
+            else -> getString(R.string.shizuku_no_permission)
         }
+        // 已授权时把按钮置灰，避免用户反复点击同一个动作。
         authorizeButton.isEnabled = ShizukuBridge.canRequestPermission()
     }
 }

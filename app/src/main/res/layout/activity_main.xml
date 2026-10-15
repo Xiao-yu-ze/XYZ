@@ -1,140 +1,176 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  主界面布局。
+
+  结构：一屏之内按「状态卡 → 准备工作 → 运行 → 调试工具」分区。
+  每个分区有标题 + 一句话说明，按钮按主次区分：
+    主要动作  -> 实心（MaterialButton，背景色填充）
+    次要动作  -> 描边
+    调试动作  -> 描边 + 更小
+  这样"该点哪个"一眼能看出来，而不是一排等权重的按钮。
+-->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="#F5F6F8"
     android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:padding="16dp">
+
+        <!-- ==================== 标题 ==================== -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/ui_title"
+            android:textColor="#1A1A1A"
+            android:textSize="22sp"
+            android:textStyle="bold" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/app_name"
-            android:textSize="24sp"
-            android:textStyle="bold" />
+            android:layout_marginTop="2dp"
+            android:text="@string/ui_subtitle"
+            android:textColor="#8A8A8E"
+            android:textSize="13sp" />
 
-        <TextView
-            android:id="@+id/tvShizukuState"
+        <!-- ==================== 状态卡 ==================== -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
-            android:textSize="14sp" />
+            android:background="@drawable/bg_status_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                android:id="@+id/tvShizukuState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#1A1A1A"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                tools:ignore="HardcodedText" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginVertical="10dp"
+                android:background="#1A000000" />
+
+            <TextView
+                android:id="@+id/tvStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#5A5A5E"
+                android:textSize="13sp"
+                tools:ignore="HardcodedText" />
+        </LinearLayout>
+
+        <!-- ==================== 准备工作 ==================== -->
+        <TextView
+            style="@style/SectionTitle"
+            android:text="@string/section_permissions" />
 
         <TextView
-            android:id="@+id/tvStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:textSize="14sp" />
+            style="@style/SectionHint"
+            android:text="@string/hint_permissions" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnShizuku"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="1. Authorise Shizuku" />
+            style="@style/ActionButton.Primary"
+            android:text="@string/btn_authorise_shizuku" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnOverlay"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="2. Allow floating panel" />
+            style="@style/ActionButton.Secondary"
+            android:text="@string/btn_allow_overlay" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnAccessibility"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="3. Enable fallback accessibility service" />
+            style="@style/ActionButton.Secondary"
+            android:text="@string/btn_enable_accessibility" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnNotifications"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="4. Allow notifications (Android 13+)" />
+            style="@style/ActionButton.Secondary"
+            android:text="@string/btn_allow_notifications" />
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginVertical="16dp"
-            android:background="#33888888" />
+        <!-- ==================== 运行 ==================== -->
+        <TextView
+            style="@style/SectionTitle"
+            android:text="@string/section_run" />
 
-        <Button
-            android:id="@+id/btnShowOverlay"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Show floating panel" />
+        <TextView
+            style="@style/SectionHint"
+            android:text="@string/hint_run" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnStartShizuku"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Start (Shizuku)" />
+            style="@style/ActionButton.Primary"
+            android:text="@string/btn_start_shizuku" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnStartFallback"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Start (MediaProjection fallback)" />
+            style="@style/ActionButton.Secondary"
+            android:text="@string/btn_start_fallback" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnShowOverlay"
+            style="@style/ActionButton.Secondary"
+            android:text="@string/btn_show_panel" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnStop"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Stop" />
+            style="@style/ActionButton.Danger"
+            android:text="@string/btn_stop" />
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginVertical="16dp"
-            android:background="#33888888" />
+        <!-- ==================== 调试工具 ==================== -->
+        <TextView
+            style="@style/SectionTitle"
+            android:text="@string/section_tools" />
 
-        <Button
-            android:id="@+id/btnGrabFrame"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Grab one screenshot (to crop templates from)" />
-
-        <Button
-            android:id="@+id/btnProbe"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="识别自检（把模板匹配分数打到日志）" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginVertical="16dp"
-            android:background="#33888888" />
-
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnVerifyDry"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="① 识别链·干跑（只识别不点击）← 先用这个" />
+            style="@style/ActionButton.Primary"
+            android:text="@string/btn_verify_dry" />
 
-        <Button
+        <TextView
+            style="@style/SectionHint"
+            android:text="@string/hint_verify" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnVerifyRun"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="② 识别链·实跑（会真的点击）" />
+            style="@style/ActionButton.Secondary"
+            android:text="@string/btn_verify_run" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnProbe"
+            style="@style/ActionButton.Secondary"
+            android:text="@string/btn_probe" />
 
         <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:textSize="12sp"
-            android:text="识别链 = 无尽挑战入口的三个节点（点击竞技 → 点击无尽挑战 → 点击开始挑战），覆盖模板匹配 / 多模板 / OCR 三种识别通道，不含任何 Custom 动作。先跑干跑，看日志里的「命中分数」和「本该点哪里」，确认无误再跑实跑。日志标签：PipelineRunner / NodeGraph / Recognizer / OcrEngine。" />
+            style="@style/SectionHint"
+            android:text="@string/hint_probe" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnGrabFrame"
+            style="@style/ActionButton.Secondary"
+            android:text="@string/btn_grab_frame" />
 
         <TextView
+            style="@style/SectionHint"
+            android:text="@string/hint_grab_frame" />
+
+        <View
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:textSize="12sp"
-            android:text="Screenshots are saved to this app's external files dir / shots. Crop the 720p-relative regions you want to match and drop the PNGs into app/src/main/assets/templates/." />
+            android:layout_height="24dp" />
 
     </LinearLayout>
 </ScrollView>

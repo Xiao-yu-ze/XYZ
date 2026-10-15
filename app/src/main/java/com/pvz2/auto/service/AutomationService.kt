@@ -120,7 +120,7 @@ class AutomationService : Service() {
                     intent.getParcelableExtra(EXTRA_RESULT_DATA)
                 }
                 if (resultData == null) {
-                    fail("No screen-capture consent data")
+                    fail("没有拿到屏幕录制授权数据")
                 } else {
                     launchLoop { runFallbackLoop(resultCode, resultData) }
                 }
@@ -189,14 +189,14 @@ class AutomationService : Service() {
     /** Primary path: everything runs as shell through the Shizuku UserService. */
     private suspend fun runShizukuLoop() {
         if (!ShizukuBridge.hasPermission()) {
-            fail("Shizuku permission not granted")
+            fail("尚未获得 Shizuku 权限")
             return
         }
 
         shizukuClient.bind()
         val service = shizukuClient.await()
         if (service == null) {
-            fail("Shizuku UserService did not connect: ${shizukuClient.lastError ?: "timeout"}")
+            fail("Shizuku UserService 未连接：${shizukuClient.lastError ?: "超时"}")
             return
         }
 
@@ -204,10 +204,10 @@ class AutomationService : Service() {
         // pumping frames through it.
         val displaySize = runCatching { service.getDisplaySize() }.getOrNull().orEmpty()
         if (displaySize.isEmpty()) {
-            fail("Privileged shell is not responding")
+            fail("特权 shell 无响应")
             return
         }
-        BotState.setStatus("Shizuku ready ($displaySize)")
+        BotState.setStatus("Shizuku 就绪（$displaySize）")
 
         capturer = ShizukuScreenCapturer(shizukuClient)
         injector = ShizukuTouchInjector(shizukuClient)
@@ -218,7 +218,7 @@ class AutomationService : Service() {
     private suspend fun runFallbackLoop(resultCode: Int, resultData: Intent) {
         val accessibility = Pvz2AccessibilityService.instance
         if (accessibility == null) {
-            fail("Fallback needs the accessibility service enabled")
+            fail("降级方案需要先启用无障碍服务")
             return
         }
 
@@ -322,7 +322,7 @@ class AutomationService : Service() {
      */
     private fun loadMatcher(): Boolean {
         if (!OpenCVLoader.initLocal()) {
-            fail("OpenCV native library failed to load")
+            fail("OpenCV 原生库加载失败")
             return false
         }
 
@@ -331,7 +331,7 @@ class AutomationService : Service() {
         matcher = loaded
         if (loaded.loadedCount == 0) {
             Log.w(TAG, "no templates found in assets/${TemplateMatcher.DEFAULT_ASSETS_DIR}")
-            BotState.setStatus("Running with 0 templates - see assets/templates/README.md")
+            BotState.setStatus("未找到模板图，循环空跑中")
         }
         return true
     }
@@ -375,24 +375,24 @@ class AutomationService : Service() {
     /** Saves a single frame so the user can crop templates out of it. */
     private suspend fun grabOneFrame() {
         if (!OpenCVLoader.initLocal()) {
-            fail("OpenCV native library failed to load")
+            fail("OpenCV 原生库加载失败")
             return
         }
         if (!ShizukuBridge.hasPermission()) {
-            fail("Grabbing a frame needs Shizuku permission")
+            fail("抓取截图需要 Shizuku 权限")
             return
         }
 
         shizukuClient.bind()
         val service = shizukuClient.await()
         if (service == null) {
-            fail("Shizuku UserService did not connect")
+            fail("Shizuku UserService 未连接")
             return
         }
 
         val frame = ShizukuScreenCapturer(shizukuClient).capture()
         if (frame == null) {
-            fail("Frame capture failed")
+            fail("截图失败")
             return
         }
 
@@ -403,7 +403,7 @@ class AutomationService : Service() {
             val baseDir = getExternalFilesDir(null)
             if (baseDir == null) {
                 bitmap.recycle()
-                fail("No external files directory available")
+                fail("没有可用的外部存储目录")
                 return
             }
             val directory = File(baseDir, "shots").apply { mkdirs() }
@@ -412,7 +412,7 @@ class AutomationService : Service() {
             bitmap.recycle()
 
             Log.i(TAG, "saved $file")
-            BotState.setStatus("Saved ${file.absolutePath}")
+            BotState.setStatus("已保存：${file.absolutePath}")
         } finally {
             frame.release()
         }
@@ -423,7 +423,7 @@ class AutomationService : Service() {
     private fun showPanel() {
         if (floatingWindow != null) return
         if (!android.provider.Settings.canDrawOverlays(this)) {
-            BotState.setStatus("Grant \"display over other apps\" to get the floating panel")
+            BotState.setStatus("请授予「显示在其他应用上层」权限以使用悬浮面板")
             return
         }
         floatingWindow = FloatingWindow(this).also {

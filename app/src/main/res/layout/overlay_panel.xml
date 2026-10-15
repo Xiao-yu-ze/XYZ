@@ -1,26 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Floating control panel. Kept deliberately small and anchored to the left edge so it
-  never covers the play field. Only the title row is draggable, which leaves the
-  buttons clickable.
+  悬浮控制面板。
+
+  设计约束：不能挡住游戏主区域。
+    - 只在标题行可拖动，按钮行保持可点
+    - 整体紧凑，默认贴左边缘
+    - 半透明深色底，在游戏的亮色画面上也看得清
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:background="#CC1B1B1B"
+    android:background="@drawable/bg_overlay_panel"
     android:orientation="vertical"
-    android:padding="6dp">
+    android:padding="4dp">
 
-    <TextView
+    <!-- 拖动把手：只有这一行响应拖动 -->
+    <LinearLayout
         android:id="@+id/dragHandle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
         android:paddingHorizontal="8dp"
-        android:paddingVertical="6dp"
-        android:text="@string/overlay_title"
-        android:textColor="#FFFFFF"
-        android:textSize="12sp"
-        android:textStyle="bold" />
+        android:paddingVertical="6dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/overlay_title"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:text="⋮⋮"
+            android:textColor="#80FFFFFF"
+            android:textSize="11sp" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/overlayStatus"
@@ -29,29 +48,40 @@
         android:paddingHorizontal="8dp"
         android:paddingBottom="4dp"
         android:textColor="#B0FFFFFF"
-        android:textSize="10sp" />
+        android:textSize="9sp" />
 
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="horizontal">
+        android:orientation="horizontal"
+        android:paddingHorizontal="2dp"
+        android:paddingBottom="2dp">
 
         <Button
             android:id="@+id/btnOverlayStart"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:background="@drawable/bg_overlay_button"
             android:minWidth="0dp"
-            android:paddingHorizontal="12dp"
+            android:minHeight="0dp"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="7dp"
             android:text="@string/overlay_start"
-            android:textSize="12sp" />
+            android:textColor="#FFFFFF"
+            android:textSize="11sp" />
 
         <Button
             android:id="@+id/btnOverlayStop"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_overlay_button"
             android:minWidth="0dp"
-            android:paddingHorizontal="12dp"
+            android:minHeight="0dp"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="7dp"
             android:text="@string/overlay_stop"
-            android:textSize="12sp" />
+            android:textColor="#FFFFFF"
+            android:textSize="11sp" />
     </LinearLayout>
 </LinearLayout>

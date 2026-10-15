@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 悬浮面板按钮：比系统默认按钮更扁更紧凑，避免占太多游戏画面 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#3DFFFFFF" />
+    <corners android:radius="6dp" />
+    <stroke
+        android:width="1dp"
+        android:color="#40FFFFFF" />
+</shape>
