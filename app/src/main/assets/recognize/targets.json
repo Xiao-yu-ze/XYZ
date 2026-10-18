@@ -1,0 +1,38 @@
+{
+  "_doc": "识别目标库。加一张图 = 把 png 放进 assets 下 + 在这里加一条。image 是相对 assets/ 的完整路径。",
+  "version": 1,
+  "targets": [
+    {
+      "id": "ji_competitive",
+      "name": "竞技按钮",
+      "type": "template",
+      "image": "create_yard/竞技.png",
+      "roi": [0, 0, 1280, 720],
+      "threshold": 0.8
+    },
+    {
+      "id": "endless_entry",
+      "name": "无尽挑战入口",
+      "type": "template",
+      "image": "Endless/无尽挑战.png",
+      "roi": [0, 0, 1280, 720],
+      "threshold": 0.8
+    },
+    {
+      "id": "endless_settlement",
+      "name": "关卡结算（继续挑战）",
+      "type": "template",
+      "image": "Endless/继续挑战_恭喜过关.png",
+      "roi": [0, 0, 1280, 720],
+      "threshold": 0.8
+    },
+    {
+      "id": "endless_out",
+      "name": "离开无尽挑战",
+      "type": "template",
+      "image": "Endless/out.png",
+      "roi": [0, 0, 1280, 720],
+      "threshold": 0.8
+    }
+  ]
+}
