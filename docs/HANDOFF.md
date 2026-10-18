@@ -439,6 +439,219 @@ ELF 0x022e7c68  asr    w9,w9,#0x1  ; 算术右移，不是 /2
 
 ---
 
+### 会话 7 — 识别层首次真机验证 + 虚拟屏（方案 B）三路调研
+
+本会话解决了两件长期悬着的事：**识别层到底能不能用**（有答案了），
+以及**「游戏后台跑」这个需求到底怎么实现**（有完整配方了）。
+
+#### 7.1 ★ 识别层验证通过 —— 拖最久的未知数解决了
+
+游戏停在主界面时 `screencap` 抓 1280×720，对 11 个模板算 `TM_CCOEFF_NORMED`：
+
+| 模板 | 分数 | 位置 | 判定 |
+|---|---|---|---|
+| **`create_yard/竞技.png`** | **0.9920** | (800, 673) | **强命中** |
+| `Start_game/叉叉.png` | 0.7640 | (1052,524) | 偏弱 |
+| `Endless/frame/boss/僵王的头.png` | 0.7330 | (1147,225) | 偏弱 |
+| `Endless/frame/僵尸头像.png` | 0.6449 | (139,482) | 未命中 |
+| `Endless/frame/boss/功夫僵王.png` | 0.6443 | (437,408) | 未命中 |
+| 其余 6 个 | 0.25 ~ 0.50 | — | 未命中 |
+
+**MaaPVZ 阈值是 0.8，0.9920 远高于它。**
+
+这幅结果有两层意义：
+1. **模板、assets 布局、720p 基准 + `scale=1.0`、算法实现 —— 全部正确。**
+2. 其余 10 个模板低分是**正确行为**：它们属于无尽挑战局内/结算界面，
+   当前屏没有那些元素。**这反过来证明不会乱匹配。**
+
+**方法（重要，因为 App 内的路径现在走不通）**：见 7.5。
+
+#### 7.2 方案 B（虚拟屏后台跑）—— 三路独立调研，结论收敛
+
+需求：真机、无 root、游戏不占物理屏。派了三个研究员分头查
+MaaFramework / scrcpy / AOSP 能力边界，**三条独立路线收敛到同一套 API**。
+
+**建屏**
+```kotlin
+DisplayManager(FakeContext).createVirtualDisplay(name, w, h, dpi, surface, flags)
+// packageName 必须传 "com.android.shell"（validatePackageName）
+```
+
+**flags（三份实现一致；常量值来自 AOSP `android14-release`）**
+
+| flag | 值 |
+|---|---|
+| PUBLIC / PRESENTATION / OWN_CONTENT_ONLY / SUPPORTS_TOUCH | 1 / 2 / 8 / 64 |
+| ROTATES_WITH_CONTENT / DESTROY_CONTENT_ON_REMOVAL | 128 / 256 |
+| TRUSTED / OWN_DISPLAY_GROUP / ALWAYS_UNLOCKED / TOUCH_FEEDBACK_DISABLED | 1024 / 2048 / 4096 / 8192 |
+| OWN_FOCUS / DEVICE_DISPLAY_GROUP / STEAL_TOP_FOCUS_DISABLED | 16384 / 32768 / 65536 |
+
+基础集 **459**，API33+ 加 **15360**，API34+ 再加 **49152** → 总计 **74971**。
+开 system decorations 再 `+512`。
+
+**★ `PUBLIC` 为什么必需（机制，不是拍脑袋）**：
+缺 PUBLIC → 虚拟屏被标 `DisplayDeviceInfo.FLAG_PRIVATE` →
+`DisplayInfo.hasAccess(uid)` 对**非 owner uid** 返回 false。而 ownerUid 是
+`com.android.shell`，游戏是另一个 uid → **挂不上窗口**。
+（Mi-FreeForm / MaaScreen 只传 `PRESENTATION` 也能跑，是因为它们把自己 App
+的窗口放上去，`uid == ownerUid`；换成搬别的 App 就不行。）
+
+**权限为什么能过 —— 不是绕，是 shell 的既有特权**
+`packages/Shell/Android.bp`：`certificate: "platform"`、`privileged: true`。
+其 manifest 显式持有 `ADD_TRUSTED_DISPLAY`、`INJECT_EVENTS`、`ACCESS_SURFACE_FLINGER`、
+`MANAGE_ACTIVITY_TASKS`、`INTERNAL_SYSTEM_WINDOW` 等，**但没有 `CAPTURE_VIDEO_OUTPUT`**。
+
+**★ 关键**：`DisplayManagerService.createVirtualDisplay` 里那条权限检查的开关是
+**`AUTO_MIRROR`**，不是 PUBLIC：
+```java
+if ((flags & FLAG_OWN_CONTENT_ONLY) != 0) flags &= ~FLAG_AUTO_MIRROR;   // 覆盖掉
+if (callingUid != SYSTEM_UID && (flags & FLAG_AUTO_MIRROR) != 0) {
+    if (!canProjectVideo(projection)) throw new SecurityException(...);  // 我们永远走不到这
+}
+```
+我们的 flags 永不含 `AUTO_MIRROR`，所以这条检查直接跳过。
+**推论（高置信、未取到原文行）**：Android 13+ 为 `TRUSTED` 另加了一道
+`ADD_TRUSTED_DISPLAY` 检查 → **API 33+ 必须带 `TRUSTED`**，否则会落到需要
+`CAPTURE_VIDEO_OUTPUT` 的分支而被拒。
+
+**这条路走不通的**（已排除，别再试）：
+- `MediaProjection.createVirtualDisplay` —— 服务端对普通 App **强制**改写 flags 为
+  `AUTO_MIRROR | PRESENTATION`，注释原文「Do not declare a display id to mirror;
+  default to the default display」，**只能镜像默认屏**。Android 14 的
+  partial screen sharing 因此也无关。
+- `cmd display` —— 全量子命令里**没有** create-virtual-display。
+- `SurfaceControl.createDisplay` —— 只用于「镜像主屏」的 fallback；Android 12 起
+  shell 不能建 secure display。
+
+**版本底线：Android 11+，不是 10。**
+scrcpy 代码写的是 `SDK_INT < 29` 拒绝，但 issue #5541 实测推翻：
+Android 10 上**能建屏、但任何 App 都被拉回主屏**（弹 "app doesn't support to
+launch on secondary display"）。维护者同意把条件改成测 Android 11。
+
+**其余环节**
+
+| 环节 | 做法 |
+|---|---|
+| 拉 App | `ActivityOptions.makeBasic().launchDisplayId = id` → `IActivityManager.startActivityAsUser`；失败退 `am start --display N` |
+| 截屏 | **`screencap -d <物理id>` 裸格式**：头 `w,h,format,colorspace` 4×u32 + RGBA8888 行。省掉 PNG 编解码 |
+| 也有 | MaaFwApp 用 NDK `AImageReader(RGBA_8888, CPU_READ_OFTEN\|GPU_SAMPLED_IMAGE, 5)` 当 surface 消费端 |
+| 注入 | `InputEvent.setDisplayId(<逻辑id>)` → `InputManager.injectInputEvent`；**DOWN 用 `WAIT_FOR_FINISH(2)`，MOVE/UP 用 `ASYNC(0)`** |
+| 保活 | 虚拟屏不需要 `setDisplayPower`；用 `PowerManager.userActivity(displayId)` |
+
+**★ 三个 id 不是同一个东西（会踩）**
+- `screencap -d` → **物理 display id**（`ScreenshotClient.captureDisplay(PhysicalDisplayId)`）
+- `am start --display` / `input -d` → **逻辑 display id**
+- `input -d` 是**全局选项**，必须写在子命令**之前**：`input [-d ID] tap x y`
+
+**★ 不传 `-d` 会点到用户主屏**：`displayId == INVALID_DISPLAY` 且 source 是指针类时，
+会自动回落 `DEFAULT_DISPLAY` —— 调试时极易误点到用户正在用的界面。永远显式传 `-d`。
+
+**旋转：不要用 `freezeRotation`**
+它不是 `wm` 子命令（真名 `wm user-rotation -d <id> lock <rot>` → `IWindowManager.freezeDisplayRotation`），
+且**方法签名在版本间碎了三次**，老版本只支持默认屏。scrcpy 完全不用它，走纯客户端方案：
+读 `DisplayInfo.rotation` → `rotation%2!=0` 时交换 w/h → 截帧做 AffineMatrix 逆变换 →
+**注入坐标用物理尺寸坐标系**。跟这个走，可移植性好得多。
+
+根因（scrcpy 注释）：**`createVirtualDisplay` 给你的 Surface 永远是「未旋转」的原始朝向，
+而 `DisplayInfo` 报的是「旋转后」的尺寸** —— 两者不一致时截图会歪、注入要补逆变换。
+
+#### 7.3 ★ 两个会咬人的坑（都直接影响现有代码）
+
+**① `input tap` 在低帧率下会丢点击**
+MaaFwApp 的 `TapHoldPolicy.minHoldMs(fps)` 按帧率补足最短按住时长。
+游戏在副屏跑不满帧时，**down/up 落进同一帧间隙 → 整次点击丢失**。
+表现是「偶尔点不中」，最难查。
+→ **必须改成 DOWN/UP 分离 + 可控最短按住**，不能用 `input tap`。
+（这也解释了 MaaFramework 的 `MaaControllerFeature_UseMouseDownAndUpInsteadOfClick`。）
+
+**② 虚拟屏「没人画就没帧」**
+scrcpy 文档原文：*"if no app is started, no content will be rendered, so no video
+frame will be produced at all"*。MaaFwApp 因此有 `awaitFirstFrame()`（5s 超时）并
+**拒绝在虚拟屏空置时启动任务**。
+→ **顺序是硬约束：先拉 App → 等首帧 → 之后才截图。**
+
+#### 7.4 OEM 风险清单（都有出处，全部需真机实测）
+
+| 机型/ROM | 现象 | 对策 |
+|---|---|---|
+| **小米/MIUI** | `INJECT_EVENTS` 被拆成开发者选项「USB 调试(安全设置)」，关着就 `SecurityException` | 根因属性 **`persist.security.adbinput`**，打开或直接查这个值 |
+| **三星 One UI** | 启动后把游戏从虚拟屏挪回主屏 | MaaFwApp 的 `ensureAppOnDisplay` 三连：`moveRootTaskToDisplay` → `am display move-stack` → 重投 intent |
+| iQOO NEO6 / realme GT Neo5 SE (A14) | `--new-display` 白屏（无 launcher） | `--no-vd-system-decorations --start-app=<app>` |
+| 魅族 Flyme / Android 16 | 副屏上 `TOUCH_DOWN` 返回 `injectInputEvent=false` | 只能靠完整元数据日志区分是谁拒的 |
+| AYN Odin2 等横屏原生机 | `freezeRotation` 对副屏无效 | 补 `setForcedDisplaySize(vdId,w,h)` |
+| Android 12+ | shell 无法建 **secure** 虚拟屏 | DRM/受保护内容必黑。PVZ2 不涉及 |
+| Android 15 QPR2 | 有「shell 建虚拟屏被改坏」的回归报告（仅标题级证据，未确证范围） | 待实测 |
+| 部分 ROM | `config_supportsMultiDisplay` 被关 → 副屏起 App 整机性失败 | **与我们写不写 binder 无关，必须先测这一项** |
+
+**未找到**「某游戏在虚拟屏上必然黑屏」的实例报告 —— 但**必须实测**。
+近似风险：[flutter#172641] VirtualDisplay 内的 SurfaceView 解锁后不可用
+（若 PVZ2 用 SurfaceView，配合「熄屏挂机+定时亮屏」要测）。
+
+#### 7.5 为什么识别验证跑到 PC 上做
+
+App 内的两条触发路径现在都不通：
+- 点 App 里的按钮 → **App 变前台** → `screencap` 截到 App 自己。
+  **这就是会话 5 那批低分的真正原因**，当时误判成「人没停在正确界面」。
+- `am startservice` 被 Android 12 挡：`Error: app is in background uid null`。
+
+**绕法**：`screencap` 抓游戏画面 → 复制到 PC → 用 MaaPVZ 自带 Python(numpy) 跑
+自己实现的 `TM_CCOEFF_NORMED`（FFT 求交叉项 + 积分图求窗口和，与 OpenCV 同思路）。
+脚本：`_probe/ncc_probe.py`。
+
+**已知差异**：灰度而非 app 的 CV_8UC4 四通道 → 数值不会与 app 完全一致，
+但对「能不能匹配上」够用。
+
+**遗留**：App 内仍没有「不抢前台的触发方式」。正解是**通知栏操作按钮**或
+**悬浮面板按钮**（悬浮窗/通知都不改变前台 App），见 7.6。
+
+#### 7.6 修掉的 bug（三个，都是我自己引入或遗漏的）
+
+**① `coords.json` 静默消失** —— 同步脚本第 1 步复制 coords.json，第 2 步
+`Copy-Into` 把**整个 assets/ 删掉重建**，把它抹了。
+症状极阴：目录看着都在，只有 `CoordsTable.point()` 会在很久之后抛「坐标不存在」。
+已改成遍历 `image/` 的子项逐个复制，不动 assetsDir 本身。
+
+**② `jobs/*.json` 被 git 跟踪** —— `.gitignore` 对**已跟踪**文件无效，
+所以那两个 MaaPVZ 作业集从初始提交就一直在仓库里。已 `git rm --cached`（磁盘保留）。
+
+**③ `edit` 工具会弄丢 UTF-8 BOM** —— PowerShell 5.1 随后按 GBK 读，
+中文注释直接把解析器搞崩（报「意外的标记 `}`」「字符串缺少终止符」）。
+**这是第二次踩**。`tools/*.ps1` 改完必须补 BOM。
+
+#### 7.7 工具链备忘（换机器时不用重新试错）
+
+**GitHub 被 hosts 屏蔽**（`github.com` / `raw.githubusercontent.com` → 127.0.0.1），
+但这两条通道可用（已实测）：
+```
+https://gh-proxy.com/https://raw.githubusercontent.com/<user>/<repo>/<branch>/<path>
+https://gh-proxy.com/https://api.github.com/repos/<owner>/<repo>/git/trees/<branch>?recursive=1
+AOSP: https://gh-proxy.com/https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/<branch>/<path>
+      branch 实测可用：android10-release / android11-release / android14-release
+```
+`maafw.com` 有 http↔https 重定向循环、取不到；`*.github.io` 可访问；
+`cs.android.com` / `android.googlesource.com` 不可达。
+
+**会话工作目录**：项目实体在 `桌面\pvz安卓自动化`，而会话绑的是旧的
+`桌面\pvz`（改名后留下的空目录，且被 DSH 占用无法直接删）。
+已把 `pvz` 做成指向 `pvz安卓自动化` 的 **目录联接（Junction）**，两边互通。
+真实项目一个字节没动；必要时删联接重建空目录即可还原。
+
+#### 验证到哪
+
+| 项 | 状态 |
+|---|---|
+| **模板匹配（真机画面）** | ✅ **0.9920，决定性验证通过** |
+| assets 完整性 | ✅ coords/ocr/jobs/pipeline 全在 |
+| 虚拟屏方案可行性 | ✅ 三路源码级确证（MaaFramework / scrcpy / AOSP） |
+| 虚拟屏**实际跑通** | ❌ **未做** —— 需要先真机实测 `config_supportsMultiDisplay` |
+| 游戏能否在虚拟屏正常渲染 | ❌ **未做** —— 唯一没被源码证明的环节 |
+| OCR | ❌ 仍未验证 |
+| App 内不抢前台的触发方式 | ❌ 未实现（通知栏按钮 / 悬浮面板按钮） |
+
+---
+
+## 未验证项与已知风险
+
 ### 🔴 高优先级
 
 1. **OCR 从未在真机跑过。** `OcrEngine` 是手写 ONNX 推理，三处都可能错：
@@ -447,9 +660,9 @@ ELF 0x022e7c68  asr    w9,w9,#0x1  ; 算术右移，不是 /2
    - PP-OCR 的 NCHW 布局与归一化参数。
    **若模板匹配正常但 OCR 全灭，问题一定在这三处。**
 
-2. **识别分数未知。** ~~没有任何真实分数数据~~
-   **已有首批数据（会话 5）**，但当时游戏不在对应界面，分数不可用于判定。
-   需要在正确的界面上重测。
+2. **识别分数 —— 已解决（会话 7）。** 模板匹配在真实游戏画面上
+   `create_yard/竞技.png` = **0.9920**，远高于 0.8 阈值。
+   会话 5 那批低分是**方法错误**（App 抢了前台，截到的是 App 自己），已作废。
 
 3. **`Recognizer.kt` 的 `box` 量纲 bug**（会话 1 第 3 点）。
    **会话 5 复核：不是 bug，是写法绕。**
@@ -482,32 +695,50 @@ ELF 0x022e7c68  asr    w9,w9,#0x1  ; 算术右移，不是 /2
 
 ## 下一步
 
-**当前卡在真机验证**（我无设备、无 PVZ2 环境）。
+**状态**：识别层已验证通过；虚拟屏方案已完成调研、尚未实现。
+不再卡在「无设备」—— 本会话有设备（MuMu）且脚本环境已恢复。
 
-### 你要做的
+### 技术债，按优先级
+
+| # | 事项 | 为什么这个顺序 | 依赖 |
+|---|---|---|---|
+| **1** | **`TouchInjector` 改成 DOWN/UP + 可控最短按住** | 见 7.3①。**现有前台路径同样有丢点击风险**，且表现是「偶尔点不中」——最难查。纯本地改动，不需要虚拟屏、不需要真机 | 无 |
+| **2** | **App 内「不抢前台」的触发方式**（通知栏操作按钮，或悬浮面板按钮） | 见 7.5。现在识别自检/干跑只能靠点 App 按钮，一点就抢前台 → 截到 App 自己。没有这个，App 内的识别链路**永远验不了** | 无 |
+| 3 | 虚拟屏（方案 B）实现 | 配方齐全（7.2），但先做 1、2 才有意义 —— 没有 2 就无法在 App 内验证 | 真机实测 |
+| 4 | `screencap` 加 `-d` + 换裸格式 | 同时是现有路径的性能优化（省 PNG 编解码） | 3 |
+| 5 | OCR 验证 | 仍未跑过一次（见「已知风险」第 1 条） | 2 |
+
+### 虚拟屏落地前必须先测的（顺序有讲究）
 
 ```powershell
-# 1. 同步素材（必须，否则 pipeline 是空的）
-.\tools\sync-maapvz-assets.ps1 -MaaPvzRoot "C:\Users\29374\Desktop\MaaPVZ-win-x86_64-v0.5.4-ci.261001-670c36e"
+# ① 最关键：目标机型的 config_supportsMultiDisplay 有没有被 OEM 关掉
+adb shell dumpsys activity settings | findstr -i multidisplay
+#    若为 false，副屏起 App 会整机性失败 —— 与我们写不写 binder 无关，早发现早换路
 
-# 2. 编译
-.\gradlew.bat :app:assembleDebug
+# ② 用现成 scrcpy 验证整条架构（零代码，需要 scrcpy 3.x）
+scrcpy --new-display=1280x720 --no-vd-system-decorations --start-app=<游戏包名>
 
-# 3. 装到手机，停在 PVZ2 主界面（能看到「竞技」按钮）
-#    点「① 识别链·干跑」（只识别不点击）
+# ③ 确认 screencap -d 对虚拟屏有效
+adb shell dumpsys SurfaceFlinger --display-id    # 拿物理 id
+adb shell screencap -d <物理id> -p /sdcard/vd.png
 
-# 4. 看日志
-adb logcat -s PipelineRunner:I NodeGraph:I Recognizer:I OcrEngine:I
+# ④ 确认注入能到副屏（注意 -d 在子命令之前）
+adb shell input -d <逻辑id> tap 640 360
+
+# ⑤ 顺带验证权限推断：去掉 TRUSTED flag 是否被拒（API 33+）
 ```
 
-### 结果如何判读
+**先在 MuMu（Android 12）上跑通再上真机** —— 出问题好排查。
 
-| 结果 | 下一步 |
-|---|---|
-| 三节点命中，分数 ≥0.90，OCR 能认对「开始挑战/继续挑战」 | **识别层可用** → 值得推进移植引擎（方案 A/B） |
-| 模板匹配正常，**OCR 全灭** | 先修 OCR，集中在 `OcrEngine.kt` 三处 |
-| 模板分数普遍偏低 | 检查模板缩放策略（`Recognizer.scale` vs MaaPVZ 的 720p 裁剪基准） |
-| 完全没反应 | 检查截图链路 `ShizukuScreenCapturer`、确认 assets 已同步 |
+### 现在就能验证识别（不需要 App）
+
+```powershell
+adb shell screencap -p /sdcard/f.png
+adb pull /sdcard/f.png _probe\vframe.png
+& "C:\Users\29374\Desktop\MaaPVZ-win-x86_64-v0.5.4-ci.261001-670c36e\python\python.exe" `
+    _probe\ncc_probe.py _probe\vframe.png
+```
+脚本在 `_probe/ncc_probe.py`（不在版本库里）。
 
 ### 预期会看到「失败」
 
@@ -527,9 +758,15 @@ adb logcat -s PipelineRunner:I NodeGraph:I Recognizer:I OcrEngine:I
 | `e9aa665` | chore: verify credential helper enables automatic push |
 | `e201e6c` | docs+tooling: verify Shizuku end-to-end on device, on both root and ADB |
 | `193d69e` | feat(maa): port MaaPVZ pipeline layer and harden the Pvz2Ui action wrapper（会话 2） |
-| *待提交* | 会话 4：方案 C 识别链 + 4 个 bug 修复 |
-| *待提交* | 会话 5：真机验证 + 修 assets 布局（铺到 assets 根下） |
+| `5bc4f22` | fix(assets): mirror MaaPVZ resource/image at the assets root so pipeline paths resolve（会话 5） |
+| `7fa9fb4` | fix(coords): follow the game's own screen-offset algorithm; rework the UI（会话 6） |
+| `c78af39` | style(ui): ground the palette in the game's own world; make the setup a checklist（会话 6） |
+| `2bb0352` | fix(sync): stop the image copy from deleting coords.json; untrack the job set（会话 7） |
 
-> **注意**：`app/src/main/assets/` 下的 `maapvz/`、`ocr/`、`jobs/`、`pipeline/`、
-> `coords.json` 都在 `.gitignore` 里（游戏素材版权 + 模型体积），
-> **只保留在本机，不入库**。换机器必须重跑同步脚本。
+> **注意**：`app/src/main/assets/` 下的 `coords.json`、`ocr/`、`jobs/`、`pipeline/`
+> 以及所有游戏模板图目录都在 `.gitignore` 里（游戏素材版权 + 模型体积），
+> **只保留在本机，不入库**。换机器必须重跑
+> `tools/sync-maapvz-assets.ps1 -MaaPvzRoot "<MaaPVZ 路径>"`。
+>
+> 同步脚本改完**必须确认 UTF-8 BOM 还在**（`edit` 工具会弄丢，PowerShell 5.1
+> 按 GBK 读会把中文注释读崩，报「意外的标记」）。
