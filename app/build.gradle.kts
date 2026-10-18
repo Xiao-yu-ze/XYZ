@@ -78,4 +78,10 @@ dependencies {
     // PaddleOCR inference for the Chinese UI text the Endless flow reads
     // (开始挑战 / 清空卡牌 / 继续挑战 / 第 / 确定 / 最后一关 / 0/80).
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+
+    // ---- 单元测试（纯 JVM，不需要模拟器/真机）----
+    testImplementation("junit:junit:4.13.2")
+    // org.json 必须显式加这条。Android SDK 里虽然有 org.json，但那是桩实现，
+    // 单测环境下一调用就抛 "not mocked"。加了这条真实现才会生效。
+    testImplementation("org.json:json:20240303")
 }
