@@ -631,10 +631,10 @@ AOSP: https://gh-proxy.com/https://raw.githubusercontent.com/aosp-mirror/platfor
 `maafw.com` 有 http↔https 重定向循环、取不到；`*.github.io` 可访问；
 `cs.android.com` / `android.googlesource.com` 不可达。
 
-**会话工作目录**：项目实体在 `桌面\pvz安卓自动化`，而会话绑的是旧的
-`桌面\pvz`（改名后留下的空目录，且被 DSH 占用无法直接删）。
-已把 `pvz` 做成指向 `pvz安卓自动化` 的 **目录联接（Junction）**，两边互通。
-真实项目一个字节没动；必要时删联接重建空目录即可还原。
+**会话工作目录**（已过时，见会话 8）：项目曾叫 `桌面\pvz安卓自动化`，当时为了
+让 DSH 会话的工作目录能落到真实项目上，曾把 `桌面\pvz` 做成指向它的**目录联接
+（Junction）**。**该联接已在会话 8 连同中文目录一起删除** —— 项目现在就在
+`C:\pvz2auto`，不需要任何别名。这里保留记录只是解释历史上为什么会看到那个联接。
 
 #### 验证到哪
 
@@ -647,6 +647,150 @@ AOSP: https://gh-proxy.com/https://raw.githubusercontent.com/aosp-mirror/platfor
 | 游戏能否在虚拟屏正常渲染 | ❌ **未做** —— 唯一没被源码证明的环节 |
 | OCR | ❌ 仍未验证 |
 | App 内不抢前台的触发方式 | ❌ 未实现（通知栏按钮 / 悬浮面板按钮） |
+
+---
+
+### 会话 8 — 迁到 ASCII 路径 + 脚本系统起步
+
+#### 8.1 为什么搬家（有硬证据，不是理论）
+
+项目原来叫 `桌面\pvz安卓自动化`。AGP 默认拒绝对含非 ASCII 字符的路径构建。
+当时加了 `android.overridePathCheck=true` 试探，结论明确：
+
+| 从哪构建 | `assembleDebug` | `testDebugUnitTest` |
+|---|---|---|
+| 中文路径 | ✅ 成功 | ❌ **`ClassNotFoundException`** |
+| ASCII 联接路径 | ✅ 成功 | ✅ **7/7 通过** |
+
+`.class` 文件明明在 `build/tmp/kotlin-classes/debugUnitTest/` 下，JVM 测试进程就是
+加载不到 —— 中文路径卡在类加载器那一层。
+
+**那个开关只放行了编译，没放行工具链。** 所以最终搬到 ASCII 路径，而不是长期
+靠开关。`gradle.properties` 里已撤掉该开关并写了原因，别再改回来。
+
+#### 8.2 搬迁：`C:\pvz2auto`
+
+**过程中出过一次半搬事故，值得记住**：
+
+`Move-Item` 对目录是**逐项移动**的，不是原子重命名。它在 Android Studio 占着
+文件锁时中断，结果顶层文件（含 `.git` 145 个对象）搬走了，`_toolchain` 被劈成
+两半（解压好的在源、压缩包和日志在目标），源里还留了个空 `.git` 壳。
+
+修复方式是 `robocopy $src $dst /MOVE /E` —— 它能**合并**到已存在的目标目录，
+而 `Move-Item` 遇到已存在的目标会直接失败。
+
+**教训：大目录搬迁前先关掉 IDE，并且用 robocopy 而不是 Move-Item。**
+
+最终状态：
+- 项目在 `C:\pvz2auto`
+- `_toolchain` 完整：12831 文件 / 1727.8 MB，`jdk17`、`gradle-8.13`、
+  `android-sdk` 三个关键组件都验过存在
+- `Desktop\pvz` 那个联接**已删除**（不再需要别名）
+- `local.properties` 的 `sdk.dir=D:\sdk`（AS 托管的那份，含 android-35
+  + build-tools 35，是从 `_toolchain` 复制过去的）
+
+> ⚠️ **搬迁后还没跑过构建和单测。** 搬完紧接着执行层就坏了（见 8.6），
+> 所以「中文路径下 7/7 通过」这个结论**只对旧路径有效**。
+> **接手第一件事就是在新路径验证**：
+> ```
+> gradlew.bat :app:testDebugUnitTest :app:assembleDebug -PincludeX86=true
+> ```
+> 预计能过（改名不影响内容），但在真跑过之前不要当成已验证。
+
+#### 8.3 脚本系统 · 识别目标库
+
+新包 `com.pvz2.auto.script`。第一层是**内置识别目标库**：
+
+```
+app/src/main/assets/recognize/targets.json   ← 数据，你改这个
+app/src/main/java/.../script/RecognizeTarget.kt  ← 读它的代码
+```
+
+**为什么要有这层**：脚本里不该出现「模板路径 + 阈值 + ROI」。写脚本的人只想
+知道「这关打完了没有」。所以把「长什么样」和「怎么用」分开，脚本只写一个 id。
+
+**加一个识别目标 = 两步，不用改 Kotlin**：
+1. 把 png 丢进 `assets/`（自己截的放 `assets/recognize/`）
+2. 在 `targets.json` 加一条：
+```json
+{ "id": "my_button", "name": "我的按钮", "type": "template",
+  "image": "recognize/我的按钮.png", "roi": [0,0,1280,720], "threshold": 0.8 }
+```
+`image` 一律写**相对 `assets/` 的完整路径**。
+
+两个设计决定：
+- **`roi` 用 `List<Int>` 而不是 `IntArray`**。data class 的自动 equals 对数组是
+  按引用比较的，两个内容相同的 IntArray 会被判为不相等 —— 而且不报编译错，
+  只在某处突然认不出目标。只在交给 `Recognition` 时才 `toIntArray()`。
+- **解析失败整份报错并列出每一处问题**，不静默跳过。静默跳过会表现为
+  「脚本跑到那里就不动了」，极难查。
+
+初始 4 条用的是已同步的 MaaPVZ 图片，现在就能用：
+`ji_competitive`(create_yard/竞技.png，实测 0.9920) / `endless_entry` /
+`endless_settlement` / `endless_out`。
+
+#### 8.4 脚本系统 · 数据模型 + JSON 读写
+
+```
+ScriptDef.kt        Script / Action / Condition / Variable + 枚举 + dump()
+ScriptJson.kt       String ↔ Script，纯 Kotlin 不依赖 Android
+ScriptJsonTest.kt   7 个单测
+```
+
+**结构对照自动精灵**（模型是逆向 `D:\自动精灵\zdjl` 的前端 bundle 得到的）：
+
+- 动作全集 P0 七个：**种植物 / 喂能量豆 / 铲植物 / 点击 / 滑动 / 跳转 / 组合动作**
+- **「识别」不是动作，而是条件的通用字段** —— 这是关键设计。用户要的
+  「这关打完了识别结算再点」= `点击` 动作 + `识别:endless_settlement` 条件，
+  不需要单独的识别动作。动作库因此能保持极少，表达力却不受限。
+- 每个动作带：`preDelayMs` / `postDelayMs`（`300` 固定 或 `[200,500]` 区间随机）、
+  `repeat`、`repeatIntervalMs`、`conditions`、`label`、`children`、
+  四个监听钩子 `onBefore/onSuccess/onFail/onAfter`、`enabled`
+- `params` 用 `Map<String, Any?>` 而不是每种动作建一个类。动作类型会一直加，
+  一类型一类意味着每次改三处。代价是没有编译期键名检查，所以
+  `Action.string/int/bool/intList` 在缺键时抛带动作描述的异常。
+- 跳转语法抄自动精灵：`3` 第3条 / `+2` 后跳2 / `-1` 前跳1 / `-0` 重跑当前 /
+  `:A` 跳标识
+
+**7 个单测全过**（在旧路径跑出来的）。它们抓到过一个真错：我把
+`children[0].col` 断言成 2，而那份 json 里写的是 1 —— 是测试写错，代码是对的。
+这就是写测试的意义。
+
+#### 8.5 Kotlin 坑：`"$indent脚本"` 编译不过
+
+Kotlin 里**中文是合法的标识符字符**，所以这整串被解析成一个叫 `indent脚本` 的
+变量，报 `Unresolved reference`。必须写 `"${indent}脚本"`。
+
+**凡是变量后面紧跟中文，一律加大括号。** 从 C 过来不会有这个直觉。
+
+#### 8.6 执行层故障（与项目无关，但会挡路）
+
+会话后期 shell 反复不可用：
+
+```
+Error: spawn C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe ENOENT
+Error: spawn C:\Program Files\PowerShell\7\pwsh.exe ENOENT      ← 后来变成这个
+Error: grep subprocess failed (ripgrep provider failure)
+```
+
+特点：**文件读写（read/write/edit）正常，但所有需要起子进程的工具全废** ——
+shell、grep、git。所以本会话最后**没能 commit / push**，也没能跑构建验证。
+
+这是 harness 执行层的问题（它想启动的 shell 路径不存在，两次指向不同的
+PowerShell），不是项目代码问题。遇到时：重启 DSH Desktop；若仍不行，
+检查它配置的 shell 路径。
+
+#### 8.7 验证到哪
+
+| 项 | 状态 |
+|---|---|
+| 识别层模板匹配（真机画面 0.9920） | ✅ 已验证（会话 7） |
+| 识别目标库 `targets.json` + 解析 | ✅ 编译通过、4 张图存在 |
+| 脚本数据模型 + JSON 读写 | ✅ 编译通过、7/7 单测（**在旧路径**） |
+| **搬迁后构建/单测** | ❌ **未验证** —— 见 8.2 的警告 |
+| 脚本执行器 `ScriptRunner` | ❌ 未写（下一步） |
+| 虚拟屏 | ❌ 未实现（配方见会话 7） |
+| OCR | ❌ 仍未验证 |
 
 ---
 
@@ -762,6 +906,22 @@ adb pull /sdcard/f.png _probe\vframe.png
 | `7fa9fb4` | fix(coords): follow the game's own screen-offset algorithm; rework the UI（会话 6） |
 | `c78af39` | style(ui): ground the palette in the game's own world; make the setup a checklist（会话 6） |
 | `2bb0352` | fix(sync): stop the image copy from deleting coords.json; untrack the job set（会话 7） |
+| `61b1877` | docs: record the virtual-display research and the first real recognition check（会话 7） |
+| `72ed566` | build: allow the non-ASCII project path, now that it is verified to work（会话 8 已撤销该改动） |
+| `1bb575b` | feat(script): built-in recognition-target library, so scripts refer to names（会话 8） |
+| `afe0d6a` | feat(script): script data model and json codec, with unit tests（会话 8） |
+| *未提交* | 会话 8：迁到 `C:\pvz2auto`、撤销 `overridePathCheck`、本文档会话 8 |
+
+> **未提交的那批改动**：因为会话末期执行层坏掉（见 8.6），没能 commit/push。
+> 接手先确认工作区状态：
+> ```
+> cd C:\pvz2auto
+> git status --short
+> git add -A && git commit -m "chore: move to C:\pvz2auto, drop overridePathCheck, record session 8"
+> git push origin main
+> ```
+> 注意 `72ed566` 加的 `android.overridePathCheck` 已在这次改动里**撤掉**，
+> 因为 ASCII 路径下不需要它。
 
 > **注意**：`app/src/main/assets/` 下的 `coords.json`、`ocr/`、`jobs/`、`pipeline/`
 > 以及所有游戏模板图目录都在 `.gitignore` 里（游戏素材版权 + 模型体积），
