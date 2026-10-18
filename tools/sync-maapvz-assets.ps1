@@ -1,4 +1,4 @@
-# 把 MaaPVZ 的素材同步到本项目。
+﻿# 把 MaaPVZ 的素材同步到本项目。
 #
 # 为什么不直接把素材提交进仓库：
 #   MaaPVZ 采用 MIT 协议，但它的 README 明确指出：游戏截图素材的著作权归游戏厂商所有，
@@ -78,7 +78,21 @@ Copy-Into (Join-Path $MaaPvzRoot 'agent\assets\resource\coords.json') `
 # 文件名是正常 UTF-8（用设备上的 `unzip -l` 确认过），AssetManager.open 能直接打开。
 # 注意别用 Windows 的 apkanalyzer 去核对中文名 —— 它输出会乱码，容易误判成
 # 打包编码问题，从而做出一堆没必要的绕行。
-Copy-Into (Join-Path $resourceDir 'image') $assetsDir '模板图（对应 resource/image/）'
+#
+# ★ 不能直接 Copy-Into 整个 image 目录到 $assetsDir ★
+#   Copy-Into 会先 Remove-Item $destination -Recurse 再重建。
+#   如果 $destination 就是 assetsDir，会把**前面已经复制好的 coords.json
+#   一起删掉**（曾真实发生过：coords.json 静默消失，CoordsTable.point() 全崩）。
+#   所以这里是遍历 image/ 的每个子项，逐个复制到 assetsDir 下 —— 只覆盖同名项，
+#   不动 assetsDir 本身。
+$imageRoot = Join-Path $resourceDir 'image'
+if (Test-Path $imageRoot) {
+    Get-ChildItem $imageRoot -Force | ForEach-Object {
+        Copy-Into $_.FullName (Join-Path $assetsDir $_.Name) "模板 $($_.Name)"
+    }
+} else {
+    Write-Warning "跳过模板图（源不存在）：$imageRoot"
+}
 
 # --- 2b. 清掉 image/ 根目录下的散图 --------------------------------------------
 #
