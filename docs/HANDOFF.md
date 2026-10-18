@@ -689,13 +689,24 @@ AOSP: https://gh-proxy.com/https://raw.githubusercontent.com/aosp-mirror/platfor
 - `local.properties` 的 `sdk.dir=D:\sdk`（AS 托管的那份，含 android-35
   + build-tools 35，是从 `_toolchain` 复制过去的）
 
-> ⚠️ **搬迁后还没跑过构建和单测。** 搬完紧接着执行层就坏了（见 8.6），
-> 所以「中文路径下 7/7 通过」这个结论**只对旧路径有效**。
-> **接手第一件事就是在新路径验证**：
+> ✅ **搬迁后已在新路径验证通过**（会话 9 补跑）：
 > ```
-> gradlew.bat :app:testDebugUnitTest :app:assembleDebug -PincludeX86=true
+> $env:JAVA_HOME="C:\pvz2auto\_toolchain\jdk17\jdk-17.0.20.1+1"
+> .\_toolchain\gradle-8.13\gradle-8.13\bin\gradle.bat :app:testDebugUnitTest :app:assembleDebug -PincludeX86=true
 > ```
-> 预计能过（改名不影响内容），但在真跑过之前不要当成已验证。
+> 结果：`ScriptJsonTest` 7/7 通过、0 失败，`assembleDebug` BUILD SUCCESSFUL，
+> APK 193 MB 正常产出（含 x86 native 库）。**forked JVM 的类加载在 ASCII 路径下不再
+> 抛 ClassNotFoundException** —— 8.1 那个判断被坐实了。
+>
+> ⚠️ **踩坑记录：第一次跑 `testDebugUnitTest FROM-CACHE`，等于没验。**
+> `org.gradle.caching=true` 让测试任务直接吃了缓存，日志里一行 `FROM-CACHE` 就跳过去了，
+> 看起来 BUILD SUCCESSFUL 但 fork 出来的 JVM 根本没执行。要真验证必须强制重跑：
+> ```
+> gradle.bat :app:testDebugUnitTest -PincludeX86=true --rerun --no-build-cache
+> ```
+> 只认执行标记：日志里 `:app:testDebugUnitTest` 后面**不带** `UP-TO-DATE` / `FROM-CACHE`
+> 才是真跑过；再核对 `app/build/test-results/testDebugUnitTest/*.xml` 的
+> `tests="7" failures="0"` 和时间戳。
 
 #### 8.3 脚本系统 · 识别目标库
 
@@ -775,6 +786,7 @@ Error: grep subprocess failed (ripgrep provider failure)
 
 特点：**文件读写（read/write/edit）正常，但所有需要起子进程的工具全废** ——
 shell、grep、git。所以本会话最后**没能 commit / push**，也没能跑构建验证。
+（**会话 9 已补上**：新会话里执行层正常，改动已提交推送 `cfed6f9` 并补跑了验证。）
 
 这是 harness 执行层的问题（它想启动的 shell 路径不存在，两次指向不同的
 PowerShell），不是项目代码问题。遇到时：重启 DSH Desktop；若仍不行，
@@ -786,11 +798,36 @@ PowerShell），不是项目代码问题。遇到时：重启 DSH Desktop；若�
 |---|---|
 | 识别层模板匹配（真机画面 0.9920） | ✅ 已验证（会话 7） |
 | 识别目标库 `targets.json` + 解析 | ✅ 编译通过、4 张图存在 |
-| 脚本数据模型 + JSON 读写 | ✅ 编译通过、7/7 单测（**在旧路径**） |
-| **搬迁后构建/单测** | ❌ **未验证** —— 见 8.2 的警告 |
+| 脚本数据模型 + JSON 读写 | ✅ 编译通过、7/7 单测（旧路径 + 新路径都过） |
+| **搬迁后构建/单测** | ✅ **已验证** —— 7/7 + BUILD SUCCESSFUL，且是 `--rerun` 真跑的（见 8.2 踩坑记录） |
 | 脚本执行器 `ScriptRunner` | ❌ 未写（下一步） |
 | 虚拟屏 | ❌ 未实现（配方见会话 7） |
 | OCR | ❌ 仍未验证 |
+
+### 会话 9 — 补提交会话 8 的搬迁改动 + 搬迁后验证
+
+**做了什么**：把会话 8 遗留的两个文件（`gradle.properties`、`docs/HANDOFF.md`）
+提交并推送，然后补跑搬迁后一直没跑的那一步验证。
+
+**提交**：`cfed6f9`，`afe0d6a..cfed6f9  main -> main`。
+提交前 `git status --short` 只有两个 `M`，与交接说明一致，没有多余文件被 `add -A` 带进来。
+
+**验证（这次是真跑的）**：
+
+| 项 | 结果 |
+|---|---|
+| `:app:testDebugUnitTest` | ✅ `ScriptJsonTest` 7/7，0 失败 0 错误 |
+| `:app:assembleDebug -PincludeX86=true` | ✅ BUILD SUCCESSFUL，APK 193 MB（含 x86） |
+
+**坑（值得记）**：第一次跑出来 `:app:testDebugUnitTest FROM-CACHE` —— Gradle 构建缓存
+把测试任务整个短路了，日志上是 BUILD SUCCESSFUL 但 fork 的 JVM 一次都没启动，
+等于什么都没验。必须 `--rerun --no-build-cache` 强制重跑，并且核对
+`app/build/test-results/testDebugUnitTest/*.xml` 里的 `tests=7 failures=0` 和时间戳。
+
+**结论**：8.1 的判断成立 —— 中文路径确实会破 forked JVM 的类加载，ASCII 路径下正常。
+`android.overridePathCheck` 不需要回归。
+
+**验证到哪**：纯本地构建 + 单测，无真机。
 
 ---
 
@@ -910,18 +947,14 @@ adb pull /sdcard/f.png _probe\vframe.png
 | `72ed566` | build: allow the non-ASCII project path, now that it is verified to work（会话 8 已撤销该改动） |
 | `1bb575b` | feat(script): built-in recognition-target library, so scripts refer to names（会话 8） |
 | `afe0d6a` | feat(script): script data model and json codec, with unit tests（会话 8） |
-| *未提交* | 会话 8：迁到 `C:\pvz2auto`、撤销 `overridePathCheck`、本文档会话 8 |
+| `cfed6f9` | chore: move the project to `C:\pvz2auto` and drop the path-check override（会话 8 的改动，会话 9 补提交并推送） |
+| `git log -1` | docs: mark the post-move build as verified, and record the FROM-CACHE trap（会话 9；本条即本文件自身，哈希不写死） |
 
-> **未提交的那批改动**：因为会话末期执行层坏掉（见 8.6），没能 commit/push。
-> 接手先确认工作区状态：
-> ```
-> cd C:\pvz2auto
-> git status --short
-> git add -A && git commit -m "chore: move to C:\pvz2auto, drop overridePathCheck, record session 8"
-> git push origin main
-> ```
-> 注意 `72ed566` 加的 `android.overridePathCheck` 已在这次改动里**撤掉**，
-> 因为 ASCII 路径下不需要它。
+> **会话 8 那批改动已由会话 9 提交并推送** —— `afe0d6a..cfed6f9  main -> main`。
+> 当时因为执行层坏掉（见 8.6）没能 commit，所以这批是跨会话补的。
+> `72ed566` 加的 `android.overridePathCheck` 也随之**撤掉**了：ASCII 路径下不需要它，
+> 而且它只放行编译、不放行 forked JVM 的类加载（见 8.1）。
+> 推送后在新路径补跑了单测和构建，7/7 通过（见 8.2）。
 
 > **注意**：`app/src/main/assets/` 下的 `coords.json`、`ocr/`、`jobs/`、`pipeline/`
 > 以及所有游戏模板图目录都在 `.gitignore` 里（游戏素材版权 + 模型体积），
