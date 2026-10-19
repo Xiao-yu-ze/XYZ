@@ -36,6 +36,8 @@ import com.pvz2.auto.shizuku.ShizukuBridge
 import com.pvz2.auto.shizuku.ShizukuScreenCapturer
 import com.pvz2.auto.shizuku.ShizukuTouchInjector
 import com.pvz2.auto.shizuku.ShizukuUserServiceClient
+import com.pvz2.auto.shizuku.VirtualDisplayFlags
+import com.pvz2.auto.shizuku.VirtualDisplaySurface
 import com.pvz2.auto.task.Pvz2Bot
 import com.pvz2.auto.task.Pvz2Tasks
 import kotlinx.coroutines.CancellationException
@@ -129,6 +131,14 @@ class AutomationService : Service() {
             ACTION_GRAB_FRAME -> scope.launch { grabOneFrame() }
 
             ACTION_PROBE -> scope.launch { runProbe() }
+
+            // 虚拟屏探测：建一块 720p 虚拟屏 + 等首帧 + 存一张 PNG 当证据。
+            // 走前台服务，因为要绑 UserService 并持有 ImageReader。
+            ACTION_VD_PROBE -> {
+                startForegroundCompat(mediaProjection = false)
+                showPanel()
+                launchLoop { runVirtualDisplayProbe() }
+            }
 
             // 方案 C：识别链验证。干跑（只识别不点）与实跑（会点击）分开两个入口，
             // 避免误触 —— 第一次上真机必须走干跑。
@@ -372,6 +382,100 @@ class AutomationService : Service() {
         }
     }
 
+    /**
+     * 虚拟屏探测 · 第一步：只建屏 + 拿首帧，**不搬 App、不注入**。
+     *
+     * 为什么不一口气做完：虚拟屏最讨厌的失败方式不是「建不出来」，而是
+     * 「建出来了，但没有任何内容渲染进来」。这两种情况的排查方向完全相反，
+     * 所以先用最小动作把两件事分开回答：
+     *
+     *   1. **displayId 拿到了吗** —— 拿到了说明权限与 flags 是对的（shell 身份 +
+     *      PUBLIC + 不带 AUTO_MIRROR + 版本对应的 TRUSTED）。
+     *   2. **3 秒内有帧吗** —— 有帧说明 Surface 通路真的打通了（GPU 出帧 → ImageReader）。
+     *      注意：**空屏没有内容渲染时就是不出帧，这是预期行为，不是失败。**
+     *
+     * 拿到帧就存一张 PNG 到应用私有目录，让你能用眼睛直接看这块屏渲染了什么 ——
+     * 比任何日志都直观。
+     */
+    private suspend fun runVirtualDisplayProbe() {
+        if (!OpenCVLoader.initLocal()) {
+            fail("OpenCV 原生库加载失败")
+            return
+        }
+        if (!ShizukuBridge.hasPermission()) {
+            fail("虚拟屏探测需要 Shizuku 权限（建屏必须在 shell 身份下做）")
+            return
+        }
+
+        shizukuClient.bind()
+        val service = shizukuClient.await()
+        if (service == null) {
+            fail("Shizuku UserService 未连接：${shizukuClient.lastError ?: "超时"}")
+            return
+        }
+
+        // flags 按系统版本算。算错一位就会 SecurityException 或游戏挂不上窗口，
+        // 所以这里把拆解后的名字也打进状态栏，真机排查时一眼能看到缺哪一位。
+        val flags = VirtualDisplayFlags.forSdk(Build.VERSION.SDK_INT)
+        BotState.setStatus("建虚拟屏 ${VD_WIDTH}x$VD_HEIGHT flags=${VirtualDisplayFlags.describe(flags)}")
+
+        val surface = VirtualDisplaySurface(VD_WIDTH, VD_HEIGHT)
+        try {
+            val displayId = service.createVirtualDisplay(
+                VD_NAME, VD_WIDTH, VD_HEIGHT, VD_DPI, surface.surface, flags
+            )
+            if (displayId <= 0) {
+                fail("建虚拟屏失败（displayId=$displayId），原因见日志 Pvz2UserService")
+                return
+            }
+
+            BotState.setStatus("虚拟屏 displayId=$displayId，等首帧…")
+            val frame = surface.awaitFrame(VD_FIRST_FRAME_TIMEOUT_MS)
+            if (frame == null) {
+                fail(
+                    "虚拟屏已建（displayId=$displayId），但 ${VD_FIRST_FRAME_TIMEOUT_MS}ms 内无帧。" +
+                        "空屏没有内容渲染时就是这样，属预期 —— 把游戏搬上来之后才会有帧"
+                )
+                return
+            }
+
+            try {
+                val saved = savePng(frame, "vd_$displayId")
+                BotState.setStatus(
+                    "虚拟屏首帧 ${frame.width()}x${frame.height()}" +
+                        (saved?.let { "，已存：$it" } ?: "，但保存失败")
+                )
+            } finally {
+                frame.release()
+            }
+        } finally {
+            // 无论成败都要收干净：虚拟屏不释放会一直占着一个 display id，
+            // 反复探测几次之后系统就不肯再建了。
+            runCatching { service.releaseVirtualDisplay() }
+            surface.close()
+        }
+    }
+
+    /** 存一张 PNG 到 `<外部私有目录>/shots/`。返回绝对路径，失败返回 null。 */
+    private fun savePng(frame: org.opencv.core.Mat, namePrefix: String): String? {
+        val baseDir = getExternalFilesDir(null) ?: return null
+        val directory = File(baseDir, "shots").apply { mkdirs() }
+        val file = File(directory, "${namePrefix}_${System.currentTimeMillis()}.png")
+
+        val bitmap = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888)
+        return try {
+            Utils.matToBitmap(frame, bitmap)
+            FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            Log.i(TAG, "saved $file")
+            file.absolutePath
+        } catch (t: Throwable) {
+            Log.w(TAG, "保存 PNG 失败", t)
+            null
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
     /** Saves a single frame so the user can crop templates out of it. */
     private suspend fun grabOneFrame() {
         if (!OpenCVLoader.initLocal()) {
@@ -511,6 +615,16 @@ class AutomationService : Service() {
         private const val ACTION_PROBE = "com.pvz2.auto.PROBE"
         private const val ACTION_VERIFY_DRY = "com.pvz2.auto.VERIFY_DRY"
         private const val ACTION_VERIFY_RUN = "com.pvz2.auto.VERIFY_RUN"
+        private const val ACTION_VD_PROBE = "com.pvz2.auto.VD_PROBE"
+
+        /** 虚拟屏参数：720p @ 240dpi，与 MaaFwApp 的默认档一致。 */
+        private const val VD_NAME = "pvz2-virtual"
+        private const val VD_WIDTH = 1280
+        private const val VD_HEIGHT = 720
+        private const val VD_DPI = 240
+
+        /** 等首帧的上限。空屏本来就不出帧，所以这个超时不是"失败判定"。 */
+        private const val VD_FIRST_FRAME_TIMEOUT_MS = 3_000L
 
         private const val EXTRA_RESULT_CODE = "result_code"
         private const val EXTRA_RESULT_DATA = "result_data"
@@ -549,6 +663,17 @@ class AutomationService : Service() {
          */
         fun probe(context: Context) {
             context.startService(intent(context, ACTION_PROBE))
+        }
+
+        /**
+         * 虚拟屏探测：建 720p 虚拟屏、等首帧、存一张 PNG。
+         *
+         * 用 `startForegroundService` 而不是 `startService`：这条路径要绑 UserService
+         * 并持有 ImageReader，属于"要活一会儿"的操作；而且 App 在后台时
+         * （游戏在前台）用 startService 会直接抛 ForegroundServiceStartNotAllowedException。
+         */
+        fun vdProbe(context: Context) {
+            ContextCompat.startForegroundService(context, intent(context, ACTION_VD_PROBE))
         }
 
         /**

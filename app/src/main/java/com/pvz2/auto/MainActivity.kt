@@ -112,6 +112,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<MaterialButton>(R.id.btnVerifyRun).setOnClickListener {
             AutomationService.verifyRun(this)
         }
+        findViewById<MaterialButton>(R.id.btnVdProbe).setOnClickListener {
+            AutomationService.vdProbe(this)
+        }
 
         // 调试工具默认折叠：它不是主流程，常驻展开会把主路径挤出首屏。
         findViewById<LinearLayout>(R.id.debugHeader).setOnClickListener { toggleDebugSection() }

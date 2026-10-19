@@ -54,9 +54,11 @@
     <string name="btn_probe">识别自检（把匹配分数打到日志）</string>
     <string name="btn_verify_dry">识别链 · 干跑（只识别，不点击）</string>
     <string name="btn_verify_run">识别链 · 实跑（会真的点击）</string>
+    <string name="btn_vd_probe">虚拟屏 · 建屏 + 抓首帧</string>
 
     <string name="hint_grab_frame">截图保存在本应用外部目录的 shots/ 下，用于裁剪模板图。</string>
     <string name="hint_probe">不点击任何东西，只把 11 个模板的匹配分数打进日志。日志标签：RecognitionProbe。</string>
+    <string name="hint_vd_probe">建一块 1280×720 虚拟屏，把画面接进 App 并等首帧。空屏没有内容渲染时不会出帧，这是预期行为——把游戏搬上来之后才会有画面。日志标签：Pvz2UserService / VirtualDisplaySurface。</string>
     <string name="hint_verify">识别链 = 无尽挑战入口的三个节点（点击竞技 → 点击无尽挑战 → 点击开始挑战），覆盖模板匹配 / 多模板 / OCR 三种识别通道。先跑干跑，确认日志里的「命中分数」和「本该点哪里」都对，再跑实跑。日志标签：PipelineRunner / NodeGraph。</string>
 
     <!-- ==================== 状态文案（BotState 用） ==================== -->

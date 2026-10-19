@@ -831,6 +831,63 @@ PowerShell），不是项目代码问题。遇到时：重启 DSH Desktop；若�
 
 ---
 
+### 会话 10 — 回读会话 8 的完整记录 + 虚拟屏第一步（建屏 + 拿首帧）
+
+**起点**：把上一会话（`session-c9b51702`）的原始记录整份读了回来（2260 个 zstd 帧、
+24 MB、95 条用户消息、70 轮 turn）。**读完才发现会话 9 的方案方向是错的**，因为当时
+只有二手摘要，漏掉了 10-18 上午那几轮定案。
+
+#### 10.1 被补回来的四条决定（会话 8 的 10-18 12:00–13:31）
+
+| 问题 | 定案 |
+|---|---|
+| 引擎怎么办 | **不移植 MaaPVZ 引擎**。改做「自动精灵」式的通用节点脚本系统；`NodeGraph`/`NodeDef`/`PipelineRunner` **逐渐废弃**；**不兼容** MaaPVZ 作业集 |
+| 目标形态 | **通用脚本平台**。动作库 7 个（种植物/喂能量豆/铲植物/点击/滑动/跳转/组合动作），其余靠节点通用字段；导出单个 json 发 QQ 给别人导入 |
+| 虚拟屏优先级 | **先做虚拟屏**，理由是「这样还不用适配不同分辨率了」—— 它同时解决分辨率适配和占用物理屏两件事 |
+| 图片与 ROI | **全部由软件内置封装**，不让用户自己截图。UI 位置固定，配图时直接把 ROI 一起定好 |
+
+会话 10 又追加一条：**目标平台改成 Android 12+**（原定 11），因为要适配当前主流机型。
+所以 `AutomationService` 里 `UPSIDE_DOWN_CAKE` 那类分支要保留，11 及以下不再管。
+
+#### 10.2 这一轮做的事：虚拟屏的「建得出来 + 出得了帧」
+
+先只做最小闭环，**不搬 App、不注入**。理由是这两种失败方向完全相反，必须先分开：
+
+1. 拿得到 `displayId` → 权限与 flags 对了；
+2. 3 秒内出得了帧 → Surface 通路真的通了（**空屏不出帧是预期，不是失败**）。
+
+改动：
+
+- `IPvz2Service.aidl` 新增 `createVirtualDisplay` / `releaseVirtualDisplay` /
+  `getVirtualDisplayId`（事务号 6/7/8）。`Surface` 是 Parcelable，所以**整块通过 Binder
+  传给特权侧**，画面在 shell 侧产生、帧在 App 进程消费，中间不落文件、不用 socket。
+- 新增 `shizuku/VirtualDisplayFlags.kt`：flags 位定义 + 版本阶梯 + `describe()` 拆位打印。
+- 新增 `shizuku/VirtualDisplaySurface.kt`：`ImageReader`(RGBA_8888) 当消费端，
+  `acquireLatestImage()` 轮询取「此刻最新帧」，不引线程/回调。
+- `Pvz2UserService`：反射调 `DisplayManager.createVirtualDisplay`，
+  系统 Context 走 `ActivityThread.systemMain().getSystemContext()`（scrcpy / MaaFwApp 同款）。
+- `AutomationService` 新增 `ACTION_VD_PROBE`，`MainActivity` 调试区加按钮。
+- `USER_SERVICE_VERSION` 1 → 2（**改了 UserService 就必须提，否则 Shizuku 复用旧实例**）。
+
+#### 10.3 顺手修正了会话 7 的一个数
+
+会话 7 记的 API34+ 总计 **74971 是笔误**。按 AOSP 常量重算：
+`459 + 15360 + 49152 = 64971`（`74971 - 64971 = 10000` 不对应任何 flag 位）。
+新单测把三档合计钉在 459 / 15360 / 49152、阶梯值 459 / 15819 / 64971，
+并断言「任何版本都不含 AUTO_MIRROR(4)」「任何版本都带 PUBLIC(1)」。
+真机上再按 logcat 里 `Pvz2UserService` 打出的实际 flags 复核一次。
+
+#### 10.4 验证到哪
+
+| 项 | 状态 |
+|---|---|
+| `:app:testDebugUnitTest` | ✅ **14/14**（`ScriptJsonTest` 7 + `VirtualDisplayFlagsTest` 7），`--rerun --no-build-cache` 真跑 |
+| `:app:assembleDebug` | ✅ BUILD SUCCESSFUL，**0 警告** |
+| 虚拟屏真机建屏 | ❌ **未验证** —— adb 当前无设备在线 |
+| 出帧 / 搬游戏 / 副屏注入 | ❌ 未做（后续三步） |
+
+---
+
 ## 未验证项与已知风险
 
 ### 🔴 高优先级
@@ -949,6 +1006,7 @@ adb pull /sdcard/f.png _probe\vframe.png
 | `afe0d6a` | feat(script): script data model and json codec, with unit tests（会话 8） |
 | `cfed6f9` | chore: move the project to `C:\pvz2auto` and drop the path-check override（会话 8 的改动，会话 9 补提交并推送） |
 | `git log -1` | docs: mark the post-move build as verified, and record the FROM-CACHE trap（会话 9；本条即本文件自身，哈希不写死） |
+| `git log -1` | feat(vd): create a 720p virtual display from the shell side and consume its frames（会话 10；同上，哈希不写死） |
 
 > **会话 8 那批改动已由会话 9 提交并推送** —— `afe0d6a..cfed6f9  main -> main`。
 > 当时因为执行层坏掉（见 8.6）没能 commit，所以这批是跨会话补的。

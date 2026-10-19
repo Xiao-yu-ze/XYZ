@@ -11,6 +11,7 @@
 package com.pvz2.auto;
 
 import android.os.ParcelFileDescriptor;
+import android.view.Surface;
 
 interface IPvz2Service {
 
@@ -35,6 +36,28 @@ interface IPvz2Service {
 
     /** Effective display size as "WxH", parsed from `wm size`. */
     String getDisplaySize() = 5;
+
+    /**
+     * 建一块虚拟屏，把画面输出到 [surface]（由调用方在 App 进程里用 ImageReader 创建）。
+     *
+     * 为什么必须在**特权侧**建：`DisplayManager.createVirtualDisplay` 是 @hide API，
+     * 而且建屏者的身份决定了后面「能不能把别的 App 拉到这块屏上」。我们的 UserService
+     * 跑在 Shizuku 拉起的 app_process 里，身份就是 shell(2000) —— 正好是 AOSP 里
+     * `packages/Shell` 那个 platform 签名特权进程的同款特权面。
+     *
+     * Surface 是 Parcelable，可以整个通过 Binder 传过来：画面在特权侧产生，
+     * 帧数据在 App 进程被消费，中间不需要任何临时文件或 socket。
+     *
+     * @param flags 用 VirtualDisplayFlags.forSdk() 按系统版本算好后传进来。
+     * @return 虚拟屏的 displayId（> 0 成功；-1 失败，原因见 logcat 的 Pvz2UserService）
+     */
+    int createVirtualDisplay(String name, int width, int height, int dpi, in Surface surface, int flags) = 6;
+
+    /** 释放 [createVirtualDisplay] 建的那块屏；没建过时是空操作。 */
+    void releaseVirtualDisplay() = 7;
+
+    /** 当前虚拟屏的 displayId；没有虚拟屏时返回 -1。调试与断言用。 */
+    int getVirtualDisplayId() = 8;
 
     /**
      * Shizuku invokes this with transaction code 16777115 when the user service is removed.

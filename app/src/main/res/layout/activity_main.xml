@@ -301,6 +301,17 @@
                 style="@style/Text.Hint"
                 android:layout_marginTop="6dp"
                 android:text="@string/hint_grab_frame" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnVdProbe"
+                style="@style/AppButton.Outline"
+                android:layout_marginTop="8dp"
+                android:text="@string/btn_vd_probe" />
+
+            <TextView
+                style="@style/Text.Hint"
+                android:layout_marginTop="6dp"
+                android:text="@string/hint_vd_probe" />
         </LinearLayout>
 
     </LinearLayout>
