@@ -17,25 +17,24 @@ import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import com.pvz2.auto.IPvz2Service
 import com.pvz2.auto.MainActivity
 import com.pvz2.auto.R
 import com.pvz2.auto.core.BotState
 import com.pvz2.auto.core.ScreenCapturer
 import com.pvz2.auto.core.TemplateMatcher
 import com.pvz2.auto.core.TouchInjector
-import com.pvz2.auto.fallback.MediaProjectionCapturer
-import com.pvz2.auto.fallback.Pvz2AccessibilityService
 import com.pvz2.auto.maa.OcrEngine
 import com.pvz2.auto.maa.PipelineRunner
 import com.pvz2.auto.maa.ProbeTargets
 import com.pvz2.auto.maa.RecognitionProbe
 import com.pvz2.auto.maa.Recognizer
 import com.pvz2.auto.maa.VerifyChain
-import com.pvz2.auto.overlay.FloatingWindow
 import com.pvz2.auto.shizuku.ShizukuBridge
 import com.pvz2.auto.shizuku.ShizukuScreenCapturer
 import com.pvz2.auto.shizuku.ShizukuTouchInjector
 import com.pvz2.auto.shizuku.ShizukuUserServiceClient
+import com.pvz2.auto.shizuku.VirtualDisplayCreator
 import com.pvz2.auto.shizuku.VirtualDisplayFlags
 import com.pvz2.auto.shizuku.VirtualDisplaySurface
 import com.pvz2.auto.task.Pvz2Bot
@@ -46,7 +45,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import org.opencv.android.OpenCVLoader
 import org.opencv.android.Utils
@@ -54,19 +52,19 @@ import java.io.File
 import java.io.FileOutputStream
 
 /**
- * Foreground service that owns everything long-lived:
+ * 前台服务：所有长生命周期资源的宿主。
  *
- *  * the automation loop (always on [Dispatchers.IO], never on the main thread);
- *  * the Shizuku UserService binding;
- *  * the MediaProjection fallback session;
- *  * the floating control panel.
+ *  * 自动化循环（始终在 [Dispatchers.IO] 上，不碰主线程）；
+ *  * Shizuku UserService 绑定（截图 / 注入 / 建虚拟屏全在那一侧）；
+ *  * 虚拟屏与它的帧消费端（ImageReader）。
  *
- * It is a foreground service so the process keeps enough priority to survive while the
- * game owns the screen. The foreground service *type* differs per backend and must match
- * the manifest, otherwise Android 14 throws:
+ * 它是前台服务是为了让进程在游戏占屏时有足够优先级活着。前台服务**类型**必须与
+ * manifest 一致，否则 Android 14 会直接抛异常：
  *
- *  * Shizuku path   -> `specialUse`            (no MediaProjection session exists)
- *  * fallback path  -> `mediaProjection`       (only after the user granted capture)
+ *  * 本应用只有一条路 —— Shizuku -> `specialUse`。
+ *    （MediaProjection + 无障碍的降级路线已按需求整体移除：没有 MediaProjection
+ *     会话，也就不再需要 `mediaProjection` 这个类型。）
+ *  * 悬浮面板也已移除：开始/暂停/停止全部在本应用界面内操作。
  */
 class AutomationService : Service() {
 
@@ -74,12 +72,10 @@ class AutomationService : Service() {
     private var loopJob: Job? = null
 
     private lateinit var shizukuClient: ShizukuUserServiceClient
-    private var floatingWindow: FloatingWindow? = null
 
     private var capturer: ScreenCapturer? = null
     private var injector: TouchInjector? = null
     private var matcher: TemplateMatcher? = null
-    private var fallbackCapturer: MediaProjectionCapturer? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -87,45 +83,14 @@ class AutomationService : Service() {
         super.onCreate()
         shizukuClient = ShizukuUserServiceClient(this)
         createNotificationChannel()
-
-        // Mirror the loop's status into the floating panel. Collected on the main thread
-        // because updateStatus() touches a View, while the loop publishes from Dispatchers.IO.
-        scope.launch(Dispatchers.Main) {
-            BotState.status.collect { text -> floatingWindow?.updateStatus(text) }
-        }
+        // 状态只往通知栏与界面走，不再有悬浮面板需要镜像。
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_SHOW_PANEL -> {
-                startForegroundCompat(mediaProjection = false)
-                showPanel()
-            }
-
             ACTION_START_SHIZUKU -> {
-                startForegroundCompat(mediaProjection = false)
-                showPanel()
+                startForegroundCompat()
                 launchLoop { runShizukuLoop() }
-            }
-
-            ACTION_START_FALLBACK -> {
-                // Order matters and is fixed by Android 14: the foreground service with the
-                // mediaProjection type must already be running before getMediaProjection().
-                startForegroundCompat(mediaProjection = true)
-                showPanel()
-                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
-                // Explicit type: without it Kotlin infers the bound (Parcelable?), not Intent.
-                val resultData: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(EXTRA_RESULT_DATA)
-                }
-                if (resultData == null) {
-                    fail("没有拿到屏幕录制授权数据")
-                } else {
-                    launchLoop { runFallbackLoop(resultCode, resultData) }
-                }
             }
 
             ACTION_GRAB_FRAME -> scope.launch { grabOneFrame() }
@@ -135,22 +100,19 @@ class AutomationService : Service() {
             // 虚拟屏探测：建一块 720p 虚拟屏 + 等首帧 + 存一张 PNG 当证据。
             // 走前台服务，因为要绑 UserService 并持有 ImageReader。
             ACTION_VD_PROBE -> {
-                startForegroundCompat(mediaProjection = false)
-                showPanel()
+                startForegroundCompat()
                 launchLoop { runVirtualDisplayProbe() }
             }
 
             // 方案 C：识别链验证。干跑（只识别不点）与实跑（会点击）分开两个入口，
             // 避免误触 —— 第一次上真机必须走干跑。
             ACTION_VERIFY_DRY -> {
-                startForegroundCompat(mediaProjection = false)
-                showPanel()
+                startForegroundCompat()
                 launchLoop { withBootstrap { runVerifyChain(dryRun = true) } }
             }
 
             ACTION_VERIFY_RUN -> {
-                startForegroundCompat(mediaProjection = false)
-                showPanel()
+                startForegroundCompat()
                 launchLoop { withBootstrap { runVerifyChain(dryRun = false) } }
             }
         }
@@ -164,15 +126,11 @@ class AutomationService : Service() {
         capturer = null
         injector?.release()
         injector = null
-        fallbackCapturer?.release()
-        fallbackCapturer = null
         matcher?.release()
         matcher = null
 
         runCatching { shizukuClient.unbind(remove = true) }
 
-        floatingWindow?.hide()
-        floatingWindow = null
 
         BotState.setRunning(false)
         scope.cancel()
@@ -221,24 +179,6 @@ class AutomationService : Service() {
 
         capturer = ShizukuScreenCapturer(shizukuClient)
         injector = ShizukuTouchInjector(shizukuClient)
-        runLoop()
-    }
-
-    /** Fallback path: MediaProjection for pixels, accessibility gestures for touch. */
-    private suspend fun runFallbackLoop(resultCode: Int, resultData: Intent) {
-        val accessibility = Pvz2AccessibilityService.instance
-        if (accessibility == null) {
-            fail("降级方案需要先启用无障碍服务")
-            return
-        }
-
-        val (width, height) = realScreenSize()
-        val projection = MediaProjectionCapturer(this)
-        projection.start(resultCode, resultData, width, height, resources.displayMetrics.densityDpi)
-
-        fallbackCapturer = projection
-        capturer = projection
-        injector = accessibility
         runLoop()
     }
 
@@ -402,17 +342,6 @@ class AutomationService : Service() {
             fail("OpenCV 原生库加载失败")
             return
         }
-        if (!ShizukuBridge.hasPermission()) {
-            fail("虚拟屏探测需要 Shizuku 权限（建屏必须在 shell 身份下做）")
-            return
-        }
-
-        shizukuClient.bind()
-        val service = shizukuClient.await()
-        if (service == null) {
-            fail("Shizuku UserService 未连接：${shizukuClient.lastError ?: "超时"}")
-            return
-        }
 
         // flags 按系统版本算。算错一位就会 SecurityException 或游戏挂不上窗口，
         // 所以这里把拆解后的名字也打进状态栏，真机排查时一眼能看到缺哪一位。
@@ -420,27 +349,81 @@ class AutomationService : Service() {
         BotState.setStatus("建虚拟屏 ${VD_WIDTH}x$VD_HEIGHT flags=${VirtualDisplayFlags.describe(flags)}")
 
         val surface = VirtualDisplaySurface(VD_WIDTH, VD_HEIGHT)
+        var inProcessDisplay: Any? = null
+        var shizukuService: IPvz2Service? = null
+
         try {
-            val displayId = service.createVirtualDisplay(
-                VD_NAME, VD_WIDTH, VD_HEIGHT, VD_DPI, surface.surface, flags
-            )
-            if (displayId <= 0) {
-                fail("建虚拟屏失败（displayId=$displayId），原因见日志 Pvz2UserService")
-                return
+            // ① 先在**本进程**里建。
+            //
+            // 这么做的理由：createVirtualDisplay 会用「调用者包的 getPackageName()」做
+            // `packageName must match the calling uid` 校验。本进程的包就是
+            // com.pvz2.auto，天然匹配，所以这条路不依赖 Shizuku 的运行身份。
+            // 而这块屏带了 PUBLIC 位，是 public 的，别的 uid（游戏）照样能挂窗口 ——
+            // **建屏者是谁不影响谁能用这块屏**。
+            val displayId = runCatching {
+                val created = VirtualDisplayCreator.create(
+                    callerContext = this,
+                    name = VD_NAME,
+                    width = VD_WIDTH,
+                    height = VD_HEIGHT,
+                    dpi = VD_DPI,
+                    surface = surface.surface,
+                    flags = flags
+                )
+                inProcessDisplay = created.virtualDisplay
+                created.displayId
+            }.onFailure {
+                // 常见原因：隐藏 API 限制（App 进程里反射 @hide 方法可能被拦）。
+                // 这不是终点，下面还有 shell 那条路。
+                Log.w(TAG, "本进程建屏失败，改用 shell 身份再试", it)
+            }.getOrDefault(-1)
+
+            val actualDisplayId: Int
+            if (displayId > 0) {
+                Log.i(TAG, "本进程建屏成功 displayId=$displayId")
+                actualDisplayId = displayId
+            } else {
+                // ② 退回 shell 身份（Shizuku UserService）。
+                if (!ShizukuBridge.hasPermission()) {
+                    fail("本进程建屏失败，且没有 Shizuku 权限可以退路")
+                    return
+                }
+                shizukuClient.bind()
+                val service = shizukuClient.await()
+                if (service == null) {
+                    fail("本进程建屏失败；Shizuku UserService 也未连接：" +
+                        (shizukuClient.lastError ?: "超时"))
+                    return
+                }
+                shizukuService = service
+                val shellDisplayId = service.createVirtualDisplay(
+                    VD_NAME, VD_WIDTH, VD_HEIGHT, VD_DPI, surface.surface, flags
+                )
+                if (shellDisplayId <= 0) {
+                    fail(
+                        "两条路都建不出虚拟屏（本进程失败，shell 返回 " +
+                            "$shellDisplayId）。原因见日志 Pvz2UserService：若是 " +
+                            "packageName must match the calling uid，说明 Shizuku 以 root " +
+                            "身份运行，需改用 ADB/无线调试方式启动。"
+                    )
+                    return
+                }
+                Log.i(TAG, "shell 身份建屏成功 displayId=$shellDisplayId")
+                actualDisplayId = shellDisplayId
             }
 
-            BotState.setStatus("虚拟屏 displayId=$displayId，等首帧…")
+            BotState.setStatus("虚拟屏 displayId=$actualDisplayId，等首帧…")
             val frame = surface.awaitFrame(VD_FIRST_FRAME_TIMEOUT_MS)
             if (frame == null) {
                 fail(
-                    "虚拟屏已建（displayId=$displayId），但 ${VD_FIRST_FRAME_TIMEOUT_MS}ms 内无帧。" +
+                    "虚拟屏已建（displayId=$actualDisplayId），但 ${VD_FIRST_FRAME_TIMEOUT_MS}ms 内无帧。" +
                         "空屏没有内容渲染时就是这样，属预期 —— 把游戏搬上来之后才会有帧"
                 )
                 return
             }
 
             try {
-                val saved = savePng(frame, "vd_$displayId")
+                val saved = savePng(frame, "vd_$actualDisplayId")
                 BotState.setStatus(
                     "虚拟屏首帧 ${frame.width()}x${frame.height()}" +
                         (saved?.let { "，已存：$it" } ?: "，但保存失败")
@@ -451,7 +434,8 @@ class AutomationService : Service() {
         } finally {
             // 无论成败都要收干净：虚拟屏不释放会一直占着一个 display id，
             // 反复探测几次之后系统就不肯再建了。
-            runCatching { service.releaseVirtualDisplay() }
+            runCatching { shizukuService?.releaseVirtualDisplay() }
+            VirtualDisplayCreator.release(inProcessDisplay)
             surface.close()
         }
     }
@@ -524,50 +508,22 @@ class AutomationService : Service() {
 
     // -------------------------------------------------------------- plumbing
 
-    private fun showPanel() {
-        if (floatingWindow != null) return
-        if (!android.provider.Settings.canDrawOverlays(this)) {
-            BotState.setStatus("请授予「显示在其他应用上层」权限以使用悬浮面板")
-            return
-        }
-        floatingWindow = FloatingWindow(this).also {
-            it.show(
-                onStart = { startShizuku(this) },
-                onStop = { stop(this) }
-            )
-            it.updateStatus(BotState.status.value)
-        }
-    }
-
     private fun fail(message: String) {
         Log.w(TAG, "cannot start: $message")
         BotState.setStatus(message)
         BotState.setRunning(false)
     }
 
-    private fun realScreenSize(): Pair<Int, Int> {
-        val windowManager = getSystemService(WindowManager::class.java)
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = windowManager.currentWindowMetrics.bounds
-            bounds.width() to bounds.height()
-        } else {
-            @Suppress("DEPRECATION")
-            val display = windowManager.defaultDisplay
-            val metrics = DisplayMetrics()
-            @Suppress("DEPRECATION")
-            display.getRealMetrics(metrics)
-            metrics.widthPixels to metrics.heightPixels
-        }
-    }
-
     /**
-     * Passes exactly one foreground service type, matching the backend in use.
-     * `ServiceCompat.startForeground` is the documented best practice for this.
+     * 只传一种前台服务类型：`specialUse`。
+     *
+     * 降级路线（MediaProjection）移除之后就不再有第二种类型，也就不需要按后端分支。
+     * Android 14 起必须显式声明类型，且要与 manifest 里的 `foregroundServiceType` 一致。
+     * `ServiceCompat.startForeground` 是官方推荐的写法。
      */
-    private fun startForegroundCompat(mediaProjection: Boolean) {
+    private fun startForegroundCompat() {
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            if (mediaProjection) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            else ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
         } else {
             0
         }
@@ -608,9 +564,7 @@ class AutomationService : Service() {
         private const val CHANNEL_ID = "pvz2_automation"
         private const val NOTIFICATION_ID = 1
 
-        private const val ACTION_SHOW_PANEL = "com.pvz2.auto.SHOW_PANEL"
         private const val ACTION_START_SHIZUKU = "com.pvz2.auto.START_SHIZUKU"
-        private const val ACTION_START_FALLBACK = "com.pvz2.auto.START_FALLBACK"
         private const val ACTION_GRAB_FRAME = "com.pvz2.auto.GRAB_FRAME"
         private const val ACTION_PROBE = "com.pvz2.auto.PROBE"
         private const val ACTION_VERIFY_DRY = "com.pvz2.auto.VERIFY_DRY"
@@ -626,27 +580,12 @@ class AutomationService : Service() {
         /** 等首帧的上限。空屏本来就不出帧，所以这个超时不是"失败判定"。 */
         private const val VD_FIRST_FRAME_TIMEOUT_MS = 3_000L
 
-        private const val EXTRA_RESULT_CODE = "result_code"
-        private const val EXTRA_RESULT_DATA = "result_data"
 
         private fun intent(context: Context, action: String) =
             Intent(context, AutomationService::class.java).setAction(action)
 
-        fun showPanel(context: Context) {
-            ContextCompat.startForegroundService(context, intent(context, ACTION_SHOW_PANEL))
-        }
-
         fun startShizuku(context: Context) {
             ContextCompat.startForegroundService(context, intent(context, ACTION_START_SHIZUKU))
-        }
-
-        fun startFallback(context: Context, resultCode: Int, resultData: Intent) {
-            ContextCompat.startForegroundService(
-                context,
-                intent(context, ACTION_START_FALLBACK)
-                    .putExtra(EXTRA_RESULT_CODE, resultCode)
-                    .putExtra(EXTRA_RESULT_DATA, resultData)
-            )
         }
 
         fun grabFrame(context: Context) {

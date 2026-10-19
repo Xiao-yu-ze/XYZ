@@ -883,8 +883,84 @@ PowerShell），不是项目代码问题。遇到时：重启 DSH Desktop；若�
 |---|---|
 | `:app:testDebugUnitTest` | ✅ **14/14**（`ScriptJsonTest` 7 + `VirtualDisplayFlagsTest` 7），`--rerun --no-build-cache` 真跑 |
 | `:app:assembleDebug` | ✅ BUILD SUCCESSFUL，**0 警告** |
-| 虚拟屏真机建屏 | ❌ **未验证** —— adb 当前无设备在线 |
-| 出帧 / 搬游戏 / 副屏注入 | ❌ 未做（后续三步） |
+| 虚拟屏真机建屏 | ✅ **已打通**（MuMu Android 12，见 10.6） |
+| 出帧 | ✅ 首帧 1280×720（空屏全黑，预期）；搬游戏与副屏注入 ❌ 未做 |
+
+#### 10.5 悬浮窗与无障碍降级方案全部移除
+
+两条需求，都指向同一件事：**只保留 Shizuku 一条路，所有操作都在界面内。**
+
+> 「不要有悬浮窗，开始、暂停等等操作全在软件里面操作。」
+> 「把无障碍的降级方案去掉。」
+
+悬浮窗：虚拟屏方案下游戏跑在副屏，主界面留在前台不遮挡它，所以不需要再叠一层。
+
+删掉的东西：
+
+| 类别 | 删除内容 |
+|---|---|
+| 悬浮窗 | `overlay/FloatingWindow.kt`、`res/layout/overlay_panel.xml`、`SYSTEM_ALERT_WINDOW` 权限、`ACTION_SHOW_PANEL`、`showPanel()`、状态镜像、主界面第 2 步与「显示悬浮面板」按钮 |
+| 无障碍降级 | `fallback/Pvz2AccessibilityService.kt`、`fallback/MediaProjectionCapturer.kt`、`res/xml/accessibility_service_config.xml`、manifest 里的 accessibility service 声明、`FOREGROUND_SERVICE_MEDIA_PROJECTION` 权限、`ACTION_START_FALLBACK`、`runFallbackLoop()`、`realScreenSize()`、`startFallback()`、MediaProjection 授权回调、主界面的「启动（MediaProjection 降级）」按钮 |
+
+连带简化：`startForegroundCompat()` 不再带 `mediaProjection` 布尔参数，固定
+`FOREGROUND_SERVICE_TYPE_SPECIAL_USE`；manifest 的 `foregroundServiceType` 只剩
+`specialUse`。准备清单从 4 步 → 3 步 → **2 步**（Shizuku、通知）。
+
+#### 10.6 ★ 虚拟屏真正打通：连续四个坑，根因各不相同
+
+| # | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | `Can't create handler inside thread Thread[Binder:xxx]` | `ActivityThread.systemMain()` 内部要 `new Handler`，而 Binder 线程没有 Looper | 初始化挪到专用线程并先 `Looper.prepare()` |
+| 2 | `SecurityException: packageName must match the calling uid` | 用系统 Context（包名 `android`）；服务端用 `validatePackageName(callingUid, packageName)` 校验「名字必须挂在这个 uid 名下」 | 改用 `ContextWrapper(null)` 覆写 `getPackageName()`，返回**属于本 uid** 的包名 |
+| 3 | `NoSuchMethodException`（App 进程内建屏时） | **隐藏 API 限制**：App 进程里反射 `@hide` 的 `DisplayManager.<init>` 被拦 | App 自建这条路在 API 32 上走不通，必须走 shell 侧 |
+| 4 | `ClassCastException: VirtualDisplay cannot be cast to Display` | 两者是不同类：释放要 `VirtualDisplay.release()`，读尺寸要 `Display` | `Created` 同时持有两者 |
+
+**最重要的环境结论（会反复踩）**：
+
+> **Shizuku 以 root(uid 0) 运行时，虚拟屏永远建不出来。**
+> `pm list packages --uid 0` 在 MuMu 上返回**空** —— uid 0 名下没有任何包，
+> 于是 `validatePackageName` 无论传什么名字都必然失败。这不是代码能绕的。
+>
+> 正解：让 Shizuku 跑成 shell(uid 2000)。MuMu 上的具体做法（脚本上一会话已备好）：
+> ```powershell
+> # 1) 杀掉 root 的 server。注意 su -c "pkill -f x" 里的 -f 会被 su 自己吃掉，
+> #    要么改用 PID，要么把引号写成 su -c '...' 的嵌套形式
+> adb shell "su -c 'kill -9 <root_pid>'"
+> # 2) 以 adb shell 身份启动 -> server 就是 uid 2000
+> adb shell "nohup sh /data/local/tmp/start_server.sh > /data/local/tmp/shizuku.log 2>&1 &"
+> adb shell "ps -A -o USER,PID,NAME | grep shizuku"   # 应显示 shell ... shizuku_server
+> ```
+> 真机无 root 走的本来就是 ADB/无线调试，所以**这条就是生产路径**。
+
+**实测数据（MuMu，Android 12 / SDK 32）**：
+
+- `flags = 0x1CB = 459` 就够（`PUBLIC+PRESENTATION+OWN_CONTENT_ONLY+SUPPORTS_TOUCH+
+  ROTATES_WITH_CONTENT+DESTROY_CONTENT_ON_REMOVAL`）；
+  **API 32 不需要 TRUSTED** —— 10.3 那条版本阶梯在 Android 12 上只用得到基础集。
+- 建屏返回 `displayId`，`Display.mode = 1280x720`。
+- 首帧在 **约 110–140 ms** 内到达；帧内容 1280×720 **全黑**
+  （空屏无内容渲染，符合预期：平均亮度 0.0、采样内只有 1 种颜色）。
+
+**新增诊断入口** `shizuku/VdProbeMain.kt`：用 `app_process` 直接在设备上建一次屏，
+完全绕开 App 与 Shizuku。当「建不出屏」时用它把「系统/ROM 允许不允许」这一层单独摘出来：
+
+```powershell
+$apk = (& adb shell pm path com.pvz2.auto).Replace("package:","").Trim()
+adb shell "CLASSPATH=$apk app_process /system/bin com.pvz2.auto.shizuku.VdProbeMain"
+```
+
+#### 10.7 验证到哪（会话 10 收尾）
+
+| 项 | 状态 |
+|---|---|
+| 单测 | ✅ 14/14（`ScriptJsonTest` 7 + `VirtualDisplayFlagsTest` 7），`--rerun --no-build-cache` 真跑 |
+| 编译 | ✅ 0 警告 |
+| **虚拟屏建屏（shell 身份）** | ✅ **真机实测**，`displayId=4/5`，1280×720 |
+| **虚拟屏出帧** | ✅ 首帧 1280×720，ImageReader 通路打通 |
+| 界面 | ✅ 准备工作 2/2；无悬浮窗、无无障碍、无降级按钮 |
+| 把游戏搬到副屏 | ❌ 未做（下一步） |
+| 副屏定向注入（`setEventDisplayId`） | ❌ 未做（下一步） |
+| App 自建屏 | ❌ **走不通**（隐藏 API），已确认无需再试 |
 
 ---
 

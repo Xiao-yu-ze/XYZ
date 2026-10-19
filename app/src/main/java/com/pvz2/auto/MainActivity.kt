@@ -3,11 +3,8 @@ package com.pvz2.auto
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.projection.MediaProjectionManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -18,7 +15,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
 import com.pvz2.auto.core.BotState
-import com.pvz2.auto.fallback.Pvz2AccessibilityService
 import com.pvz2.auto.service.AutomationService
 import com.pvz2.auto.shizuku.ShizukuBridge
 import kotlinx.coroutines.launch
@@ -29,24 +25,12 @@ import rikka.shizuku.Shizuku
  *
  * Everything that can run headless lives in [AutomationService]; this activity only
  * acquires the permissions that require user interaction and then hands control over.
- * The one flow that genuinely needs an activity is the MediaProjection consent dialog.
+ * 没有 MediaProjection 授权流程了 —— 降级方案已移除，只剩 Shizuku 一条路。
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var shizukuStateView: TextView
     private lateinit var statusView: TextView
-
-    /** MediaProjection consent: the result must be forwarded straight to the service. */
-    private val captureConsentLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val data = result.data
-        if (result.resultCode == RESULT_OK && data != null) {
-            AutomationService.startFallback(this, result.resultCode, data)
-        } else {
-            BotState.setStatus(getString(R.string.msg_capture_denied))
-        }
-    }
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -81,24 +65,19 @@ class MainActivity : AppCompatActivity() {
         shizukuStateView = findViewById(R.id.tvShizukuState)
         statusView = findViewById(R.id.tvStatus)
 
-        // 四个准备步骤现在是清单行，不再各自是一个大按钮。
+        // 两个准备步骤现在是清单行，不再各自是一个大按钮。
         // 行整行可点，右侧文字显示状态。
+        // 悬浮窗与无障碍这两行都已去掉：
+        //  · 悬浮窗 —— 所有操作都在本界面做（虚拟屏下游戏跑副屏，不遮挡本界面）；
+        //  · 无障碍 —— 它是 MediaProjection 降级方案的触控后端，降级方案已整体移除。
         findViewById<LinearLayout>(R.id.rowStep1).setOnClickListener { requestShizukuPermission() }
-        findViewById<LinearLayout>(R.id.rowStep2).setOnClickListener { requestOverlayPermission() }
-        findViewById<LinearLayout>(R.id.rowStep3).setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-        findViewById<LinearLayout>(R.id.rowStep4).setOnClickListener {
+        findViewById<LinearLayout>(R.id.rowStep2).setOnClickListener {
             requestNotificationPermission()
         }
 
-        findViewById<MaterialButton>(R.id.btnShowOverlay).setOnClickListener {
-            AutomationService.showPanel(this)
-        }
         findViewById<MaterialButton>(R.id.btnStartShizuku).setOnClickListener {
             AutomationService.startShizuku(this)
         }
-        findViewById<MaterialButton>(R.id.btnStartFallback).setOnClickListener { startFallback() }
         findViewById<MaterialButton>(R.id.btnStop).setOnClickListener { AutomationService.stop(this) }
         findViewById<MaterialButton>(R.id.btnGrabFrame).setOnClickListener {
             AutomationService.grabFrame(this)
@@ -153,34 +132,12 @@ class MainActivity : AppCompatActivity() {
         ShizukuBridge.requestPermission()
     }
 
-    private fun requestOverlayPermission() {
-        if (Settings.canDrawOverlays(this)) {
-            BotState.setStatus(getString(R.string.msg_overlay_granted))
-            return
-        }
-        startActivity(
-            Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            )
-        )
-    }
-
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             BotState.setStatus(getString(R.string.msg_notifications_not_needed))
             return
         }
         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-    }
-
-    private fun startFallback() {
-        if (!Pvz2AccessibilityService.isEnabled(this)) {
-            BotState.setStatus(getString(R.string.msg_need_accessibility))
-            return
-        }
-        val manager = getSystemService(MediaProjectionManager::class.java)
-        captureConsentLauncher.launch(manager.createScreenCaptureIntent())
     }
 
     private fun refreshShizukuState() {
@@ -212,36 +169,31 @@ class MainActivity : AppCompatActivity() {
     /**
      * 刷新准备清单的完成状态。
      *
-     * 四个步骤的完成判定互相独立，而且**随时可能被外部改变**
+     * 两个步骤的完成判定互相独立，而且**随时可能被外部改变**
      * （用户跳去系统设置授权再回来），所以放在 [onResume] 里也调一次。
+     *
+     * 只剩两步了：悬浮窗（改成界面内操作）和无障碍（降级方案移除）都已删掉。
      */
     private fun refreshSetupSteps() {
         val done = booleanArrayOf(
             ShizukuBridge.hasPermission(),
-            Settings.canDrawOverlays(this),
-            Pvz2AccessibilityService.isEnabled(this),
             notificationsGranted()
         )
         // 每步"未完成"时右侧显示的动词
         val todoText = intArrayOf(
             R.string.step_todo_auth,
-            R.string.step_todo_auth,
-            R.string.step_todo_enable,
             R.string.step_todo_auth
         )
-        // 每步"已完成"时的措辞（授权 / 启用 语感不同，不硬套一个"已完成"）
+        // 每步"已完成"时的措辞
         val doneText = intArrayOf(
             R.string.step_granted,
-            R.string.step_granted,
-            R.string.step_enabled,
             R.string.step_granted
         )
-        val rowIds = intArrayOf(R.id.rowStep1, R.id.rowStep2, R.id.rowStep3, R.id.rowStep4)
-        val numIds = intArrayOf(R.id.stepNum1, R.id.stepNum2, R.id.stepNum3, R.id.stepNum4)
-        val actionIds =
-            intArrayOf(R.id.stepAction1, R.id.stepAction2, R.id.stepAction3, R.id.stepAction4)
+        val rowIds = intArrayOf(R.id.rowStep1, R.id.rowStep2)
+        val numIds = intArrayOf(R.id.stepNum1, R.id.stepNum2)
+        val actionIds = intArrayOf(R.id.stepAction1, R.id.stepAction2)
 
-        for (i in 0 until 4) {
+        for (i in done.indices) {
             val isDone = done[i]
 
             findViewById<TextView>(numIds[i]).setBackgroundResource(

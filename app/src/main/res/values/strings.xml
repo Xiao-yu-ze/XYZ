@@ -3,18 +3,11 @@
     <string name="app_name">PVZ2 自动化</string>
 
     <!-- ==================== 无障碍服务 ==================== -->
-    <string name="accessibility_service_label">PVZ2 自动化（降级触控）</string>
-    <string name="accessibility_service_description">仅在 Shizuku 不可用时使用：为自动化循环注入点击与滑动。</string>
 
     <!-- ==================== 通知 ==================== -->
     <string name="notification_channel_name">自动化运行中</string>
     <string name="notification_channel_description">自动化脚本运行时显示的常驻通知。</string>
     <string name="notification_title">PVZ2 自动化运行中</string>
-
-    <!-- ==================== 悬浮面板 ==================== -->
-    <string name="overlay_title">PVZ2 自动化</string>
-    <string name="overlay_start">开始</string>
-    <string name="overlay_stop">停止</string>
 
     <!-- ==================== 主界面 · 标题 ==================== -->
     <string name="ui_title">PVZ2 自动化</string>
@@ -27,27 +20,21 @@
 
     <!-- ==================== 主界面 · 准备工作 ==================== -->
     <string name="btn_authorise_shizuku">授权 Shizuku</string>
-    <string name="btn_allow_overlay">授予悬浮窗权限</string>
-    <string name="btn_enable_accessibility">启用无障碍服务（降级方案）</string>
     <string name="btn_allow_notifications">授予通知权限</string>
 
-    <string name="hint_permissions">顺序做完这四项。前两项是必须的；后两项只在 Shizuku 不可用时才需要。</string>
+    <string name="hint_permissions">顺序做完这两项。第一项是必须的；第二项只在需要常驻通知时才有意义。\n全部操作都在本界面里完成 —— 没有悬浮窗，也不依赖无障碍服务。</string>
 
     <!-- 准备清单的行状态 -->
     <string name="step_done">已完成</string>
     <string name="step_granted">已授权</string>
-    <string name="step_enabled">已启用</string>
     <string name="step_todo_auth">去授权</string>
-    <string name="step_todo_enable">去启用</string>
     <string name="step_progress">已完成 %1$d/%2$d</string>
 
     <!-- ==================== 主界面 · 运行 ==================== -->
-    <string name="btn_show_panel">显示悬浮面板</string>
     <string name="btn_start_shizuku">启动（Shizuku）</string>
-    <string name="btn_start_fallback">启动（MediaProjection 降级）</string>
     <string name="btn_stop">停止</string>
 
-    <string name="hint_run">「启动（Shizuku）」是主路线。「降级」用于没有 Shizuku 的情况，会弹一次屏幕录制授权。</string>
+    <string name="hint_run">「启动（Shizuku）」是唯一的运行方式：截图、注入、建虚拟屏全部在 shell 身份那一侧完成。</string>
 
     <!-- ==================== 主界面 · 调试工具 ==================== -->
     <string name="btn_grab_frame">抓取一张截图</string>
@@ -76,10 +63,7 @@
     <string name="msg_permission_denied">Shizuku 授权被拒绝</string>
     <string name="msg_shizuku_not_alive">Shizuku 未运行，请先安装并启动它</string>
     <string name="msg_already_granted">Shizuku 已经授权过了</string>
-    <string name="msg_overlay_granted">悬浮窗权限已授予</string>
     <string name="msg_notifications_granted">通知权限已授予</string>
     <string name="msg_notifications_denied">通知权限被拒绝——前台服务仍会正常运行</string>
     <string name="msg_notifications_not_needed">Android 13 以下无需单独授予通知权限</string>
-    <string name="msg_need_accessibility">请先启用无障碍服务（准备工作第 3 项）</string>
-    <string name="msg_capture_denied">屏幕录制授权被拒绝，无法使用降级方案</string>
 </resources>

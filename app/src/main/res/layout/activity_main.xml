@@ -142,7 +142,7 @@
 
         <View style="@style/StepDivider" />
 
-        <!-- ② -->
+        <!-- ② 只有通知权限了：无障碍（降级方案的触控后端）已整体移除 -->
         <LinearLayout
             android:id="@+id/rowStep2"
             style="@style/StepRow">
@@ -158,78 +158,13 @@
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_marginStart="12dp"
-                android:text="@string/btn_allow_overlay" />
+                android:text="@string/btn_allow_notifications" />
 
             <TextView
                 android:id="@+id/stepAction2"
                 style="@style/Text.RowAction"
                 android:textColor="@color/sun" />
         </LinearLayout>
-
-        <View style="@style/StepDivider" />
-
-        <!-- ③ -->
-        <LinearLayout
-            android:id="@+id/rowStep3"
-            style="@style/StepRow">
-
-            <TextView
-                android:id="@+id/stepNum3"
-                style="@style/StepNumber"
-                android:text="3" />
-
-            <TextView
-                android:id="@+id/stepLabel3"
-                style="@style/Text.Body"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_marginStart="12dp"
-                android:text="@string/btn_enable_accessibility" />
-
-            <TextView
-                android:id="@+id/stepAction3"
-                style="@style/Text.RowAction"
-                android:textColor="@color/sun" />
-        </LinearLayout>
-
-        <View style="@style/StepDivider" />
-
-        <!-- ④ -->
-        <LinearLayout
-            android:id="@+id/rowStep4"
-            style="@style/StepRow">
-
-            <TextView
-                android:id="@+id/stepNum4"
-                style="@style/StepNumber"
-                android:text="4" />
-
-            <TextView
-                android:id="@+id/stepLabel4"
-                style="@style/Text.Body"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_marginStart="12dp"
-                android:text="@string/btn_allow_notifications" />
-
-            <TextView
-                android:id="@+id/stepAction4"
-                style="@style/Text.RowAction"
-                android:textColor="@color/sun" />
-        </LinearLayout>
-
-        <!-- ==================== 降级方案 ==================== -->
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnStartFallback"
-            style="@style/AppButton.Outline"
-            android:layout_marginTop="22dp"
-            android:text="@string/btn_start_fallback" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnShowOverlay"
-            style="@style/AppButton.Outline"
-            android:layout_marginTop="8dp"
-            android:text="@string/btn_show_panel" />
 
         <!-- ==================== 调试工具（默认折叠） ==================== -->
         <LinearLayout

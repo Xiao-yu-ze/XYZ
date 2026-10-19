@@ -1,11 +1,15 @@
 package com.pvz2.auto.shizuku
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.util.Log
-import android.view.Display
 import android.view.Surface
 import com.pvz2.auto.IPvz2Service
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * The privileged side of the app.
@@ -91,26 +95,111 @@ class Pvz2UserService : IPvz2Service.Stub() {
      * 系统 Context 的缓存。
      *
      * `DisplayManager` 的构造函数要一个 Context，而我们在 app_process 里没有应用 Context。
-     * 官方给特权进程的做法是先 `ActivityThread.systemMain()` 拿到一个系统侧的
-     * ActivityThread，再 `getSystemContext()` —— scrcpy 的 `FakeContext`、
-     * MaaFwApp 的 `DisplayManager` 包装都是这条路。
+     * 特权进程的标准做法是先 `ActivityThread.systemMain()` 拿到一个系统侧 ActivityThread，
+     * 再 `getSystemContext()`。
      *
-     * 只初始化一次并缓存：`systemMain()` 有副作用（会准备主线程 Looper），
-     * 反复调用没有意义还可能踩到状态机。
+     * ## ★ 这里踩过一个坑，别再踩回去
+     *
+     * `systemMain()` 内部会 `new ActivityThread.H()`，而 **Handler 必须在已经
+     * `Looper.prepare()` 过的线程上构造**。Binder 回调线程没有 Looper，直接调会抛：
+     *
+     * ```
+     * RuntimeException: Can't create handler inside thread Thread[Binder:xxx] that has
+     * not called Looper.prepare()
+     *     at android.app.ActivityThread.systemMain(ActivityThread.java:7842)
+     * ```
+     *
+     * 所以初始化必须挪到一个自己 prepare 过 Looper 的专用线程上跑。我们只要 Context
+     * 这个对象本身，不需要那个 Looper 派发消息，所以线程拿到 Context 就可以退出。
      */
-    private val systemContext: Context? by lazy {
-        runCatching {
-            val activityThreadClass = Class.forName("android.app.ActivityThread")
-            val systemMain = activityThreadClass
-                .getDeclaredMethod("systemMain")
-                .apply { isAccessible = true }
-            val thread = systemMain.invoke(null)
-            val getSystemContext = activityThreadClass
-                .getDeclaredMethod("getSystemContext")
-                .apply { isAccessible = true }
-            getSystemContext.invoke(thread) as? Context
-        }.onFailure { Log.e(TAG, "取系统 Context 失败，虚拟屏建不出来", it) }
-            .getOrNull()
+    @Volatile
+    private var cachedSystemContext: Context? = null
+
+    /** 已经尝试过且失败 —— 避免每次建屏都重试一遍同样的失败。 */
+    @Volatile
+    private var systemContextAttempted = false
+
+    private fun systemContext(): Context? {
+        cachedSystemContext?.let { return it }
+        synchronized(this) {
+            cachedSystemContext?.let { return it }
+            if (systemContextAttempted) return null
+            systemContextAttempted = true
+            cachedSystemContext = runCatching { createSystemContextOnLooperThread() }
+                .onFailure { Log.e(TAG, "取系统 Context 失败，虚拟屏建不出来", it) }
+                .getOrNull()
+            return cachedSystemContext
+        }
+    }
+
+    private fun createSystemContextOnLooperThread(): Context? {
+        val latch = CountDownLatch(1)
+        var result: Context? = null
+        var failure: Throwable? = null
+
+        val worker = Thread({
+            try {
+                // 关键的一行：没有它，systemMain() 里 new Handler 会抛。
+                Looper.prepare()
+                val activityThreadClass = Class.forName("android.app.ActivityThread")
+                val activityThread = activityThreadClass
+                    .getDeclaredMethod("systemMain")
+                    .apply { isAccessible = true }
+                    .invoke(null)
+                result = activityThreadClass
+                    .getDeclaredMethod("getSystemContext")
+                    .apply { isAccessible = true }
+                    .invoke(activityThread) as? Context
+            } catch (t: Throwable) {
+                failure = t
+            } finally {
+                latch.countDown()
+            }
+        }, "pvz2-system-context")
+        worker.isDaemon = true
+        worker.start()
+
+        if (!latch.await(CONTEXT_TIMEOUT_SEC, TimeUnit.SECONDS)) {
+            Log.e(TAG, "取系统 Context 超时（${CONTEXT_TIMEOUT_SEC}s）")
+            return null
+        }
+        failure?.let { throw it }
+        return result
+    }
+
+    /**
+     * 解析出「属于本进程 uid」的包名，供 `createVirtualDisplay` 的 packageName 校验使用。
+     *
+     * 两个来源：
+     * 1. uid 2000 = adb shell 进程 → 固定 `com.android.shell`（各版本一致，不必查表）；
+     * 2. 其它身份（含 root）→ 向 PackageManager 问这个 uid 名下有哪些包，取第一个。
+     *
+     * 返回空串表示「这个 uid 名下没有任何包」。**那种情况下无论传什么名字都会被拒**，
+     * 所以调用方应当把原因讲清楚，而不是反复重试不同名字。
+     */
+    private fun resolvePackageNameForSelf(): String {
+        val uid = Process.myUid()
+        if (uid == SHELL_UID) return SHELL_PACKAGE
+
+        val packages = runCatching {
+            systemContext()?.packageManager?.getPackagesForUid(uid)
+        }.getOrNull()
+        return packages?.firstOrNull().orEmpty()
+    }
+
+    /**
+     * 只为了给 `DisplayManager` 提供一个**包名正确**的 Context。
+     *
+     * 继承 `ContextWrapper(null)` 而不是实现整个 `Context`：后者有 40 多个抽象方法，
+     * 而 `createVirtualDisplay` 这条路径只读包名（AOSP 里是
+     * `DisplayManagerGlobal.createVirtualDisplay(..., context.getPackageName(), ...)`）。
+     *
+     * 其余方法一旦被调用会 NPE —— 这是**刻意的**：真被调用说明我的假设错了，
+     * 应该立刻炸在明处，而不是静默返回假数据让错误漂到别处。
+     */
+    private class CallerContext(private val packageName: String) : ContextWrapper(null) {
+        override fun getPackageName(): String = packageName
+        override fun getOpPackageName(): String = packageName
     }
 
     /**
@@ -133,63 +222,60 @@ class Pvz2UserService : IPvz2Service.Stub() {
             Log.e(TAG, "建虚拟屏失败：传进来的 Surface 无效")
             return -1
         }
-        val context = systemContext ?: return -1
 
-        Log.i(TAG, "建虚拟屏 name=$name ${width}x$height @${dpi}dpi " +
-            "flags=${VirtualDisplayFlags.describe(flags)}")
+        // ★ 这里只能用「包名属于本进程 uid」的 Context，不能用系统 Context。
+        //   系统 Context 的 getPackageName() 是 "android"，而服务端会用
+        //   validatePackageName(Binder.getCallingUid(), packageName) 校验
+        //   「这个名字必须挂在调用者 uid 名下」，不匹配就抛
+        //   SecurityException: packageName must match the calling uid。
+        //   scrcpy 的 FakeContext 存在的唯一理由就是这件事。
+        val packageName = resolvePackageNameForSelf()
+        if (packageName.isEmpty()) {
+            Log.e(
+                TAG,
+                "本进程 uid=${Process.myUid()} 名下没有任何包，无法通过 " +
+                    "createVirtualDisplay 的 packageName 校验。" +
+                    "根因：Shizuku 以 root 身份运行（uid 0），而 uid 0 不拥有任何包。" +
+                    "解决：改用 ADB/无线调试方式启动 Shizuku，使 UserService 变成 uid 2000(shell)。"
+            )
+            return -1
+        }
+        val context: Context = CallerContext(packageName)
+
+        Log.i(
+            TAG,
+            "建虚拟屏 name=$name ${width}x$height @${dpi}dpi " +
+                "uid=${Process.myUid()} package=$packageName " +
+                "flags=${VirtualDisplayFlags.describe(flags)}"
+        )
 
         return try {
-            val displayManagerClass = Class.forName("android.hardware.display.DisplayManager")
-            val displayManager = displayManagerClass
-                .getDeclaredConstructor(Context::class.java)
-                .apply { isAccessible = true }
-                .newInstance(context)
+            val created = VirtualDisplayCreator.create(
+                callerContext = context,
+                name = name,
+                width = width,
+                height = height,
+                dpi = dpi,
+                surface = surface,
+                flags = flags
+            )
 
-            val create = displayManagerClass
-                .getDeclaredMethod(
-                    "createVirtualDisplay",
-                    String::class.java,
-                    Int::class.javaPrimitiveType,
-                    Int::class.javaPrimitiveType,
-                    Int::class.javaPrimitiveType,
-                    Surface::class.java,
-                    Int::class.javaPrimitiveType
-                )
-                .apply { isAccessible = true }
-
-            // 返回类型是 @hide 的 VirtualDisplay，所以按 Any 接住，再反射取它内部的 Display。
-            val created = create.invoke(displayManager, name, width, height, dpi, surface, flags)
-                ?: run {
-                    Log.e(TAG, "createVirtualDisplay 返回 null（多半是 flags 或权限被拒）")
-                    return -1
-                }
-
-            val display = created.javaClass
-                .getMethod("getDisplay")
-                .apply { isAccessible = true }
-                .invoke(created) as? Display
-
-            val id = display?.displayId ?: -1
-            // 显式把 null 也纳入这个失败分支：这样下面才能智能转换成非空 Display。
-            if (display == null || id <= 0) {
-                Log.e(TAG, "虚拟屏建出来了但拿不到有效 displayId：$id")
-                runCatching { created.javaClass.getMethod("release").invoke(created) }
-                return -1
-            }
-
-            virtualDisplay = created
+            virtualDisplay = created.virtualDisplay
             virtualDisplaySurface = surface
-            virtualDisplayId = id
+            virtualDisplayId = created.displayId
+
             // 用 mode 而不是 Display.getWidth()/getHeight()：后者从 API 17 起就废弃了。
-            val mode = display.mode
+            val mode = created.display.mode
             Log.i(
                 TAG,
-                "虚拟屏就绪 displayId=$id，有效显示尺寸 ${mode.physicalWidth}x${mode.physicalHeight}"
+                "虚拟屏就绪 displayId=${created.displayId}，" +
+                    "有效显示尺寸 ${mode.physicalWidth}x${mode.physicalHeight}"
             )
-            id
+            created.displayId
         } catch (t: Throwable) {
-            // 常见原因：SecurityException（flags 里混进了 AUTO_MIRROR，或缺少 TRUSTED）、
-            // NoSuchMethodException（ROM 改了签名）。把原始异常全打出来，真机排查全靠它。
+            // 常见原因：SecurityException（packageName 与 uid 不匹配 / flags 里混进了
+            // AUTO_MIRROR / 缺少 TRUSTED）、NoSuchMethodException（ROM 改了签名）。
+            // 把原始异常全打出来 —— 真机排查全靠它。
             Log.e(TAG, "建虚拟屏抛异常", t)
             releaseVirtualDisplay()
             -1
@@ -245,5 +331,14 @@ class Pvz2UserService : IPvz2Service.Stub() {
     private companion object {
         const val TAG = "Pvz2UserService"
         val SIZE_PATTERN = Regex("""\d+x\d+""")
+
+        /** 初始化系统 Context 的等待上限。正常是毫秒级，5 秒只是防死等。 */
+        const val CONTEXT_TIMEOUT_SEC = 5L
+
+        /** adb shell 进程的 uid。createVirtualDisplay 的包名校验要用到它。 */
+        const val SHELL_UID = 2000
+
+        /** uid 2000 名下唯一（且各 Android 版本都一致）的包名。 */
+        const val SHELL_PACKAGE = "com.android.shell"
     }
 }

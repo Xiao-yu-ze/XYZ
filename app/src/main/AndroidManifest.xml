@@ -7,14 +7,15 @@
          Declared automatically by the :provider AAR, repeated here for clarity. -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
-    <!-- Draggable always-on-top control panel -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 注意：不再声明 SYSTEM_ALERT_WINDOW。
+         悬浮面板已移除 —— 开始/暂停/停止等所有操作都在 App 界面内完成。
+         虚拟屏方案下游戏跑在副屏，本界面留在前台也不会遮挡它，所以不需要悬浮窗。 -->
 
     <!-- The automation loop runs inside a foreground service.
-         Android 14 requires one permission per declared foreground service type. -->
+         Android 14 requires one permission per declared foreground service type.
+         只有 specialUse 一种：MediaProjection 降级路线已整体移除。 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <!-- API 33+: the foreground service notification is only shown if this is granted -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -38,38 +39,21 @@
 
         <!-- Hosts the capture -> match -> tap loop.
 
-             android:foregroundServiceType lists every type this service may ever be
-             started with. At runtime startForeground() is called with exactly one of them:
-
-               specialUse      -> Shizuku path (no MediaProjection session involved)
-               mediaProjection -> fallback path, started only after the user granted
-                                  createScreenCaptureIntent()
-
-             specialUse additionally requires the <property> below
-             (android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE). -->
+             foregroundServiceType 只有 specialUse 一种，因为只剩 Shizuku 一条路
+             （MediaProjection + 无障碍的降级方案已按需求移除）。
+             specialUse 还需要下面的 <property>（android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE）。 -->
         <service
             android:name=".service.AutomationService"
             android:exported="false"
-            android:foregroundServiceType="specialUse|mediaProjection">
+            android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="continuous_on_device_screen_automation_loop" />
         </service>
 
-        <!-- Fallback touch injection, used only when Shizuku is unavailable.
-             android:canPerformGestures is enabled in res/xml/accessibility_service_config.xml. -->
-        <service
-            android:name=".fallback.Pvz2AccessibilityService"
-            android:exported="true"
-            android:label="@string/accessibility_service_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
+        <!-- 无障碍服务（Pvz2AccessibilityService）已移除 —— 它是 MediaProjection 降级方案的
+             触控后端，现在只走 Shizuku 的 `input tap/swipe`，不再需要无障碍。
+             相应地 res/xml/accessibility_service_config.xml 也已删除。 -->
 
         <!-- Official Shizuku registration. Authority must be "${applicationId}.shizuku"
              and the INTERACT_ACROSS_USERS_FULL permission keeps other apps out.
