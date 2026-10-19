@@ -962,65 +962,106 @@ adb shell "CLASSPATH=$apk app_process /system/bin com.pvz2.auto.shizuku.VdProbeM
 | 副屏定向注入 | ❌ **被「屏上没有可触摸窗口」挡住**（见 10.8） |
 | App 自建屏 | ❌ **走不通**（隐藏 API），已确认无需再试 |
 
-#### 10.8 第二步（搬游戏）与第三步（定向注入）：都没通，且这里纠正过一次错判
+#### 10.8 搬任务与定向注入：参照 MaaFwApp 打通了前两环，最后一环卡在窗口归属
 
-> ⚠️ **先纠正一个错误结论。** 10.8 早先写过「帧亮度 7.12 = 游戏渲染在副屏 ✅」——
-> **那是错的**。后续实验证明：`am start --display` 并不会把任务真的搬到副屏
-> （dumpsys 里任务始终在 `Display #0`），而那块副屏上的亮度 7.12 只是
-> **ImageReader 里残留的旧帧**。亮度 > 0 不能作为「有内容渲染」的判据。
-> 这个坑很值得记：**测量方法本身会骗人**，判据要能排除残留。
+> **先纠正一个错误结论。** 早先写过「帧亮度 7.12 = 游戏渲染在副屏 ✅」，**那是错的**：
+> 副屏上什么都没画时亮度也是 7.12 —— 那是 ImageReader 队列里的**残影**。
+> 直到把任务真的搬过去之前，每次采样的「有内容」都是假的。
+> **亮度不是判据**，`dumpsys window windows` 里窗口的 `mDisplayId` 才是。
 
-**① 搬任务 —— 没通**
+**做了什么：不再自己猜，去看 MaaFwApp 的实现**
 
-| 尝试 | 结果 |
+`github.com/Aliothmoon/MaaFwApp`，关键三个文件（用 `gh-proxy.com` 镜像取 raw）：
+
+| 文件 | 用途 |
 |---|---|
-| `am start --display <id> -n <component>` | 命令成功，但任务仍落在 `Display #0`（dumpsys 实证） |
-| `am start --display <id> -S --activity-clear-task` | 同上，只是把游戏重启了一遍 |
-| `am display move-stack 0 <id>` | `Unknown rootTaskId=0` —— 它要的是真实 taskId |
-| 反射 `ActivityTaskManager.moveRootTaskToDisplay(taskId, displayId)` | 走到了 `taskId=-1`：`getTasks()` 没找到该包的任务，且 **`DisplayTaskMover` 一条日志都没出现**，说明它没走到我写的两条失败分支 —— 这个不一致还没查清 |
+| `remote/internal/VirtualDisplayManager.kt` | flags 台阶（与我们一致）+ scrcpy Java wrapper |
+| `remote/internal/ActivityUtils.kt` | **搬任务 / 钉住任务 / 拉回漂移** |
+| `bridge/InputControlUtils.java` | 多指注入，把失败分成 DELIVERED / DROPPED / FAILED |
+| `remote/internal/StaleFrameGuard.kt` | 专门处理「残影」——印证了这个现象真实存在 |
 
-**② 定向注入 —— 没通，但错误信息非常一致**
+**① 搬任务：通了（三个自己踩的坑）**
 
-代码就位：`DisplayInputInjector`（`injectInputEvent` + 反射 `setDisplayId`）、
-AIDL 的 `tapOnDisplay` / `swipeOnDisplay`。过程中确认了三件事：
+| 坑 | 现象 | 正确做法 |
+|---|---|---|
+| 取 IActivityTaskManager | `ActivityTaskManager.getService()` 反射拿不到，`getTasks` 直接返回空 | `ServiceManager.getService("activity_task")` + `IActivityTaskManager$Stub.asInterface(binder)` |
+| `getTasks` 签名 | `NoSuchMethodException: ...$Proxy.getTasks [int]` —— 看着像方法不存在，其实是**这个重载**不存在 | 真签名是 `getTasks(int maxNum, boolean filterOnlyVisibleRecents, boolean keepIntentExtra, int displayId)`，**四个参数**；按候选依次试 |
+| task 的 display 字段 | `RunningTaskInfo.displayId` 是 @hide，且可能不在当前类上 | 沿父类链 `getDeclaredField("displayId")` 找 |
 
-- **必须设 `event.source = SOURCE_TOUCHSCREEN`**：`MotionEvent.obtain()` 造出来的事件
-  source 是 0，InputDispatcher 无从路由，注入直接返回 false。
-  （坑在于日志只说「没有可触摸窗口」，看着像窗口问题。）
-- 方法是 **`recycle()` 不是 `release()`** —— `InputEvent` 上没有后者。
-- 注入结果能区分得很细：`down=false up=true` —— **DOWN 被丢、UP 被接受**，
-  正好对应「没有可接收按下的窗口」。
-
-连续重试 8 次（间隔 2.5s，共约 20s）全部 `false`，日志每次都是同一句：
+结果（MuMu / Android 12）：
 
 ```
-InputDispatcher: Dropping event because there is no touchable window
-                 or gesture monitor at (640, 360) in display 5.
+搬之前： taskId=411 display=0
+moveRootTaskToDisplay(411, 8)
+搬之后： taskId=411 display=8      ← 真的搬过去了
 ```
 
-而 `input -d <id> tap` 打过去**同样被丢弃**，所以这不是我们构造事件的问题 ——
-**那块屏上确实没有可触摸窗口**，因为任务压根不在那块屏上（见 ①）。
+**② 在副屏启动：也通了**
 
-**③ 一个可能有关但未证实的观察**
+`am start --display` 不吃 display（任务仍落 Display #0），正解是用
+`ActivityOptions.launchDisplayId` 在启动那一刻指定，经
+`IActivityManager.startActivityAsUser` 调下去。这条路上又撞了**同一个包名校验**：
 
-带 `OWN_FOCUS`(16384) 时，**有一次**看到游戏窗口持有焦点
-（`mCurrentFocus=Window{...pvz2cthdop/SexyAppActivity}`）。但焦点属于哪块 display
-没有逐次确认，所以只能算线索，不能算结论。
+```
+SecurityException: Permission Denial: package=null does not belong to uid=2000
+  at ActivityTaskManagerService.assertPackageMatchesCallingUid
+```
 
-**下一步（下次接手从这里开始）**
+`callingPackage` 参数不能填 null，必须填属于调用者 uid 的包名 —— shell 侧就是
+`com.android.shell`。这是本项目**第二次**被同一类校验拦住（第一次是
+`createVirtualDisplay`，见 10.6 坑 2）：**凡是从 shell 侧发起的系统调用，都要交代
+"我是哪个包"，而这个包必须挂在 uid 2000 名下。**
 
-1. 先查清 `DisplayTaskMover` 为什么**一条日志都没有**：在 `moveToDisplay` 入口加
-   一句 `println`（app_process 下 `Log` 可能没进缓冲区），确认它到底被调用没有。
-2. `getTasks()` 换成 `getTasks(Int.MAX_VALUE)` 或用 `getRunningTasks` 备选，
-   并把返回条数与每条的包名打出来 —— 先证明「能枚举到任务」，再谈搬。
-3. 拿到真实 taskId 后先试 `am display move-stack <真实taskId> <id>`（shell 侧，最短路径），
-   成功再用反射版的 `moveRootTaskToDisplay` 复现。
-4. 判据换成**不依赖残留帧**的方式：连续两次采样对比（内容变化才算活），
-   或直接看 `dumpsys window displays` 里该 display 下有没有窗口。
+**③ 最后一环：任务在副屏，窗口却在 display 0**
 
+`launchOnDisplay -> true`，`taskId=415 display=15` 都对，但：
+
+```
+dumpsys window windows
+  Window #6 Window{...pvz2cthdop/SexyAppActivity}:
+    mDisplayId=0                      ← 窗口在主屏
+    mFullConfiguration=... 1280x720 ... mRotation=ROTATION_90
+                                      ← 但尺寸/旋转来自副屏
+```
+
+**任务记录搬过去了，窗口没跟过去。** 所以 `InputDispatcher` 一直报
+`no touchable window ... in display N` —— 它说得对，那块屏上确实没有窗口。
+
+下一步该查的方向（按可能性排序）：
+
+1. `launchDisplayId` 只影响**新窗口**的初步归属；如果 Activity 已在跑（`singleTask`/
+   `singleInstance` 或已有 task），系统会复用旧窗口 → 先 `force-stop` 再启动，
+   并确认启动的是**全新 task**（`FLAG_ACTIVITY_NEW_TASK | CLEAR_TASK`）。
+2. 用 `dumpsys activity activities` 里的 `Task.mLastNonFullscreenBounds` /
+   每个 `ActivityRecord` 的 `displayId` 交叉核对，看是「窗口没搬」还是「窗口搬了但
+   WM 没更新 displayId」。
+3. 若确认是 WM 层没搬，就只能在**建屏后立刻**启动应用（屏刚建、无旧 task），
+   并要求 MaaFwApp 那样的 `ensureAppOnDisplay` 持续守卫 —— 它同时处理
+   「One UI 把游戏从虚拟屏挪回主屏」这类 ROM 行为。
+
+**调试入口**（改一行即可重跑，不必重启 App）：
+
+```powershell
+$apk = (& adb shell pm path com.pvz2.auto).Replace("package:","").Trim()
+adb shell "CLASSPATH=$apk app_process /system/bin com.pvz2.auto.shizuku.VdProbeMain com.popcap.pvz2cthdop --tap"
+```
+
+`--tap` 会依次做：建屏 → 搬任务 → 连续注入 6 次 → 用 `input -d` 对照 → 打窗口/显示/输入日志。
+
+### 会话 10 的这一轮（在 10.8 之后）
+
+**验证到哪**：
+
+| 项 | 状态 |
+|---|---|
+| 建虚拟屏（shell 身份） | ✅ displayId 正常，1280×720 |
+| 出帧 | ✅ ImageReader 通路正常（**但内容可能是残影，别拿亮度当判据**） |
+| 搬任务到副屏 | ✅ `moveRootTaskToDisplay` 生效，`dumpsys` 可见 display 变化 |
+| 在副屏启动应用 | ✅ `launchDisplayId` + `startActivityAsUser` 生效 |
+| **窗口跟随到副屏** | ❌ **没通** —— 任务在副屏、窗口仍在 display 0 |
+| 副屏定向注入 | ❌ 被上面这条挡住 |
 
 ---
-
 ## 未验证项与已知风险
 
 ### 🔴 高优先级

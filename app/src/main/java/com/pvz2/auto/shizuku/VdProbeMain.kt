@@ -106,29 +106,32 @@ object VdProbeMain {
             //   A. 我们自己构造 MotionEvent + injectInputEvent（带 displayId）
             //   B. shell 的 `input -d <id> tap`（系统自带的同一条能力）
             if (args.getOrNull(1) == "--tap") {
-                println("--- 注入对照实验（display $displayId, 640,360）---")
-                println("点之前前台窗口：")
-                run("dumpsys window displays | grep -E 'mCurrentFocus|mFocusedApp' | head -6")
+                println("--- 注入对照实验（display $displayId, 640,316）---")
+                println("此刻屏还活着、任务也在副屏上，是最干净的一次机会。")
 
-                // 连续重点几次：游戏刚被 -S 重启，前几秒多半还在加载（窗口 not touchable），
-                // 只在最后点一次很容易得出「注入不通」的错误结论。
+                // 连续重点几次：任务刚被搬过来，窗口要过一会儿才可触摸。
                 var ourOk = false
-                var attempt = 0
-                while (attempt < TAP_RETRIES && !ourOk) {
-                    attempt++
-                    ourOk = DisplayInputInjector.tap(displayId, WIDTH / 2, HEIGHT / 2, holdMs = 80)
+                for (attempt in 1..TAP_RETRIES_COUNT) {
+                    ourOk = DisplayInputInjector.tap(displayId, WIDTH / 2, HEIGHT * 44 / 100, holdMs = 80)
                     println("A) 第 $attempt 次自建注入 -> $ourOk")
-                    if (!ourOk) Thread.sleep(TAP_RETRY_INTERVAL_MS)
+                    if (ourOk) break
+                    Thread.sleep(TAP_RETRY_INTERVAL_MS)
                 }
 
-                val shellOut = run("input -d $displayId tap ${WIDTH / 2} ${HEIGHT / 2}")
+                // 同一时刻、同一块屏，用 shell 的 input -d 再打一次做对照。
+                val shellOut = run("input -d $displayId tap ${WIDTH / 2} ${HEIGHT * 44 / 100}")
                 println("B) input -d $displayId tap -> ${shellOut.ifBlank { "（无输出即成功）" }}")
 
-                Thread.sleep(800)
-                println("点之后前台窗口：")
-                run("dumpsys window displays | grep -E 'mCurrentFocus|mFocusedApp' | head -6")
-                println("与注入相关的系统日志：")
-                run("logcat -d -t 60 | grep -iE 'injectInput|InputDispatcher|Dropping' | tail -10")
+                Thread.sleep(500)
+                println("此刻该 display 下的窗口：")
+                run(
+                    "dumpsys window windows | grep -E 'Window #|mDisplayId=$displayId |mDisplayId=$displayId\$' " +
+                        "| head -12"
+                )
+                println("各 display 上的任务：")
+                run("dumpsys activity activities | grep -E '^Display #' | head -8")
+                println("输入分发日志：")
+                run("logcat -d -t 40 | grep -iE 'InputDispatcher' | tail -6")
             }
 
             // 轮询帧：亮度 > 0 说明这块屏上真的画了东西。
@@ -187,20 +190,30 @@ object VdProbeMain {
         val component = resolveLauncherComponent(pkg)
         println("launcher activity: ${component ?: "（解析失败）"}")
 
-        if (component != null) {
-            // -S 强制重启（确保落到新任务）；--activity-clear-task 让它在目标屏成为顶层。
-            run("am start --display $displayId -S --activity-clear-task -n $component")
-            Thread.sleep(2_000)
-        }
+        // ① 先清掉已有任务，确保待会儿是「全新启动」而不是把旧任务提到前台。
+        run("am force-stop $pkg")
+        Thread.sleep(800)
+
+        // ② ★ 用 ActivityOptions.launchDisplayId 在**启动那一刻**就指定副屏。
+        //    这是与「事后搬」的本质区别：`moveRootTaskToDisplay` 只改任务记录、
+        //    不搬窗口，搬完副屏上仍然没有可触摸窗口，注入全被丢。
+        val launched = DisplayAppLauncher.launchOnDisplay(pkg, displayId)
+        println("launchOnDisplay -> $launched")
+        Thread.sleep(3_000)
 
         // 关键一步：`am start --display` 并不保证任务真的落在副屏（实测会落回 Display #0），
-        // 所以再用 ActivityTaskManager 反射搬一次。这是 MaaFwApp 的做法。
+        // 所以再用 IActivityTaskManager 搬一次。取法照 MaaFwApp：
+        // ServiceManager.getService("activity_task") + IActivityTaskManager$Stub.asInterface。
+        println("搬之前所有任务：")
+        println(DisplayTaskMover.dumpTasks())
+
         val movedTaskId = DisplayTaskMover.moveToDisplay(pkg, displayId)
         println("反射搬移结果 taskId=$movedTaskId")
-        Thread.sleep(1_200)
+        Thread.sleep(1_500)
 
-        println("搬完之后各任务所属 display：")
-        run("dumpsys activity activities | grep -E 'Display #|:com.popcap' | head -10")
+        println("搬之后所有任务：")
+        println(DisplayTaskMover.dumpTasks())
+        println("该包现在所在 display：${DisplayTaskMover.taskDisplayId(pkg)}（期望 $displayId）")
     }
 
     /**
@@ -336,6 +349,6 @@ object VdProbeMain {
     private const val ARG_OWN_FOCUS = "--own-focus"
 
     /** 注入重试次数与间隔：等游戏从加载态进入可交互态。 */
-    private const val TAP_RETRIES = 8
+    private const val TAP_RETRIES_COUNT = 6
     private const val TAP_RETRY_INTERVAL_MS = 2_500L
 }
