@@ -68,6 +68,43 @@ class Pvz2UserService : IPvz2Service.Stub() {
         runCatching { runShell("input swipe $x1 $y1 $x2 $y2 $durationMs") }
     }
 
+    // ------------------------------------------------------- 定向注入（副屏）
+
+    /**
+     * 在指定 display 上点一下。
+     *
+     * 实现放在 [DisplayInputInjector] 里，与诊断工具 [VdProbeMain] 共用同一份逻辑 ——
+     * 诊断工具如果和线上走的不是同一条代码路径，它验出来的结论就不算数。
+     */
+    override fun tapOnDisplay(displayId: Int, x: Int, y: Int, holdMs: Int): Boolean =
+        DisplayInputInjector.tap(displayId, x, y, holdMs)
+
+    /**
+     * 在指定 display 上滑动。
+     *
+     * 这条用 shell 的 `input -d <displayId> swipe ...` 而不是自己拼 MOVE 序列：
+     * `input` 命令本身就支持 `-d`，而手写 MOVE 序列要自己算插值和时间戳，
+     * 收益不大、出错面更大。等以后真需要精细控制（压感/多点）再换。
+     */
+    override fun swipeOnDisplay(
+        displayId: Int,
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
+        durationMs: Int
+    ): Boolean = runCatching {
+        val output = runShell("input -d $displayId swipe $x1 $y1 $x2 $y2 $durationMs")
+        // `input` 失败时会往 stderr 写东西（已合并进 stdout）而不是返回非零，只能看输出。
+        if (output.isNotBlank()) {
+            Log.w(TAG, "swipeOnDisplay 输出：$output")
+        }
+        true
+    }.getOrElse {
+        Log.e(TAG, "swipeOnDisplay 失败", it)
+        false
+    }
+
     override fun exec(command: String): String =
         runCatching { runShell(command) }.getOrElse { "ERROR: ${it.message}" }
 

@@ -93,7 +93,7 @@ class ShizukuUserServiceClient(private val context: Context) {
         const val USER_SERVICE_PROCESS_SUFFIX = "pvz2"
 
         /** Bump when Pvz2UserService changes so Shizuku recreates the remote instance. */
-        const val USER_SERVICE_VERSION = 4
+        const val USER_SERVICE_VERSION = 5
 
         const val CONNECT_TIMEOUT_MS = 5_000L
         const val POLL_INTERVAL_MS = 50L

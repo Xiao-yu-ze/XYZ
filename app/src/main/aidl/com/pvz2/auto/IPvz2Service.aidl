@@ -60,6 +60,22 @@ interface IPvz2Service {
     int getVirtualDisplayId() = 8;
 
     /**
+     * 在**指定 display** 上点一下，并可以控制最短按住时长。
+     *
+     * 为什么不能继续用 `input tap`：
+     *  1. `input tap` 只能打到默认屏（display 0），搬去副屏的游戏收不到；
+     *  2. `input tap` 的按下时长极短，低帧率下会丢点击（会话 7 已定位）。
+     * 所以改用 `InputManager.injectInputEvent` + `MotionEvent.setDisplayId()`，
+     * 并显式按住 [holdMs] 毫秒。
+     *
+     * @return true 表示注入被系统接受（false 通常是缺 INJECT_EVENTS 权限）
+     */
+    boolean tapOnDisplay(int displayId, int x, int y, int holdMs) = 9;
+
+    /** 在指定 display 上滑动。同样走 injectInputEvent + displayId。 */
+    boolean swipeOnDisplay(int displayId, int x1, int y1, int x2, int y2, int durationMs) = 10;
+
+    /**
      * Shizuku invokes this with transaction code 16777115 when the user service is removed.
      * The AIDL value must be 16777114 (Shizuku-API README, "Stop the User Service").
      * Use it for cleanup and finally System.exit(0), otherwise the process stays alive.
