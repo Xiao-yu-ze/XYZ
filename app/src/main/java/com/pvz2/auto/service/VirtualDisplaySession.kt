@@ -72,6 +72,11 @@ class VirtualDisplaySession(
         val flagsCandidate: Int = 0,
         /** 屏是不是 TRUSTED —— 窗口能不能挂上去的唯一前提。 */
         val displayTrusted: Boolean = false,
+        /** 内部用：上一条已记入流水的 message，避免重复记录。 */
+        val lastLoggedMessage: String = "",
+
+        /** 事件流水（最近 MAX_HISTORY 条）。导出日志时原样带出。 */
+        val history: List<String> = emptyList(),
     )
 
     private val _state = MutableStateFlow(State())
@@ -429,6 +434,9 @@ class VirtualDisplaySession(
         const val VD_HEIGHT = 720
         const val VD_DPI = 240
         const val POLL_INTERVAL_MS = 120L
+
+        /** 事件流水最多保留多少条。 */
+        const val MAX_HISTORY = 200
 
         /** 队列空时的让出时长。取到帧时不 sleep，所以这个值不影响帧率上限。 */
         const val IDLE_POLL_MS = 8L

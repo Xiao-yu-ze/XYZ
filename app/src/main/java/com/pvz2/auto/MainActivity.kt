@@ -222,6 +222,15 @@ class MainActivity : AppCompatActivity() {
                         appendLine()
                         appendLine("导出时实时查询: $display")
                         appendLine()
+                        // ★ 事件流水：不受 logcat 被刷屏影响，这是最可靠的一段。
+                        appendLine("----- 事件流水（本次运行全过程）-----")
+                        if (st.history.isEmpty()) {
+                            appendLine("（没有事件记录 —— 说明本次启动后从没走到过建屏）")
+                        } else {
+                            st.history.forEach { appendLine(it) }
+                        }
+                        appendLine()
+                        appendLine()
                         appendLine("----- ① 本应用（建屏 / 搬移 / 采集）-----")
                         appendLine(own)
                         appendLine()
