@@ -110,17 +110,25 @@ object VdProbeMain {
                 println("点之前前台窗口：")
                 run("dumpsys window displays | grep -E 'mCurrentFocus|mFocusedApp' | head -6")
 
-                val ok = DisplayInputInjector.tap(displayId, WIDTH / 2, HEIGHT / 2, holdMs = 60)
-                println("A) 自建 MotionEvent 注入 -> $ok")
+                // 连续重点几次：游戏刚被 -S 重启，前几秒多半还在加载（窗口 not touchable），
+                // 只在最后点一次很容易得出「注入不通」的错误结论。
+                var ourOk = false
+                var attempt = 0
+                while (attempt < TAP_RETRIES && !ourOk) {
+                    attempt++
+                    ourOk = DisplayInputInjector.tap(displayId, WIDTH / 2, HEIGHT / 2, holdMs = 80)
+                    println("A) 第 $attempt 次自建注入 -> $ourOk")
+                    if (!ourOk) Thread.sleep(TAP_RETRY_INTERVAL_MS)
+                }
 
                 val shellOut = run("input -d $displayId tap ${WIDTH / 2} ${HEIGHT / 2}")
                 println("B) input -d $displayId tap -> ${shellOut.ifBlank { "（无输出即成功）" }}")
 
-                Thread.sleep(1_000)
+                Thread.sleep(800)
                 println("点之后前台窗口：")
                 run("dumpsys window displays | grep -E 'mCurrentFocus|mFocusedApp' | head -6")
                 println("与注入相关的系统日志：")
-                run("logcat -d -t 40 | grep -iE 'injectInput|InputDispatcher|drop' | tail -12")
+                run("logcat -d -t 60 | grep -iE 'injectInput|InputDispatcher|Dropping' | tail -10")
             }
 
             // 轮询帧：亮度 > 0 说明这块屏上真的画了东西。
@@ -170,24 +178,63 @@ object VdProbeMain {
      * 把包搬到指定 display，按「成功率从高到低」依次尝试，每一步都打印结果。
      *
      * 顺序的取舍：
-     *  ① `am start --display` —— 最稳、最不改游戏状态的官方入口；缺点是若该应用
-     *     已在主屏有 task，系统可能只是把原 task 提到前台而不搬到副屏（所以要检。
-     *  ② `am display move-stack` —— 直接搬栈，Android 12 还在，14 起被移除。
+     *  ① `am start --display` —— 官方入口，最不改游戏状态；但若该应用已在主屏有 task，
+     *     系统可能只是把原 task 提到前台而不搬到副屏。
+     *  ② `am display move-stack <taskId> <displayId>` —— 直接搬栈。**要真实 taskId**，
+     *     传 0 会报 `Unknown rootTaskId=0`（这里踩过）。
      */
     private fun movePackageToDisplay(pkg: String, displayId: Int) {
         val component = resolveLauncherComponent(pkg)
         println("launcher activity: ${component ?: "（解析失败）"}")
 
         if (component != null) {
-            run("am start --display $displayId -n $component")
-            Thread.sleep(1_500)
+            // -S 强制重启（确保落到新任务）；--activity-clear-task 让它在目标屏成为顶层。
+            run("am start --display $displayId -S --activity-clear-task -n $component")
+            Thread.sleep(2_000)
         }
-        // 不论上面成功与否都再补一刀：若任务已被创建在主屏，这一步可能把它搬过来。
-        run("am display move-stack 0 $displayId")
-        Thread.sleep(1_000)
-        // 把结果打出来，方便人对着看
-        run("dumpsys activity activities | grep -E 'mResumedActivity|displayId=' | head -20")
+
+        // 关键一步：`am start --display` 并不保证任务真的落在副屏（实测会落回 Display #0），
+        // 所以再用 ActivityTaskManager 反射搬一次。这是 MaaFwApp 的做法。
+        val movedTaskId = DisplayTaskMover.moveToDisplay(pkg, displayId)
+        println("反射搬移结果 taskId=$movedTaskId")
+        Thread.sleep(1_200)
+
+        println("搬完之后各任务所属 display：")
+        run("dumpsys activity activities | grep -E 'Display #|:com.popcap' | head -10")
     }
+
+    /**
+     * 从 `dumpsys activity activities` 里找出该包的 taskId。
+     *
+     * 输出形如：
+     * ```
+     * * Task{aaf4cf4 #405 type=standard A=10051:com.popcap.pvz2cthdop U=0 ...}
+     * ```
+     * `#` 后面的数字就是 taskId。
+     *
+     * **别用 `dumpsys activity recents`**：它的标题里就有 `Recent #0`，
+     * 在包名附近开窗口抓 `#数字` 会抓到 0（踩过，然后把 0 传给 move-stack，
+     * 报 `Unknown rootTaskId=0`）。这里直接在 Task{...} 内部匹配「#数字 且同一对大括号
+     * 里有这个包名」，不会串。
+     */
+    private fun findTaskId(pkg: String): Int? = runCatching {
+        val text = execCapture("dumpsys activity activities")
+        Regex("Task\\{[^}]*#(\\d+)[^}]*:${Regex.escape(pkg)}\\}")
+            .find(text)
+            ?.groupValues
+            ?.get(1)
+            ?.toIntOrNull()
+    }.getOrNull()
+
+    /** 跑命令但不回显（供内部解析用）。 */
+    private fun execCapture(command: String): String = runCatching {
+        val process = ProcessBuilder("sh", "-c", command)
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        process.waitFor()
+        output
+    }.getOrDefault("")
 
     /** `cmd package resolve-activity --brief -c android.intent.category.LAUNCHER <pkg>` 的最后一行是组件名。 */
     private fun resolveLauncherComponent(pkg: String): String? {
@@ -287,4 +334,8 @@ object VdProbeMain {
 
     private const val FRAME_WAIT_MS = 12_000L
     private const val ARG_OWN_FOCUS = "--own-focus"
+
+    /** 注入重试次数与间隔：等游戏从加载态进入可交互态。 */
+    private const val TAP_RETRIES = 8
+    private const val TAP_RETRY_INTERVAL_MS = 2_500L
 }

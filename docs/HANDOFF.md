@@ -958,66 +958,66 @@ adb shell "CLASSPATH=$apk app_process /system/bin com.pvz2.auto.shizuku.VdProbeM
 | **虚拟屏建屏（shell 身份）** | ✅ **真机实测**，`displayId=4/5`，1280×720 |
 | **虚拟屏出帧** | ✅ 首帧 1280×720，ImageReader 通路打通 |
 | 界面 | ✅ 准备工作 2/2；无悬浮窗、无无障碍、无降级按钮 |
-| 把游戏搬到副屏 | ✅ **已通**（见 10.8） |
-| 副屏定向注入 | ⚠️ **代码就位但被焦点挡住**（见 10.8） |
+| 把游戏搬到副屏 | ❌ **仍未通**（见 10.8，含一次错误结论的纠正） |
+| 副屏定向注入 | ❌ **被「屏上没有可触摸窗口」挡住**（见 10.8） |
 | App 自建屏 | ❌ **走不通**（隐藏 API），已确认无需再试 |
 
-#### 10.8 第二步通了，第三步卡在「屏上没有可触摸窗口」
+#### 10.8 第二步（搬游戏）与第三步（定向注入）：都没通，且这里纠正过一次错判
 
-**① 把游戏搬到副屏 —— 通了**
+> ⚠️ **先纠正一个错误结论。** 10.8 早先写过「帧亮度 7.12 = 游戏渲染在副屏 ✅」——
+> **那是错的**。后续实验证明：`am start --display` 并不会把任务真的搬到副屏
+> （dumpsys 里任务始终在 `Display #0`），而那块副屏上的亮度 7.12 只是
+> **ImageReader 里残留的旧帧**。亮度 > 0 不能作为「有内容渲染」的判据。
+> 这个坑很值得记：**测量方法本身会骗人**，判据要能排除残留。
 
-```powershell
-# 先解析 launcher activity，再用 --display 启动
-cmd package resolve-activity --brief -c android.intent.category.LAUNCHER com.popcap.pvz2cthdop
-am start --display <displayId> -n <component>
-```
+**① 搬任务 —— 没通**
 
-判据是**帧亮度**：空屏 `0.0`，启动后 **7.12** —— 游戏确实渲染到这块屏上了。
+| 尝试 | 结果 |
+|---|---|
+| `am start --display <id> -n <component>` | 命令成功，但任务仍落在 `Display #0`（dumpsys 实证） |
+| `am start --display <id> -S --activity-clear-task` | 同上，只是把游戏重启了一遍 |
+| `am display move-stack 0 <id>` | `Unknown rootTaskId=0` —— 它要的是真实 taskId |
+| 反射 `ActivityTaskManager.moveRootTaskToDisplay(taskId, displayId)` | 走到了 `taskId=-1`：`getTasks()` 没找到该包的任务，且 **`DisplayTaskMover` 一条日志都没出现**，说明它没走到我写的两条失败分支 —— 这个不一致还没查清 |
 
-`am display move-stack 0 <id>` 在 Android 12 上**不可用**（`Unknown rootTaskId=0`），
-它要的是真实 taskId。这条路留作候选，但 `am start --display` 已经够用。
+**② 定向注入 —— 没通，但错误信息非常一致**
 
-**② 定向注入 —— 卡住了，但原因很具体**
+代码就位：`DisplayInputInjector`（`injectInputEvent` + 反射 `setDisplayId`）、
+AIDL 的 `tapOnDisplay` / `swipeOnDisplay`。过程中确认了三件事：
 
-代码已经就位：`DisplayInputInjector`（`injectInputEvent` + 反射 `setDisplayId`）、
-AIDL 的 `tapOnDisplay` / `swipeOnDisplay`。排查过程中确认两件事：
+- **必须设 `event.source = SOURCE_TOUCHSCREEN`**：`MotionEvent.obtain()` 造出来的事件
+  source 是 0，InputDispatcher 无从路由，注入直接返回 false。
+  （坑在于日志只说「没有可触摸窗口」，看着像窗口问题。）
+- 方法是 **`recycle()` 不是 `release()`** —— `InputEvent` 上没有后者。
+- 注入结果能区分得很细：`down=false up=true` —— **DOWN 被丢、UP 被接受**，
+  正好对应「没有可接收按下的窗口」。
 
-- **必须设 `event.source = SOURCE_TOUCHSCREEN`**。`MotionEvent.obtain()` 造出来的事件
-  source 是 0，InputDispatcher 无法据 source 路由，注入直接返回 false。
-  （这个坑很误导：日志只说「没有可触摸窗口」，看着像窗口问题。）
-- 方法名是 `recycle()` 不是 `release()` —— `InputEvent` 上没有后者。
-
-但即使 source 和 displayId 都对了，事件仍被丢弃：
+连续重试 8 次（间隔 2.5s，共约 20s）全部 `false`，日志每次都是同一句：
 
 ```
 InputDispatcher: Dropping event because there is no touchable window
-                 or gesture monitor at (640, 360) in display 12.
+                 or gesture monitor at (640, 360) in display 5.
 ```
 
-**关键判断**：`input -d <id> tap` 打过去**同样被丢弃**（它不报错，但日志里一样是 drop）。
-所以这不是我们构造事件的问题，而是**那块屏上确实没有可触摸窗口**。
+而 `input -d <id> tap` 打过去**同样被丢弃**，所以这不是我们构造事件的问题 ——
+**那块屏上确实没有可触摸窗口**，因为任务压根不在那块屏上（见 ①）。
 
-**③ 焦点是唯一的钥匙，但它的表现不稳定**
+**③ 一个可能有关但未证实的观察**
 
-给 flags 加上 `OWN_FOCUS`(16384) 之后，**有一次**观察到游戏窗口真的拿到了焦点：
+带 `OWN_FOCUS`(16384) 时，**有一次**看到游戏窗口持有焦点
+（`mCurrentFocus=Window{...pvz2cthdop/SexyAppActivity}`）。但焦点属于哪块 display
+没有逐次确认，所以只能算线索，不能算结论。
 
-```
-mCurrentFocus=Window{7148526 u0 com.popcap.pvz2cthdop/...SexyAppActivity}
-```
+**下一步（下次接手从这里开始）**
 
-但下一次运行焦点又落回宿主桌面（`app.lawnchair`），游戏任务在副屏上却没有输入焦点。
-所以「加 OWN_FOCUS」这个方向是对的，还缺**稳定把任务变成该屏顶层**的那一步。
+1. 先查清 `DisplayTaskMover` 为什么**一条日志都没有**：在 `moveToDisplay` 入口加
+   一句 `println`（app_process 下 `Log` 可能没进缓冲区），确认它到底被调用没有。
+2. `getTasks()` 换成 `getTasks(Int.MAX_VALUE)` 或用 `getRunningTasks` 备选，
+   并把返回条数与每条的包名打出来 —— 先证明「能枚举到任务」，再谈搬。
+3. 拿到真实 taskId 后先试 `am display move-stack <真实taskId> <id>`（shell 侧，最短路径），
+   成功再用反射版的 `moveRootTaskToDisplay` 复现。
+4. 判据换成**不依赖残留帧**的方式：连续两次采样对比（内容变化才算活），
+   或直接看 `dumpsys window displays` 里该 display 下有没有窗口。
 
-**下一步三条探针（按把握排序）**：
-
-1. 用**真实 taskId** 搬：`dumpsys activity recents | grep pvz2` 取 taskId →
-   `am display move-stack <taskId> <displayId>`（而不是 `0`）。
-2. `am start --display <id> --activity-clear-task -S -n <component>`，强制新任务落在该屏顶层。
-3. 核实 Android 12 是否真的支持 `OWN_FOCUS`（16384 在 S 上可能是未知位被直接忽略；
-   若如此，就得靠 `ActivityTaskManager` 把任务移过去并让系统重新分配焦点）。
-
-调试入口：`VdProbeMain` 现在支持 `--tap`（对照实验：自建事件 vs `input -d`）
-和 `--own-focus`（额外带 OWN_FOCUS 位），改一行就能重跑，不必重启 App。
 
 ---
 
