@@ -82,6 +82,14 @@ object VirtualDisplayFlags {
     /** 虚拟屏被移除时销毁其上内容（避免残留 task）。 */
     const val DESTROY_CONTENT_ON_REMOVAL = 256
 
+    /**
+     * 这块屏上也画系统装饰（状态栏/导航栏）。
+     *
+     * 假设：有装饰的屏才会被 WMS 当作可承载 Activity 的正常屏。
+     * 加它用于验证「窗口为什么留在 display 0」这个卡点。
+     */
+    const val SHOULD_SHOW_SYSTEM_DECORATIONS = 512
+
     /** API 33+：受信任显示。详见类注释 ③。 */
     const val TRUSTED = 1024
 
@@ -104,7 +112,8 @@ object VirtualDisplayFlags {
 
     /** 所有版本都要的基础集 = 459。 */
     const val BASE: Int = PUBLIC or PRESENTATION or OWN_CONTENT_ONLY or
-        SUPPORTS_TOUCH or ROTATES_WITH_CONTENT or DESTROY_CONTENT_ON_REMOVAL
+        SUPPORTS_TOUCH or ROTATES_WITH_CONTENT or DESTROY_CONTENT_ON_REMOVAL or
+        SHOULD_SHOW_SYSTEM_DECORATIONS
 
     /** API 33 起追加 = 15360。 */
     const val API33_ADDED: Int = TRUSTED or OWN_DISPLAY_GROUP or ALWAYS_UNLOCKED or
@@ -135,6 +144,7 @@ object VirtualDisplayFlags {
             "SUPPORTS_TOUCH" to SUPPORTS_TOUCH,
             "ROTATES_WITH_CONTENT" to ROTATES_WITH_CONTENT,
             "DESTROY_CONTENT_ON_REMOVAL" to DESTROY_CONTENT_ON_REMOVAL,
+            "SHOULD_SHOW_SYSTEM_DECORATIONS" to SHOULD_SHOW_SYSTEM_DECORATIONS,
             "TRUSTED" to TRUSTED,
             "OWN_DISPLAY_GROUP" to OWN_DISPLAY_GROUP,
             "ALWAYS_UNLOCKED" to ALWAYS_UNLOCKED,

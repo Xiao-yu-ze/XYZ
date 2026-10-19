@@ -108,6 +108,78 @@ class Pvz2UserService : IPvz2Service.Stub() {
     override fun exec(command: String): String =
         runCatching { runShell(command) }.getOrElse { "ERROR: ${it.message}" }
 
+    // ------------------------------------------------- 任务与显示（本进程执行）
+    //
+    // 这几件事放在这里而不是 App 里，原因是**隐藏 API 限制**：
+    // App 进程反射 `IActivityTaskManager$Stub.asInterface` 会抛
+    // `NoSuchMethodException: ...asInterface [interface android.os.IBinder]`
+    // —— 不是权限问题，是隐藏 API 被从反射结果里滤掉了。
+    // 而 app_process（本进程）不受该限制。详见 IPvz2Service 里这几个方法的注释。
+
+    override fun moveTaskToDisplay(packageName: String, displayId: Int): Int =
+        DisplayTaskMover.moveToDisplay(packageName, displayId)
+
+    override fun getTaskDisplayId(packageName: String): Int =
+        DisplayTaskMover.taskDisplayId(packageName)
+
+    override fun dumpTasks(): String = DisplayTaskMover.dumpTasks()
+
+    override fun launchAppOnDisplay(packageName: String, displayId: Int): Boolean =
+        DisplayAppLauncher.launchOnDisplay(packageName, displayId)
+
+    /**
+     * 抓 logcat。
+     *
+     * 本进程是 shell(uid 2000)，能读全部日志 —— 这一点普通应用做不到
+     * （Android 4.1 起只允许读自己进程的）。排查虚拟屏问题时必须要看
+     * system_server 侧那些 `Permission Denial` / `Display device added`。
+     */
+    override fun grabLogcat(tagFilter: String, maxLines: Int): String {
+        val filter = tagFilter.trim()
+        // 先取全量再在本地截断：logcat 的 -t 是"最后 N 行"，但配合 grep 时
+        // 过滤后的行数会少于 N，容易漏掉关键日志。这里取多一点再截。
+        val take = maxLines.coerceIn(50, 20_000)
+        val command = if (filter.isEmpty()) {
+            "logcat -d -v brief -t $take"
+        } else {
+            // 用单引号包住过滤式，避免 shell 解释其中的特殊字符。
+            "logcat -d -v brief -t 8000 | grep -E '$filter' | tail -n $take"
+        }
+        return runCatching { runShell(command) }
+            .getOrElse { "ERROR: ${it.message}" }
+    }
+
+    /**
+     * 一块屏的 flags 摘要。
+     *
+     * 只认 `dumpsys display` 里 `DisplayDeviceInfo{...}` 那一段 —— 它是唯一
+     * 权威来源。`mViewports` 段里的 `displayId` 在某些 ROM 上会报错值（见过报 0），
+     * 拿它判断会得出完全相反的结论。
+     */
+    override fun describeDisplay(displayId: Int): String {
+        val dump = runCatching { runShell("dumpsys display") }.getOrDefault("")
+        if (dump.isEmpty()) return "ERROR: dumpsys display 无输出"
+
+        // 按 displayId 找对应的 DisplayDeviceInfo：它前面会有一行
+        // `Display 10:` 或 `mDisplayId=10`，用非贪婪窗口取最近的那一段。
+        val blocks = dump.split("DisplayDeviceInfo{")
+        for (block in blocks.drop(1)) {
+            val head = block.substringBefore("}\n")
+            // 判断这块屏属于哪个 id：往上看它所在段落里的 mDisplayId
+            val before = dump.substring(0, dump.indexOf("DisplayDeviceInfo{$block").coerceAtLeast(0))
+            val idMatch = Regex("mDisplayId=(\\d+)").findAll(before).lastOrNull()
+            val ownerId = idMatch?.groupValues?.get(1)?.toIntOrNull() ?: continue
+            if (ownerId != displayId) continue
+
+            val trusted = head.contains("FLAG_TRUSTED")
+            val type = Regex("type ([A-Z]+)").find(head)?.groupValues?.get(1) ?: "?"
+            val owner = Regex("owner ([^,\\s]+)").find(head)?.groupValues?.get(1) ?: "?"
+            val flags = Regex("FLAG_[A-Z_]+").findAll(head).map { it.value }.toList()
+            return "display=$displayId type=$type trusted=$trusted owner=$owner flags=${flags.joinToString("|")}"
+        }
+        return "display=$displayId 未找到（屏可能没建成或已释放）"
+    }
+
     override fun getDisplaySize(): String {
         // `wm size` prints "Physical size: 1080x2340" and, when an override exists,
         // "Override size: 720x1560". The override is the effective size, so take the last.
@@ -176,17 +248,14 @@ class Pvz2UserService : IPvz2Service.Stub() {
 
         val worker = Thread({
             try {
-                // 关键的一行：没有它，systemMain() 里 new Handler 会抛。
+                // 关键的一行：没有它，后面 new Handler 与 Looper 相关初始化都会抛。
                 Looper.prepare()
-                val activityThreadClass = Class.forName("android.app.ActivityThread")
-                val activityThread = activityThreadClass
-                    .getDeclaredMethod("systemMain")
-                    .apply { isAccessible = true }
-                    .invoke(null)
-                result = activityThreadClass
-                    .getDeclaredMethod("getSystemContext")
-                    .apply { isAccessible = true }
-                    .invoke(activityThread) as? Context
+                // 走手工装配而不是 systemMain()：systemMain 内部会碰 Context 初始化，
+                // 而 FakeContext 构造又需要系统 Context —— 直接 systemMain 会形成环、
+                // 反复重入直到 StackOverflow（实测过）。
+                // 这里用 scrcpy/MaaFwApp 的装配方式，见 SystemThreadWorkarounds。
+                SystemThreadWorkarounds.apply()
+                result = SystemThreadWorkarounds.getSystemContext()
             } catch (t: Throwable) {
                 failure = t
             } finally {
@@ -260,29 +329,23 @@ class Pvz2UserService : IPvz2Service.Stub() {
             return -1
         }
 
-        // ★ 这里只能用「包名属于本进程 uid」的 Context，不能用系统 Context。
-        //   系统 Context 的 getPackageName() 是 "android"，而服务端会用
-        //   validatePackageName(Binder.getCallingUid(), packageName) 校验
-        //   「这个名字必须挂在调用者 uid 名下」，不匹配就抛
-        //   SecurityException: packageName must match the calling uid。
-        //   scrcpy 的 FakeContext 存在的唯一理由就是这件事。
-        val packageName = resolvePackageNameForSelf()
-        if (packageName.isEmpty()) {
-            Log.e(
-                TAG,
-                "本进程 uid=${Process.myUid()} 名下没有任何包，无法通过 " +
-                    "createVirtualDisplay 的 packageName 校验。" +
-                    "根因：Shizuku 以 root 身份运行（uid 0），而 uid 0 不拥有任何包。" +
-                    "解决：改用 ADB/无线调试方式启动 Shizuku，使 UserService 变成 uid 2000(shell)。"
-            )
-            return -1
-        }
-        val context: Context = CallerContext(packageName)
+        // ★ 用 FakeContext，**不能**用系统 Context，也不能用只有包名的裸 ContextWrapper。
+        //
+        //   两个检查都要过：
+        //   1. validatePackageName(callingUid, packageName) —— 包名必须挂在 uid 2000 名下
+        //      系统 Context 报 "android"（uid 1000），直接 SecurityException；
+        //   2. canProjectVideo() —— 建 TRUSTED 屏时会查 CAPTURE_VIDEO_OUTPUT，
+        //      shell 身份没有这个权限。FakeContext 把 checkCallingPermission()
+        //      重写成恒返回 GRANTED，这一关才过得去。
+        //
+        //   只满足 1 的 CallerContext 会让屏变成「无 TRUSTED」→ 窗口挂不上、
+        //   IME 设不上、注入全被丢。这是整条链最关键的一处。
+        val context: Context = FakeContext.get()
 
         Log.i(
             TAG,
             "建虚拟屏 name=$name ${width}x$height @${dpi}dpi " +
-                "uid=${Process.myUid()} package=$packageName " +
+                "uid=${Process.myUid()} package=${context.packageName} " +
                 "flags=${VirtualDisplayFlags.describe(flags)}"
         )
 

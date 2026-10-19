@@ -73,6 +73,13 @@ class AutomationService : Service() {
 
     private lateinit var shizukuClient: ShizukuUserServiceClient
 
+    /** 虚拟屏会话：屏由它持有，生命周期跟随本服务，而不是某个一次性任务。 */
+    private lateinit var vdSession: VirtualDisplaySession
+
+    /** 本次销毁是否由用户主动触发（决定要不要释放虚拟屏）。 */
+    @Volatile
+    private var userStopped = false
+
     private var capturer: ScreenCapturer? = null
     private var injector: TouchInjector? = null
     private var matcher: TemplateMatcher? = null
@@ -84,7 +91,35 @@ class AutomationService : Service() {
         shizukuClient = ShizukuUserServiceClient(this)
         createNotificationChannel()
         // 状态只往通知栏与界面走，不再有悬浮面板需要镜像。
+
+        // 虚拟屏会话：把"建屏 / 搬应用 / 出帧"收进一个长期对象，
+        // 让屏活到用户点停止为止 —— 这是能真正观察和验证的前提。
+        vdSession = VirtualDisplaySession(
+            callerContext = this,
+            scope = scope,
+            // ★ 缓存已连上的 service，**不要**每次调用都 bind + await。
+            //
+            // 之前的写法是「每次调用都 bind() 然后 await(5s)」。而
+            // VirtualDisplaySession 一次 start() 里要调 5 次（建屏、查屏状态、
+            // 查窗口、搬应用…），等于 5 次握手。真机日志里
+            // 「屏建出来随即消失」很可能就是这个造成的：
+            // 重复 bind 打乱了连接状态，服务被重建 → 屏跟着释放。
+            shizukuServiceProvider = {
+                shizukuClient.peek() ?: run {
+                    if (!ShizukuBridge.hasPermission()) {
+                        null
+                    } else {
+                        shizukuClient.bind()
+                        shizukuClient.await()
+                    }
+                }
+            },
+        )
     }
+
+    /** 供界面读取虚拟屏状态。 */
+    fun virtualDisplayState(): kotlinx.coroutines.flow.StateFlow<VirtualDisplaySession.State> =
+        vdSession.state
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -97,8 +132,24 @@ class AutomationService : Service() {
 
             ACTION_PROBE -> scope.launch { runProbe() }
 
-            // 虚拟屏探测：建一块 720p 虚拟屏 + 等首帧 + 存一张 PNG 当证据。
-            // 走前台服务，因为要绑 UserService 并持有 ImageReader。
+            // ★ 虚拟屏：**持有**一块屏直到用户停止。这是产品形态的入口，
+            //   与下面的 ACTION_VD_PROBE（一次性探测、跑完就释放）不同。
+            ACTION_VD_START -> {
+                startForegroundCompat()
+                val pkg = intent.getStringExtra(EXTRA_TARGET_PACKAGE) ?: DEFAULT_TARGET_PACKAGE
+                scope.launch { vdSession.start(pkg) }
+            }
+
+            ACTION_VD_STOP -> {
+                // 用户主动要求释放：标记后连服务一起停（onDestroy 会据此释放屏）。
+                userStopped = true
+                scope.launch {
+                    vdSession.stop()
+                    stopSelf()
+                }
+            }
+
+            // 一次性探测（诊断用，保留）：建屏 + 等首帧 + 存 PNG，然后释放。
             ACTION_VD_PROBE -> {
                 startForegroundCompat()
                 launchLoop { runVirtualDisplayProbe() }
@@ -116,13 +167,26 @@ class AutomationService : Service() {
                 launchLoop { withBootstrap { runVerifyChain(dryRun = false) } }
             }
         }
-        // Never restart with a null intent: the loop's parameters live in the intent.
-        return START_NOT_STICKY
+        // 用 STICKY：虚拟屏挂在本服务上，服务被系统回收时屏会跟着没。
+        // 重新创建后 onCreate 会重建 vdSession，但**不会**自动重新建屏 ——
+        // 屏一旦丢了就得用户重新点一次，这是当前实现的已知限制。
+        // 之所以不选 NOT_STICKY：Android 16 对 specialUse 前台服务回收更积极，
+        // 实测点完「启动」后没一会儿服务就没了、屏也跟着释放
+        //（第一次真机日志就是这个现象：导出时屏已经消失）。
+        return START_STICKY
     }
 
     override fun onDestroy() {
         loopJob?.cancel()
         loopJob = null
+        // ⚠️ 这里**不能**主动 vdSession.stop()。
+        //
+        // 服务被系统回收（内存压力、厂商清理）时也会走到 onDestroy，
+        // 此时主动释放会把虚拟屏一起干掉 —— 用户看到的就是"屏莫名其妙没了"。
+        // 屏的释放只应该由两条路径触发：
+        //   ① 用户点「停止并释放」；
+        //   ② 进程真的要结束（由系统回收 display 资源兜底）。
+        // 第一次真机日志里 `虚拟屏已释放 displayId=44` 就是这个误伤。
         capturer = null
         injector?.release()
         injector = null
@@ -571,6 +635,19 @@ class AutomationService : Service() {
         private const val ACTION_VERIFY_RUN = "com.pvz2.auto.VERIFY_RUN"
         private const val ACTION_VD_PROBE = "com.pvz2.auto.VD_PROBE"
 
+        /** 持有式虚拟屏：start 之后屏一直在，直到 stop。 */
+        private const val ACTION_VD_START = "com.pvz2.auto.VD_START"
+        private const val ACTION_VD_STOP = "com.pvz2.auto.VD_STOP"
+        private const val EXTRA_TARGET_PACKAGE = "target_package"
+
+        /**
+         * 默认搬到副屏的应用（PvZ2 中文版）。
+         *
+         * 硬编码是有意的：本项目的目标就是这一个游戏，多一层"选择应用"的界面
+         * 只会增加噪声。将来要支持别的游戏，从界面传 extra 覆盖即可。
+         */
+        const val DEFAULT_TARGET_PACKAGE = "com.popcap.pvz2cthdop"
+
         /** 虚拟屏参数：720p @ 240dpi，与 MaaFwApp 的默认档一致。 */
         private const val VD_NAME = "pvz2-virtual"
         private const val VD_WIDTH = 1280
@@ -616,6 +693,23 @@ class AutomationService : Service() {
         }
 
         /**
+         * 在虚拟屏上启动游戏（持有式：屏一直在，直到 [vdStop]）。
+         *
+         * 用 `startForegroundService`：屏必须挂在前台服务的生命周期上，
+         * 否则服务被系统回收时屏就没了。而且界面在后台调用时也只有这条路径合法。
+         */
+        fun vdStart(context: Context, targetPackage: String? = null) {
+            val i = intent(context, ACTION_VD_START)
+            if (targetPackage != null) i.putExtra(EXTRA_TARGET_PACKAGE, targetPackage)
+            ContextCompat.startForegroundService(context, i)
+        }
+
+        /** 停止虚拟屏：释放 display、游戏回到主屏。 */
+        fun vdStop(context: Context) {
+            ContextCompat.startForegroundService(context, intent(context, ACTION_VD_STOP))
+        }
+
+        /**
          * 方案 C 干跑：跑识别链但**不点击**，把「本该点哪里」打进日志。
          * 第一次在真机验证 pipeline 时用这个。
          *
@@ -632,8 +726,15 @@ class AutomationService : Service() {
         }
 
         /** `stopService` is always permitted, unlike starting a service from the background. */
+        /**
+         * 停止整个服务。
+         *
+         * 注意：`stopService` 不会走我们的 ACTION_VD_STOP，所以这里必须先
+         * 通过一次 ACTION_VD_STOP 把 `userStopped` 标记置上，否则 onDestroy 会
+         * 认为"是系统回收"，把屏留在系统里变成幽灵屏。
+         */
         fun stop(context: Context) {
-            context.stopService(Intent(context, AutomationService::class.java))
+            ContextCompat.startForegroundService(context, intent(context, ACTION_VD_STOP))
         }
     }
 }

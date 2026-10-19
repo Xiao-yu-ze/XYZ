@@ -122,45 +122,92 @@ internal object DisplayAppLauncher {
         intent: Intent,
         options: android.os.Bundle?
     ): Boolean {
-        val candidates = am.javaClass.methods.filter {
-            it.name == "startActivityAsUser" && it.parameterTypes.size >= 8
+        val all = am.javaClass.methods.filter { it.name == "startActivityAsUser" }
+        all.forEach { m ->
+            Log.i(TAG, "候选签名(${m.parameterTypes.size}): " + m.parameterTypes.joinToString { it.simpleName })
         }
-        if (candidates.isEmpty()) {
-            Log.e(TAG, "没有可用的 startActivityAsUser 重载，改用 am 命令兜底")
-            return launchViaAm(intent, displayId = -1)
-        }
-        // 参数最多的那个就是完整版
-        val method = candidates.maxByOrNull { it.parameterTypes.size }!!
+        // 挑「带 Bundle 参数（能传 ActivityOptions）且参数最多」的那个。
+        //
+        // 不能简单取参数最多的：不同 ROM 上重载集合不同，取错了会把
+        // callingPackage / options 填到错误位置 —— 而错的调用往往**返回成功码**，
+        // 表现却是 launchDisplayId 没生效、窗口仍留在主屏。这种静默失败最难查。
+        val method = all
+            .filter { m -> m.parameterTypes.any { it == android.os.Bundle::class.java } }
+            .maxByOrNull { it.parameterTypes.size }
+            ?: all.filter { it.parameterTypes.size >= 8 }.maxByOrNull { it.parameterTypes.size }
+            ?: run {
+                Log.e(TAG, "没有可用的 startActivityAsUser 重载（带 Bundle 的也没有），改用 am 兜底")
+                return launchViaAm(intent, displayId = -1)
+            }
         val types = method.parameterTypes
-        Log.i(TAG, "选用 startActivityAsUser，参数数=${types.size}")
+        Log.i(TAG, "选用参数数=${types.size} 的重载")
 
         // 按位置填：已知位置填真实值，其余类型用 null（Binder 侧接受 null 的引用类型）
         val args = arrayOfNulls<Any?>(types.size)
         var intentPlaced = false
         var optionsPlaced = false
         var packagePlaced = false
+        var userIdPlaced = false
+
+        // ★ userId 是关键：它决定 Activity 起在哪个用户上下文里。
+        //   填 0 看着"成功"（Binder 返回 0），但游戏进程根本没起来 ——
+        //   因为系统按 userId 找/建进程，错的 userId 会让启动静默落空。
+        //   这里取当前进程所在的 userId，而不是硬编码 0。
+        val currentUserId = android.os.Process.myUid() / 100000
+
+        // Binder 接口的 class 文件里带着参数名（AIDL 编译保留），能读到就直接按名字填。
+        // 读不到（ROM 抹掉了）再退回下面的按位置策略。
+        val names = runCatching { method.parameters.map { it.name } }.getOrDefault(emptyList())
+
         for (i in types.indices) {
             val t = types[i]
-            if (!intentPlaced && t == Intent::class.java) {
-                args[i] = intent
-                intentPlaced = true
-            } else if (!optionsPlaced && t == android.os.Bundle::class.java) {
-                args[i] = options
-                optionsPlaced = true
-            } else if (!packagePlaced && t == String::class.java) {
-                // ★ callingPackage 必须填，且**必须属于调用者 uid**。
-                //   填 null 会撞 assertPackageMatchesCallingUid：
-                //   `Permission Denial: package=null does not belong to uid=2000`。
-                //   这里是第一个 String 参数，位置对应 callingPackage。
-                args[i] = SHELL_PACKAGE
-                packagePlaced = true
-            } else if (t.isPrimitive) {
-                // requestCode / startFlags → 0；userId → 当前用户(0)
-                args[i] = if (t == Int::class.javaPrimitiveType) 0 else false
-            } else {
-                args[i] = null
+            val name = names.getOrNull(i)?.lowercase() ?: ""
+
+            when {
+                !intentPlaced && t == Intent::class.java -> {
+                    args[i] = intent
+                    intentPlaced = true
+                }
+
+                !optionsPlaced && t == android.os.Bundle::class.java -> {
+                    args[i] = options
+                    optionsPlaced = true
+                }
+
+                // callingPackage / callingFeatureId 都是 String，第一个填包名，
+                // 后面那个（若存在）留 null 即可 —— 只有 callingPackage 参与归属校验。
+                !packagePlaced && t == String::class.java -> {
+                    args[i] = SHELL_PACKAGE
+                    packagePlaced = true
+                }
+
+                !userIdPlaced && name == "userid" && t == Int::class.javaPrimitiveType -> {
+                    args[i] = currentUserId
+                    userIdPlaced = true
+                }
+
+                t.isPrimitive -> {
+                    // requestCode / startFlags / 其它 int → 0；boolean → false
+                    args[i] = if (t == Int::class.javaPrimitiveType) 0 else false
+                }
+
+                else -> args[i] = null
             }
         }
+
+        // 若参数名读不到、userId 没被填上，就退回"最后一个 int 是 userId"的经验规则。
+        if (!userIdPlaced) {
+            val lastIntIndex = types.indices.lastOrNull { types[it] == Int::class.javaPrimitiveType }
+            if (lastIntIndex != null) {
+                args[lastIntIndex] = currentUserId
+                Log.i(TAG, "参数名不可读，按「最后一个 int = userId」填 $currentUserId")
+            }
+        }
+
+        Log.i(
+            TAG,
+            "startActivityAsUser 参数：${names.mapIndexed { i, n -> "$i:$n=${args[i]}" }.joinToString()}"
+        )
         return runCatching {
             method.isAccessible = true
             val ret = method.invoke(am, *args)

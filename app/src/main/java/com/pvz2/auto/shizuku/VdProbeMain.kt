@@ -46,8 +46,31 @@ object VdProbeMain {
     private const val HEIGHT = 720
     private const val DPI = 240
     private const val SHELL_UID = 2000
+    private const val ROOT_UID = 0
     private const val SHELL_PACKAGE = "com.android.shell"
 
+    /**
+     * 挑一个「属于本 uid」的包名，用于过 `validatePackageName(callingUid, name)`。
+     *
+     * - shell(2000) → `com.android.shell`
+     * - root(0)     → uid 0 名下通常没有任何包，但 system_server 对 uid 0 的校验
+     *                 走的是另一条路（拥有全部权限），实测 `android` 这个名字能过。
+     */
+    private fun pickPackageForUid(uid: Int): String {
+        if (uid == SHELL_UID) return SHELL_PACKAGE
+        val listed = runCatching {
+            execCapture("pm list packages --uid $uid").lines()
+                .map { it.removePrefix("package:").trim() }
+                .filter { it.isNotEmpty() }
+                .firstOrNull()
+        }.getOrNull()
+        if (listed != null) {
+            println("uid=$uid 名下包: $listed")
+            return listed
+        }
+        println("uid=$uid 名下没有包，改用 android")
+        return "android"
+    }
     @JvmStatic
     fun main(args: Array<String>) {
         // ImageReader 内部要一个 Handler，Handler 要求当前线程有 Looper。
@@ -57,11 +80,17 @@ object VdProbeMain {
         println("=== VdProbeMain ===")
         println("uid=$uid  sdk=${Build.VERSION.SDK_INT}  ${WIDTH}x$HEIGHT @${DPI}dpi")
 
-        if (uid != SHELL_UID) {
-            println("!! 这个自检必须在 uid 2000(shell) 下跑，当前是 $uid。")
-            println("   root(uid 0) 名下没有任何包，必然过不了 packageName 校验 —— 那是另一条路的问题。")
+        // shell(2000) 与 root(0) 都允许：
+        //   shell —— 真机上的生产路径；
+        //   root  —— MuMu 这类 ROM 把 ADD_TRUSTED_DISPLAY 从 com.android.shell 剥掉了，
+        //            但 uid 0 在 system_server 眼里算"拥有全部权限"，所以 root 反而
+        //            建得出 trusted 屏。包名校验靠 pickPackageForUid() 给个属于本 uid 的名字。
+        if (uid != SHELL_UID && uid != ROOT_UID) {
+            println("!! 需要在 shell(2000) 或 root(0) 下跑，当前 uid=$uid。")
             System.exit(2)
         }
+        val callerPackage = pickPackageForUid(uid)
+        println("包名（用于过 packageName 校验）= $callerPackage")
 
         // `--own-focus` 会额外带上 OWN_FOCUS 位。它的作用是让这块屏自己持有焦点，
         // 否则 InputDispatcher 会因为「这块屏没有可触摸窗口」而丢掉所有注入事件。
@@ -78,7 +107,7 @@ object VdProbeMain {
         var exitCode = 1
         try {
             val result = VirtualDisplayCreator.create(
-                callerContext = CallerContext(SHELL_PACKAGE),
+                callerContext = CallerContext(callerPackage),
                 name = "pvz2-vd-probe",
                 width = WIDTH,
                 height = HEIGHT,

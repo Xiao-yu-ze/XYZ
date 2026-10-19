@@ -15,7 +15,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
 import com.pvz2.auto.core.BotState
+import androidx.core.content.FileProvider
+import com.pvz2.auto.shizuku.ShizukuUserServiceClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 import com.pvz2.auto.service.AutomationService
+import com.pvz2.auto.service.VirtualDisplaySession
 import com.pvz2.auto.shizuku.ShizukuBridge
 import kotlinx.coroutines.launch
 import rikka.shizuku.Shizuku
@@ -79,6 +85,21 @@ class MainActivity : AppCompatActivity() {
             AutomationService.startShizuku(this)
         }
         findViewById<MaterialButton>(R.id.btnStop).setOnClickListener { AutomationService.stop(this) }
+
+        // 虚拟屏：主功能区的两个按钮
+        findViewById<MaterialButton>(R.id.btnVdStart).setOnClickListener {
+            AutomationService.vdStart(this)
+        }
+        findViewById<MaterialButton>(R.id.btnVdStop).setOnClickListener {
+            AutomationService.vdStop(this)
+        }
+
+        // 导出日志：把关键日志存成文件并弹分享。
+        // 真机上没有电脑连着的时候，这是唯一能把现场发给别人的办法。
+        findViewById<MaterialButton>(R.id.btnExportLog).setOnClickListener {
+            exportLogs()
+        }
+
         findViewById<MaterialButton>(R.id.btnGrabFrame).setOnClickListener {
             AutomationService.grabFrame(this)
         }
@@ -105,13 +126,143 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { BotState.status.collect { statusView.text = it } }
+                // 虚拟屏状态：服务写、界面读。两者是独立组件，所以走进程级单例流。
+                launch { VirtualDisplaySession.sharedState.collect { renderVirtualDisplay(it) } }
             }
         }
+    }
+
+    /**
+     * 把虚拟屏状态渲染到界面。
+     *
+     * 三处信息刻意分开显示，因为它们回答的是三个不同的问题：
+     *  · 主状态行 —— 现在进行到哪一步；
+     *  · 明细行 —— 画面更新了几次（**只算内容真正变化的帧**，残影不算）；
+     *  · 预览图 —— 黑屏也是信息：说明"屏在了但没东西画"。
+     */
+    private fun renderVirtualDisplay(state: VirtualDisplaySession.State) {
+        val stateView = findViewById<TextView>(R.id.tvVdState)
+        val detailView = findViewById<TextView>(R.id.tvVdDetail)
+
+        stateView.text = when {
+            !state.running && state.displayId < 0 -> getString(R.string.vd_state_idle)
+            state.running && state.displayId > 0 && state.frameWidth > 0 ->
+                getString(R.string.vd_running_format, state.displayId, state.frameWidth, state.frameHeight)
+            else -> state.message
+        }
+
+        detailView.text = when {
+            !state.running -> ""
+            state.frameWidth == 0 -> state.message
+            state.liveFrameCount == 0 -> getString(R.string.vd_no_content)
+            else -> getString(R.string.vd_live_frames, state.liveFrameCount) +
+                (if (state.appOnDisplay) "" else "\n" + state.message)
+        }
+
+        findViewById<MaterialButton>(R.id.btnVdStart).isEnabled = !state.running
+        findViewById<MaterialButton>(R.id.btnVdStop).isEnabled = state.running
     }
 
     override fun onStart() {
         super.onStart()
         refreshShizukuState()
+    }
+
+    /**
+     * 导出日志。
+     *
+     * 为什么要在 App 里做这件事：Android 4.1 起普通应用读不到别的进程的日志，
+     * 而排查虚拟屏问题恰恰要看 system_server 打的 `Permission Denial` 之类。
+     * 所以真正的抓取在 UserService（shell 身份）里做，这里只负责落盘与分享。
+     *
+     * 输出两段：
+     *  ① 我们的标签（建屏、候选 flags、搬移结果）—— 直接看结论；
+     *  ② 系统侧与虚拟屏相关的日志 —— 看权限/显示服务说了什么。
+     */
+    private fun exportLogs() {
+        val hint = findViewById<TextView>(R.id.tvLogHint)
+        hint.text = getString(R.string.log_export_ok, "正在抓取…")
+
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                runCatching {
+                    val client = ShizukuUserServiceClient(applicationContext)
+                    client.bind()
+                    val service = client.await()
+                    if (service == null) {
+                        return@runCatching "ERROR: Shizuku 服务未连接（${client.lastError ?: "超时"}）"
+                    }
+                    val own = service.grabLogcat(
+                        "VirtualDisplayCreator|VirtualDisplaySession|Pvz2UserService|DisplayAppLauncher|DisplayTaskMover|Pvz2Capture",
+                        800
+                    )
+                    val system = service.grabLogcat(
+                        "DisplayManagerService|Permission Denial|DisplayDeviceRepository|LogicalDisplayMapper|InputDispatcher",
+                        400
+                    )
+                    val display = service.describeDisplay(
+                        VirtualDisplaySession.sharedState.value.displayId
+                    )
+                    val st = VirtualDisplaySession.sharedState.value
+                    buildString {
+                        appendLine("===== PVZ2 自动化 诊断日志 =====")
+                        appendLine("时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}")
+                        appendLine("设备: ${Build.MANUFACTURER} ${Build.MODEL}  Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
+                        appendLine()
+                        // 这两行是"成没成"的直接答案，放最前面。
+                        appendLine("===== 结论 =====")
+                        appendLine("建屏是否成功: ${if (st.displayId > 0) "是（displayId=${st.displayId}）" else "否"}")
+                        appendLine("屏是否 TRUSTED: ${if (st.displayTrusted) "是（窗口可以挂上去）" else "否（窗口挂不上去）"}")
+                        appendLine("应用是否在副屏: ${if (st.appOnDisplay) "是" else "否"}")
+                        appendLine("画面更新次数: ${st.liveFrameCount}")
+                        appendLine("当前状态: ${st.message}")
+                        appendLine()
+                        appendLine("建屏时的报告（屏已释放也保留）:")
+                        appendLine(st.buildReport.ifBlank { "（没有记录）" })
+                        appendLine()
+                        appendLine("导出时实时查询: $display")
+                        appendLine()
+                        appendLine("----- ① 本应用（建屏 / 搬移 / 采集）-----")
+                        appendLine(own)
+                        appendLine()
+                        appendLine("----- ② 系统侧（权限 / 显示服务 / 输入分发）-----")
+                        appendLine(system)
+                    }
+                }
+            }.getOrElse { "ERROR: ${it.message}" }
+
+            val file = withContext(Dispatchers.IO) {
+                runCatching {
+                    val dir = File(getExternalFilesDir(null), "logs").apply { mkdirs() }
+                    val name = "pvz2-log-${System.currentTimeMillis()}.txt"
+                    File(dir, name).apply { writeText(text) }
+                }.getOrNull()
+            }
+
+            if (file == null) {
+                hint.text = getString(R.string.log_export_fail, "写文件失败")
+                return@launch
+            }
+            hint.text = getString(R.string.log_export_ok, file.name)
+            shareFile(file)
+        }
+    }
+
+    /** 弹出系统分享面板，把日志文件发出去。 */
+    private fun shareFile(file: File) {
+        runCatching {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, getString(R.string.log_share_title))
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, getString(R.string.log_share_title)))
+        }.onFailure {
+            findViewById<TextView>(R.id.tvLogHint).text =
+                getString(R.string.log_export_fail, it.message ?: "分享失败")
+        }
     }
 
     override fun onDestroy() {

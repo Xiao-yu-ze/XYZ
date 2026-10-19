@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 的路径声明：只暴露外部文件目录下的 logs/。
+  范围刻意收窄 —— 分享日志时不该把整个应用目录都暴露出去。
+-->
+<paths>
+    <external-files-path
+        name="logs"
+        path="logs/" />
+</paths>

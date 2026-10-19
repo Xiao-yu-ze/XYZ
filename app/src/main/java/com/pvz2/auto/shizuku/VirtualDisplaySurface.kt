@@ -41,7 +41,18 @@ class VirtualDisplaySurface(
     private val reader: ImageReader =
         ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, maxImages)
 
-    /** 交给特权侧 `createVirtualDisplay(...)` 的那个 surface。 */
+    /**
+     * 交给特权侧 `createVirtualDisplay(...)` 的那个 surface。
+     *
+     * ⚠️ **注意：这个 surface 现在是"显示端"，不是"采集端"。**
+     *
+     * 曾经直接把它当采集端传进去，结果那块屏的画面全被 ImageReader 吸走，
+     * 没有任何东西负责"显示"—— 表现就是窗口不往上挂、渲染行为异常。
+     *
+     * 正确做法（照 ShadowAuto）：建屏时传一个**真正的输出 surface**
+     * （见 [com.pvz2.auto.shizuku.VirtualDisplaySink]），截图时才用
+     * `VirtualDisplay.setSurface()` 临时切到 ImageReader，取完立刻切回去。
+     */
     val surface: Surface get() = reader.surface
 
     /** 已经成功转换出的帧数，用于区分"没帧"和"帧转换失败"。 */

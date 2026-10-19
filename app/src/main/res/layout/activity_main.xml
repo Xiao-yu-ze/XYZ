@@ -166,6 +166,76 @@
                 android:textColor="@color/sun" />
         </LinearLayout>
 
+        <!-- ==================== 虚拟屏（主功能区） ====================
+             这是产品的主路径：一块常驻的 720p 虚拟屏，游戏在里面跑，
+             本界面留在前台。放在"准备工作"之后、"调试工具"之前。 -->
+        <TextView
+            style="@style/Text.Section"
+            android:layout_marginTop="28dp"
+            android:text="@string/section_virtual_display" />
+
+        <TextView
+            style="@style/Text.Hint"
+            android:text="@string/hint_virtual_display" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnVdStart"
+                style="@style/AppButton.Primary"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="@string/btn_vd_start" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnVdStop"
+                style="@style/AppButton.Outline"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="@string/btn_vd_stop" />
+        </LinearLayout>
+
+        <!-- 状态区：三行都是给人看的，出问题时先看这几行 -->
+        <TextView
+            android:id="@+id/tvVdState"
+            style="@style/Text.Body"
+            android:layout_marginTop="8dp"
+            android:text="@string/vd_state_idle" />
+
+        <TextView
+            android:id="@+id/tvVdDetail"
+            style="@style/Text.Hint"
+            android:text="" />
+
+        <!-- 画面预览：宽高比固定 16:9，黑屏也照样显示，好让"建屏成功但没内容"
+             和"根本建不出来"一眼能分开 -->
+        <ImageView
+            android:id="@+id/ivVdPreview"
+            android:layout_width="match_parent"
+            android:layout_height="180dp"
+            android:layout_marginTop="8dp"
+            android:background="@color/ink"
+            android:contentDescription="@string/vd_preview_desc"
+            android:scaleType="fitCenter" />
+
+        <!-- 出问题时最重要的一件事：把日志弄出来。
+             放在主功能区（不折叠），因为用户往往就是卡在这里需要求助。 -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnExportLog"
+            style="@style/AppButton.Outline"
+            android:layout_marginTop="12dp"
+            android:text="@string/btn_export_log" />
+
+        <TextView
+            android:id="@+id/tvLogHint"
+            style="@style/Text.Hint"
+            android:text="@string/hint_export_log" />
+
         <!-- ==================== 调试工具（默认折叠） ==================== -->
         <LinearLayout
             android:id="@+id/debugHeader"

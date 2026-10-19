@@ -69,6 +69,16 @@
         <!-- NOTE: com.pvz2.auto.shizuku.Pvz2UserService is intentionally NOT declared here.
              Shizuku starts it inside its own app_process (as shell/root), it is not an
              android.app.Service and is never bound through the ActivityManager. -->
+        <!-- 分享日志用。authorities 带包名，避免与其它应用冲突。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

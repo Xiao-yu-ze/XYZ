@@ -34,8 +34,10 @@ class VirtualDisplayFlagsTest {
     }
 
     @Test
-    fun `三档组合的合计是 459 与 15360 与 49152`() {
-        assertEquals(459, VirtualDisplayFlags.BASE)
+    fun `三档组合的合计`() {
+        // BASE 从 459 变成 971：多了 SHOULD_SHOW_SYSTEM_DECORATIONS(512)。
+        // 加它是因为「有系统装饰的屏才被 WMS 当作可承载 Activity 的正常屏」。
+        assertEquals(971, VirtualDisplayFlags.BASE)
         assertEquals(15360, VirtualDisplayFlags.API33_ADDED)
         assertEquals(49152, VirtualDisplayFlags.API34_ADDED)
     }
@@ -43,25 +45,25 @@ class VirtualDisplayFlagsTest {
     @Test
     fun `按系统版本算出的 flags 符合阶梯`() {
         // Android 8~12：只有基础集
-        assertEquals(459, VirtualDisplayFlags.forSdk(26))
-        assertEquals(459, VirtualDisplayFlags.forSdk(30))
-        assertEquals(459, VirtualDisplayFlags.forSdk(31))
-        assertEquals(459, VirtualDisplayFlags.forSdk(32))
+        assertEquals(971, VirtualDisplayFlags.forSdk(26))
+        assertEquals(971, VirtualDisplayFlags.forSdk(30))
+        assertEquals(971, VirtualDisplayFlags.forSdk(31))
+        assertEquals(971, VirtualDisplayFlags.forSdk(32))
 
         // Android 13：加 TRUSTED 那一组
-        assertEquals(15819, VirtualDisplayFlags.forSdk(33))
+        assertEquals(16331, VirtualDisplayFlags.forSdk(33))
 
         // Android 14 及以后：再加 OWN_FOCUS + DEVICE_DISPLAY_GROUP
-        assertEquals(64971, VirtualDisplayFlags.forSdk(34))
-        assertEquals(64971, VirtualDisplayFlags.forSdk(35))
-        assertEquals(64971, VirtualDisplayFlags.forSdk(36))
+        assertEquals(65483, VirtualDisplayFlags.forSdk(34))
+        assertEquals(65483, VirtualDisplayFlags.forSdk(35))
+        assertEquals(65483, VirtualDisplayFlags.forSdk(36))
     }
 
     @Test
     fun `非法版本号退化为基础集 不会算出负数或溢出`() {
-        assertEquals(459, VirtualDisplayFlags.forSdk(0))
-        assertEquals(459, VirtualDisplayFlags.forSdk(-1))
-        assertEquals(64971, VirtualDisplayFlags.forSdk(Int.MAX_VALUE))
+        assertEquals(971, VirtualDisplayFlags.forSdk(0))
+        assertEquals(971, VirtualDisplayFlags.forSdk(-1))
+        assertEquals(65483, VirtualDisplayFlags.forSdk(Int.MAX_VALUE))
     }
 
     @Test
@@ -80,6 +82,24 @@ class VirtualDisplayFlagsTest {
         for (sdk in 26..40) {
             val flags = VirtualDisplayFlags.forSdk(sdk)
             assertTrue("SDK $sdk 的 flags 缺 PUBLIC(1)", (flags and VirtualDisplayFlags.PUBLIC) != 0)
+        }
+    }
+
+    @Test
+    fun `真机实测的那组位必须都在`() {
+        // 来源：Lenovo TB323FU / Android 16 上建屏成功后，dumpsys display 报出的
+        // DisplayDeviceInfo 里真实带有这些 FLAG。它们是「窗口能挂上副屏」的充分条件，
+        // 少一个都可能退回 MuMu 那种 untrusted 状态，所以钉死。
+        val flags = VirtualDisplayFlags.forSdk(36)
+        for ((name, bit) in listOf(
+            "TRUSTED" to VirtualDisplayFlags.TRUSTED,
+            "OWN_FOCUS" to VirtualDisplayFlags.OWN_FOCUS,
+            "ALWAYS_UNLOCKED" to VirtualDisplayFlags.ALWAYS_UNLOCKED,
+            "TOUCH_FEEDBACK_DISABLED" to VirtualDisplayFlags.TOUCH_FEEDBACK_DISABLED,
+            "SHOULD_SHOW_SYSTEM_DECORATIONS" to VirtualDisplayFlags.SHOULD_SHOW_SYSTEM_DECORATIONS,
+            "DESTROY_CONTENT_ON_REMOVAL" to VirtualDisplayFlags.DESTROY_CONTENT_ON_REMOVAL,
+        )) {
+            assertTrue("Android 16 的 flags 缺 $name", (flags and bit) != 0)
         }
     }
 

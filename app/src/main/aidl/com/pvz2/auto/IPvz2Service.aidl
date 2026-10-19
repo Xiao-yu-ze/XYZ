@@ -75,6 +75,66 @@ interface IPvz2Service {
     /** 在指定 display 上滑动。同样走 injectInputEvent + displayId。 */
     boolean swipeOnDisplay(int displayId, int x1, int y1, int x2, int y2, int durationMs) = 10;
 
+    // ---------------------------------------------------------------- 任务与显示
+    //
+    // 下面四个方法**必须在 UserService（app_process / shell 身份）里执行**。
+    //
+    // 实测：在 App 进程里反射 `IActivityTaskManager$Stub.asInterface` /
+    // `IActivityManager$Stub.asInterface` 会得到
+    // `NoSuchMethodException: ...asInterface [interface android.os.IBinder]`
+    // —— 不是权限问题，是**隐藏 API 限制**把这些方法从反射结果里滤掉了。
+    // 而 app_process 不受该限制，所以这些能力只能放在 shell 侧，由 App 通过 AIDL 调用。
+
+    /**
+     * 把 [packageName] 的任务搬到 [displayId]。
+     *
+     * @return 搬动成功的 taskId；-1 失败，-2 表示该包没有运行中任务
+     */
+    int moveTaskToDisplay(String packageName, int displayId) = 11;
+
+    /**
+     * 查 [packageName] 的任务现在在哪块 display 上。
+     *
+     * @return displayId；-1 判断不了，-2 表示没有运行中任务。
+     *   **调用方必须区分这三者** —— 把「判断不了」当成「不在副屏」会误触发搬移。
+     */
+    int getTaskDisplayId(String packageName) = 12;
+
+    /** 列出最近任务及其 displayId，一行一条。排查「到底搬没搬过去」用。 */
+    String dumpTasks() = 13;
+
+    /**
+     * 在 [displayId] 上启动 [packageName]。
+     *
+     * 用 `ActivityOptions.launchDisplayId` 在启动那一刻指定副屏 ——
+     * `am start --display` 实测不吃 display（任务会落在主屏）。
+     *
+     * @return true 表示系统接受了启动请求（不保证窗口已建好）
+     */
+    boolean launchAppOnDisplay(String packageName, int displayId) = 14;
+
+    /**
+     * 抓一份 logcat 文本。
+     *
+     * 为什么必须放在这一侧：Android 4.1 起普通应用只能读**自己进程**的日志，
+     * 而排查虚拟屏问题需要看 system_server 打的
+     * `Permission Denial: ... requires ADD_TRUSTED_DISPLAY` 之类。
+     * UserService 跑在 shell(uid 2000)，有读全部日志的权限。
+     *
+     * @param tagFilter 为空则抓全部；非空时按 `grep -E` 过滤（区分大小写）
+     * @param maxLines  最多返回多少行（取**末尾**，最新的日志才有用）
+     * @return 日志文本；失败返回带 `ERROR:` 前缀的字符串
+     */
+    String grabLogcat(String tagFilter, int maxLines) = 15;
+
+    /**
+     * 查 [displayId] 这块屏的 flags 与 owner，一行摘要。
+     *
+     * 用来判断屏到底是不是 TRUSTED —— 这是"窗口能不能挂上去"的唯一判据。
+     * 返回形如 `display=10 type=VIRTUAL trusted=false owner=com.android.shell`。
+     */
+    String describeDisplay(int displayId) = 16;
+
     /**
      * Shizuku invokes this with transaction code 16777115 when the user service is removed.
      * The AIDL value must be 16777114 (Shizuku-API README, "Stop the User Service").

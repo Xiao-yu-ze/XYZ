@@ -27,6 +27,22 @@ android {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
             if (includeX86) abiFilters += "x86_64"
         }
+
+        // 采集端必须是 native 的：Java 的 ImageReader / SurfaceTexture 给的 Surface
+        // buffer usage 不够，建出来的虚拟屏会被系统标成 untrusted（窗口不跟、注入被丢）。
+        // 见 cpp/capture.cpp 里的说明。
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DANDROID_STL=c++_static")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildFeatures {
