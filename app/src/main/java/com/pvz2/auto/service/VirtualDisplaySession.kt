@@ -1,5 +1,8 @@
 package com.pvz2.auto.service
 
+import android.os.ParcelFileDescriptor
+import org.opencv.core.CvType
+import org.opencv.imgproc.Imgproc
 import android.os.Build
 import android.util.Log
 import com.pvz2.auto.IPvz2Service
@@ -84,14 +87,6 @@ class VirtualDisplaySession(
     /** 实例内可读的状态（服务自己用）。 */
     val state: StateFlow<State> = _state.asStateFlow()
 
-    /**
-     * 采集端。**必须是 NDK 版**（[NativeCaptureSource]）。
-     *
-     * Java 的 ImageReader / SurfaceTexture 给的 Surface 不满足 WMS 对可信显示端
-     * 的要求，用它们建出来的屏会被标 untrusted：窗口留在主屏、IME 策略设不上、
-     * 注入全被丢。这块 Surface 同时充当显示端与采集端。
-     */
-    private var captureSource: NativeCaptureSource? = null
 
     /** 本进程建屏的句柄（@hide 类型，只能按 Any 持有）。 */
     private var localDisplay: Any? = null
@@ -117,20 +112,24 @@ class VirtualDisplaySession(
         }
         update { it.copy(running = true, message = "正在建虚拟屏…") }
 
-        val source = NativeCaptureSource(VD_WIDTH, VD_HEIGHT)
-        captureSource = source
-        if (source.surface == null) {
-            update {
-                it.copy(
-                    running = false,
-                    message = "native 采集端创建失败（见 logcat 标签 Pvz2Capture）",
-                )
-            }
-            cleanup()
+        // ★ 建屏与采集必须在**同一个进程**（UserService）。
+        //
+        // 之前采集端建在 App 进程、屏建在 shell 进程，两边各持一个 AImageReader：
+        // 屏接的是 shell 那块，App 读的是自己那块空的 —— 预览永远是黑的。
+        // 现在一次性在 shell 侧完成"建 reader + 建屏"。
+        val service = shizukuServiceProvider()
+        if (service == null) {
+            update { it.copy(running = false, message = "Shizuku 服务不可用（无法建屏）") }
             return false
         }
 
-        val displayId = createDisplay(source)
+        val displayId = runCatching {
+            service.createDisplayWithCapture(
+                VD_NAME, VD_WIDTH, VD_HEIGHT, VD_DPI,
+                VirtualDisplayFlags.forSdk(Build.VERSION.SDK_INT)
+            )
+        }.onFailure { Log.e(TAG, "createDisplayWithCapture 失败", it) }
+            .getOrDefault(-1)
         if (displayId <= 0) {
             update {
                 it.copy(
@@ -143,9 +142,6 @@ class VirtualDisplaySession(
             return false
         }
         update { it.copy(displayId = displayId, message = "虚拟屏就绪 displayId=$displayId") }
-
-        // 拿一次 service，后面几步都用它 —— 不再反复经过 provider（那会重复 bind）。
-        val service = shizukuServiceProvider()
 
         // ★ 建屏**当下**就把这块屏的客观状态记下来。
         //   导出日志时屏往往已被释放（服务被回收），那时再 dumpsys 什么也查不到。
@@ -176,6 +172,44 @@ class VirtualDisplaySession(
         return true
     }
 
+    /**
+     * 从 UserService 拉一帧，转成 Mat（BGR）。
+     *
+     * 链路：AIDL 要 fd → map 成 ByteBuffer → 按 RGBA 读进 Mat → 转 BGR。
+     * 帧是紧凑排列的（native 侧已按 rowStride 裁过补白），所以可以直接整块读。
+     */
+    private fun readFrameFromService(service: IPvz2Service): Mat? {
+        val pfd = service.acquireFrameFd() ?: return null
+        return try {
+            val length = pfd.statSize
+            if (length <= 0L) return null
+
+            val bytes = ByteArray(length.toInt())
+            ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+                var read = 0
+                while (read < bytes.size) {
+                    val n = input.read(bytes, read, bytes.size - read)
+                    if (n <= 0) break
+                    read += n
+                }
+                if (read < bytes.size) return null
+            }
+
+            val w = VD_WIDTH
+            val h = VD_HEIGHT
+            if (bytes.size < w * h * 4) return null
+
+            val rgba = Mat(h, w, CvType.CV_8UC4)
+            rgba.put(0, 0, bytes, 0, w * h * 4)
+            val bgr = Mat()
+            Imgproc.cvtColor(rgba, bgr, Imgproc.COLOR_RGBA2BGR)
+            rgba.release()
+            bgr
+        } catch (t: Throwable) {
+            Log.w(TAG, "读帧失败", t)
+            null
+        }
+    }
     /** 屏的客观状态，解析好之后再判断，避免用 `contains` 做脆弱的字符串匹配。 */
     private data class DisplayInfo(val raw: String, val trusted: Boolean)
 
@@ -216,40 +250,6 @@ class VirtualDisplaySession(
      *  · shell：App 进程反射 @hide 的 `DisplayManager.<init>` 会被隐藏 API 限制拦住，
      *    所以必须有一条 shell 退路。而 shell 侧要传 `com.android.shell` 才过校验。
      */
-    private suspend fun createDisplay(source: NativeCaptureSource): Int {
-        val flags = VirtualDisplayFlags.forSdk(Build.VERSION.SDK_INT)
-
-        val localId = runCatching {
-            val created = VirtualDisplayCreator.create(
-                callerContext = callerContext,
-                name = VD_NAME,
-                width = VD_WIDTH,
-                height = VD_HEIGHT,
-                dpi = VD_DPI,
-                surface = source.surface!!,
-                flags = flags,
-            )
-            localDisplay = created.virtualDisplay
-            created.displayId
-        }.onFailure { Log.w(TAG, "本进程建屏失败，改走 shell 身份", it) }
-            .getOrDefault(-1)
-
-        if (localId > 0) {
-            Log.i(TAG, "本进程建屏成功 displayId=$localId")
-            return localId
-        }
-
-        val service = shizukuServiceProvider() ?: run {
-            Log.e(TAG, "shell 身份也不可用（拿不到 UserService）")
-            return -1
-        }
-        shellService = service
-        return runCatching {
-            service.createVirtualDisplay(VD_NAME, VD_WIDTH, VD_HEIGHT, VD_DPI, source.surface!!, flags)
-        }.onFailure { Log.e(TAG, "shell 身份建屏失败", it) }
-            .getOrDefault(-1)
-    }
-
     /**
      * 把应用搬到副屏：**先启动时指定 display**，再用客观状态校验。
      *
@@ -272,28 +272,38 @@ class VirtualDisplaySession(
             return
         }
 
-        if (service.getTaskDisplayId(packageName) == displayId) {
-            Log.i(TAG, "$packageName 已经在这块屏上")
-            update { it.copy(appOnDisplay = true, message = "$packageName 已在虚拟屏上") }
-            return
-        }
+        // ★ 先杀掉现有任务 —— 这是「整个屏幕被游戏占满」的根因。
+        //
+        // 之前直接 launchAppOnDisplay()。但游戏若已经在主屏有 task，
+        // 系统的行为是**把那个 task 提到前台**，而不是新建一个落在副屏上的
+        // —— `launchDisplayId` 在这条路径上被完全忽略。
+        // 用户看到的就是：点一下，整个物理屏变成游戏在跑，几秒后消失。
+        //
+        // 必须先 force-stop，保证接下来是全新启动，launchDisplayId 才起作用。
+        val stopped = runCatching { service.exec("am force-stop $packageName") }.isSuccess
+        Log.i(TAG, "force-stop $packageName -> $stopped")
+        update { it.copy(message = "已停止旧任务，准备在副屏重新启动…") }
+        delay(600)
 
         val launched = service.launchAppOnDisplay(packageName, displayId)
         Log.i(TAG, "launchAppOnDisplay($packageName, $displayId) -> $launched")
+        update { it.copy(message = "启动指令已发出（$launched），等待任务出现…") }
 
-        // 给系统时间把任务建起来，再决定要不要补一次"搬"。
+        // 给系统时间把任务建起来。**命中就立刻退出**，不做无意义的重试。
         var onDisplay = false
         repeat(LAUNCH_POLL_TIMES) { i ->
             delay(LAUNCH_POLL_INTERVAL_MS)
             val current = service.getTaskDisplayId(packageName)
+            Log.i(TAG, "第 ${i + 1} 次轮询：$packageName 在 display $current（期望 $displayId）")
             if (current == displayId) {
                 onDisplay = true
-                Log.i(TAG, "第 ${i + 1} 次轮询：$packageName 已在 display $displayId")
+                return@repeat
             }
         }
 
         if (!onDisplay) {
             Log.w(TAG, "启动后任务没到副屏，尝试 moveTaskToDisplay 兜底")
+            update { it.copy(message = "任务不在副屏，尝试强制搬移…") }
             val moved = service.moveTaskToDisplay(packageName, displayId)
             delay(800)
             onDisplay = service.getTaskDisplayId(packageName) == displayId
@@ -332,13 +342,13 @@ class VirtualDisplaySession(
         frameJob?.cancel()
         frameJob = scope.launch {
             while (isActive) {
-                val source = captureSource
-                if (source == null) {
+                val svc = shizukuServiceProvider()
+                if (svc == null) {
                     delay(POLL_INTERVAL_MS)
                     continue
                 }
                 // native 采集端本身就是虚拟屏的输出面，不需要切换 surface —— 直接取。
-                val frame = runCatching { source.acquireFrame() }.getOrNull()
+                val frame = runCatching { readFrameFromService(svc) }.getOrNull()
 
                 if (frame == null) {
                     delay(POLL_INTERVAL_MS)
@@ -401,10 +411,10 @@ class VirtualDisplaySession(
     private fun cleanup() {
         runCatching { shellService?.releaseVirtualDisplay() }
         runCatching { VirtualDisplayCreator.release(localDisplay) }
-        runCatching { captureSource?.close() }
+        // 采集端在 shell 侧，随 releaseVirtualDisplay 一起释放（见 Pvz2UserService）
         shellService = null
         localDisplay = null
-        captureSource = null
+
         lastFingerprint = 0
     }
 

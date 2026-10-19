@@ -135,6 +135,39 @@ interface IPvz2Service {
      */
     String describeDisplay(int displayId) = 16;
 
+    // ---------------------------------------------------------------- 采集
+    //
+    // ★ 采集必须在**本进程**做，不能放在 App 进程。
+    //
+    // 原因：虚拟屏的 AImageReader 只能在创建它的进程里读。
+    // 之前把采集端放在 App 进程、建屏放在 UserService 进程，
+    // 两边各自持有一个 g_capturer —— 屏接的是这边那块，acquireFrame 读的是
+    // 那边那块，永远拿不到帧。用户看到的就是「软件里那块屏一直是黑的」。
+    //
+    // 所以：建屏 + 采集都在这里，App 只负责拿像素。
+
+    /**
+     * 建采集端（NDK 的 AImageReader），并**同时**建虚拟屏。
+     *
+     * 一次调用完成两件事，因为它们必须用同一个 surface、在同一个进程。
+     *
+     * @return 虚拟屏 displayId；失败返回 -1
+     */
+    int createDisplayWithCapture(String name, int width, int height, int dpi, int flags) = 17;
+
+    /**
+     * 把最新一帧写进一块 ashmem，返回可读的 fd。
+     *
+     * 为什么不用 Binder 直接传 byte[]：1280×720×4 = 3.7 MB，
+     * 超过 Binder 单次 1 MB 上限，会抛 TransactionTooLargeException。
+     *
+     * 返回的 fd 由调用方负责 close；取不到帧返回 null。
+     */
+    ParcelFileDescriptor acquireFrameFd() = 18;
+
+    /** 采集端当前状态，一行摘要（用于导出日志）。 */
+    String captureStatus() = 19;
+
     /**
      * Shizuku invokes this with transaction code 16777115 when the user service is removed.
      * The AIDL value must be 16777114 (Shizuku-API README, "Stop the User Service").

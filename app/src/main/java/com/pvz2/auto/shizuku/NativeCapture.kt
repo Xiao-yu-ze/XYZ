@@ -71,6 +71,16 @@ internal object NativeCapture {
         }
     }
 
+    /**
+     * 当前是否有一帧可取，返回字节数（width*height*4）；没有则 0。
+     *
+     * 先问大小再读，避免没帧时白分配 3.7 MB。
+     */
+    fun frameSize(): Int = runCatching {
+        loadLibrary()
+        nativeFrameSize()
+    }.getOrDefault(0)
+
     // ---- native 声明（实现在 cpp/capture.cpp）----
 
     private external fun nativeSetup(width: Int, height: Int): Surface?
@@ -78,4 +88,6 @@ internal object NativeCapture {
     private external fun nativeRelease()
 
     private external fun nativeAcquireFrame(out: ByteBuffer, outSize: IntArray): Boolean
+
+    private external fun nativeFrameSize(): Int
 }

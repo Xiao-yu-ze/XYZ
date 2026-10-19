@@ -209,4 +209,30 @@ Java_com_pvz2_auto_shizuku_NativeCapture_nativeAcquireFrame(
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
+
+
+/**
+ * 取最新一帧的字节数（width*height*4），没有帧返回 0。
+ *
+ * 拆成"先问大小再读"两步，是为了让 Java 侧先判断要不要分配 ashmem ——
+ * 没帧时不要每次空转都建一块 3.7 MB 的内存。
+ */
+JNIEXPORT jint JNICALL
+Java_com_pvz2_auto_shizuku_NativeCapture_nativeFrameSize(JNIEnv * /*env*/, jclass /*clazz*/) {
+    if (g_capturer == nullptr || g_capturer->reader == nullptr) {
+        return 0;
+    }
+    AImage *image = nullptr;
+    if (AImageReader_acquireLatestImage(g_capturer->reader, &image) != AMEDIA_OK || !image) {
+        return 0;
+    }
+    int32_t width = 0, height = 0;
+    jint size = 0;
+    if (AImage_getWidth(image, &width) == AMEDIA_OK &&
+        AImage_getHeight(image, &height) == AMEDIA_OK) {
+        size = width * height * 4;
+    }
+    AImage_delete(image);
+    return size;
+}
 }  // extern "C"

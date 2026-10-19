@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import java.io.File
+import java.io.FileOutputStream
+import java.nio.ByteBuffer
 import android.os.Process
 import android.util.Log
 import android.view.Surface
@@ -382,6 +385,86 @@ class Pvz2UserService : IPvz2Service.Stub() {
         }
     }
 
+    // ------------------------------------------------- 建屏 + 采集（同进程）
+
+    /**
+     * 建采集端并**同时**建虚拟屏。
+     *
+     * ## 为什么必须一次调用完成两件事
+     *
+     * 虚拟屏的 `AImageReader` 只能在**创建它的进程**里读。之前把采集端放在
+     * App 进程、建屏放在本进程，两边各自持有一个 `g_capturer`：
+     * 屏接的是本进程那块 surface，App 的 `acquireFrame` 读的是它自己那块空的 ——
+     * 于是 App 里的预览永远是黑的。用户看到的就是「软件里那块屏一直没反应」。
+     *
+     * 所以：在本进程建 reader、拿 surface、建屏，三者天然一致。
+     */
+    override fun createDisplayWithCapture(
+        name: String,
+        width: Int,
+        height: Int,
+        dpi: Int,
+        flags: Int
+    ): Int {
+        releaseVirtualDisplay()
+
+        val surface = NativeCapture.setup(width, height)
+        if (surface == null) {
+            Log.e(TAG, "native 采集端创建失败")
+            return -1
+        }
+        return createVirtualDisplay(name, width, height, dpi, surface, flags)
+    }
+
+    /**
+     * 把最新一帧写进一个文件，返回只读 fd。
+     *
+     * ## 为什么不用 SharedMemory
+     *
+     * 它的 `fileDescriptor` 在编译 SDK 上不可见（@hide），反射拿又要重来一遍
+     * 版本兼容。而这本来就是"读一次就丢"的临时数据，落文件更直白：
+     * 本进程写、App 读，各自管理自己的 fd，没有生命周期纠缠。
+     *
+     * 代价是每帧一次 write+read（720p 约 3.7 MB）。先保证功能跑通，真嫌慢再换。
+     */
+    override fun acquireFrameFd(): ParcelFileDescriptor? {
+        val size = runCatching { NativeCapture.frameSize() }.getOrDefault(0)
+        if (size <= 0) return null
+
+        return runCatching {
+            val dir = File(FRAME_DIR).apply { mkdirs() }
+            val file = File(dir, "frame.rgba")
+
+            val buffer = ByteBuffer.allocateDirect(size)
+            if (!NativeCapture.acquireFrame(buffer, IntArray(2))) {
+                return@runCatching null
+            }
+            buffer.position(0)
+
+            FileOutputStream(file).use { out ->
+                val chunk = ByteArray(64 * 1024)
+                while (buffer.hasRemaining()) {
+                    val n = minOf(chunk.size, buffer.remaining())
+                    buffer.get(chunk, 0, n)
+                    out.write(chunk, 0, n)
+                }
+            }
+            // 让 App 进程（不同 uid）也能读。
+            runCatching {
+                Runtime.getRuntime().exec(arrayOf("chmod", "666", file.absolutePath)).waitFor()
+            }
+
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        }.onFailure { Log.e(TAG, "取帧失败", it) }
+            .getOrNull()
+    }
+
+    /** 采集端状态，一行摘要。导出日志时看这一行判断"到底有没有帧"。 */
+    override fun captureStatus(): String {
+        val size = runCatching { NativeCapture.frameSize() }.getOrDefault(0)
+        return if (size > 0) "有帧（${size} 字节）" else "无帧"
+    }
+
     override fun releaseVirtualDisplay() {
         val display = virtualDisplay
         val surface = virtualDisplaySurface
@@ -396,6 +479,7 @@ class Pvz2UserService : IPvz2Service.Stub() {
         runCatching { display.javaClass.getMethod("release").invoke(display) }
             .onFailure { Log.w(TAG, "释放虚拟屏失败", it) }
         runCatching { surface?.release() }
+        runCatching { NativeCapture.release() }
         Log.i(TAG, "虚拟屏已释放 displayId=$id")
     }
 
@@ -431,6 +515,14 @@ class Pvz2UserService : IPvz2Service.Stub() {
     private companion object {
         const val TAG = "Pvz2UserService"
         val SIZE_PATTERN = Regex("""\d+x\d+""")
+
+        /**
+         * 帧文件目录。
+         *
+         * `/data/local/tmp` 是 shell 身份可写、且 App 进程也读得到的位置 ——
+         * 用它是为了绕开"跨进程传 3.7 MB 一帧"的问题（Binder 单次上限 1 MB）。
+         */
+        const val FRAME_DIR = "/data/local/tmp/pvz2"
 
         /** 初始化系统 Context 的等待上限。正常是毫秒级，5 秒只是防死等。 */
         const val CONTEXT_TIMEOUT_SEC = 5L
