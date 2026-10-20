@@ -105,7 +105,6 @@ class VirtualDisplaySession(
     private var frameJob: Job? = null
 
     /** 上一帧的采样指纹，用来区分"真活帧"和"残影"。 */
-    private var lastFingerprint: Long = 0
 
     /**
      * 建屏并把 [targetPackage] 搬上去。
@@ -194,32 +193,80 @@ class VirtualDisplaySession(
      * 链路：AIDL 要 fd → map 成 ByteBuffer → 按 RGBA 读进 Mat → 转 BGR。
      * 帧是紧凑排列的（native 侧已按 rowStride 裁过补白），所以可以直接整块读。
      */
+    // ------------------------------------------------------------ 取帧缓冲
+    //
+    // 每帧 1280×720×4 = 3.7 MB。之前每次取帧都重新分配：
+    //   ByteArray(3.7MB) → Mat(3.7MB) → put(3.7MB) → cvtColor 再分配 3.7MB
+    // 合计约 15 MB 的分配与拷贝，30fps 就是每秒 450 MB 的垃圾。
+    //
+    // 这是帧率卡在 34fps 左右的主要原因之一（另一部分是跨进程写文件）。
+    // 下面这些缓冲在会话期内复用，只在尺寸变化时重建。
+
+    /** 读文件用的字节缓冲。 */
+    private var frameBytes: ByteArray = ByteArray(0)
+
+    /** RGBA 源图（native）。 */
+    private var frameRgba: Mat? = null
+
+    /** BGR 结果图（native）。**复用** —— 调用方不得持有它超过本次循环。 */
+    private var frameBgr: Mat? = null
+
+    /** 确保缓冲尺寸够用。尺寸没变就直接返回，不做任何分配。 */
+    private fun ensureFrameBuffers(w: Int, h: Int): Boolean {
+        val need = w * h * 4
+        if (need <= 0) return false
+
+        if (frameBytes.size != need) frameBytes = ByteArray(need)
+
+        val rgba = frameRgba
+        if (rgba == null || rgba.width() != w || rgba.height() != h) {
+            rgba?.release()
+            frameRgba = Mat(h, w, CvType.CV_8UC4)
+        }
+
+        val bgr = frameBgr
+        if (bgr == null || bgr.width() != w || bgr.height() != h) {
+            bgr?.release()
+            frameBgr = Mat(h, w, CvType.CV_8UC3)
+        }
+        return true
+    }
+
+    private fun releaseFrameBuffers() {
+        frameRgba?.release()
+        frameRgba = null
+        frameBgr?.release()
+        frameBgr = null
+        frameBytes = ByteArray(0)
+    }
+
     private fun readFrameFromService(service: IPvz2Service): Mat? {
         val pfd = service.acquireFrameFd() ?: return null
         return try {
             val length = pfd.statSize
             if (length <= 0L) return null
 
-            val bytes = ByteArray(length.toInt())
+            val w = VD_WIDTH
+            val h = VD_HEIGHT
+            val need = w * h * 4
+            if (length.toInt() < need) return null
+            if (!ensureFrameBuffers(w, h)) return null
+
+            val bytes = frameBytes
             ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
                 var read = 0
-                while (read < bytes.size) {
-                    val n = input.read(bytes, read, bytes.size - read)
+                while (read < need) {
+                    val n = input.read(bytes, read, need - read)
                     if (n <= 0) break
                     read += n
                 }
-                if (read < bytes.size) return null
+                if (read < need) return null
             }
 
-            val w = VD_WIDTH
-            val h = VD_HEIGHT
-            if (bytes.size < w * h * 4) return null
-
-            val rgba = Mat(h, w, CvType.CV_8UC4)
-            rgba.put(0, 0, bytes, 0, w * h * 4)
-            val bgr = Mat()
+            val rgba = frameRgba ?: return null
+            val bgr = frameBgr ?: return null
+            rgba.put(0, 0, bytes, 0, need)
             Imgproc.cvtColor(rgba, bgr, Imgproc.COLOR_RGBA2BGR)
-            rgba.release()
             bgr
         } catch (t: Throwable) {
             Log.w(TAG, "读帧失败", t)
@@ -506,6 +553,10 @@ class VirtualDisplaySession(
         frameJob?.cancel()
         frameJob = scope.launch {
             while (isActive) {
+                // 本帧的起始时刻。节流要用它算 —— 用"处理完的时刻"会让
+                // 每帧白睡一个完整间隔，帧率被处理时间拖低（见下面的注释）。
+                val frameStartedAt = android.os.SystemClock.uptimeMillis()
+
                 val svc = shizukuServiceProvider()
                 if (svc == null) {
                     delay(POLL_INTERVAL_MS)
@@ -518,13 +569,31 @@ class VirtualDisplaySession(
                     delay(POLL_INTERVAL_MS)
                     continue
                 }
-                try {
-                    val fp = fingerprint(frame)
-                    val isNew = fp != lastFingerprint
-                    lastFingerprint = fp
-                    val w = frame.width()
-                    val h = frame.height()
-                    val fps = recordFrameAndComputeFps()
+
+                // ★ 这里**不能** release frame —— 它是复用的缓冲（见 frameBgr）。
+                //   release 掉的话下一帧往同一块内存写就会崩，或者 OpenCV 内部
+                //   重新分配、复用彻底失效。缓冲的生命周期归 ensureFrameBuffers /
+                //   releaseFrameBuffers 管。
+
+                val w = frame.width()
+                val h = frame.height()
+
+                // ★ 每帧只做"记账"，**界面固定 1 秒才刷新一次**。
+                //
+                //   之前每帧都 update { }，StateFlow 每秒被推 30~60 次，
+                //   界面跟着重组同样次数 —— 数字乱跳、看着晃眼，白占主线程。
+                //
+                //   现在：帧时间戳每帧都记（保证算法准确），但 State 只在
+                //   距上次刷新超过 1 秒时才推一次，界面稳定在 1Hz。
+                //   不能改成"数值变化才刷新" —— fps 在 33/34/35 之间抖的时候
+                //   那等于每帧都变，还是会刷屏。
+                val fps = recordFrameAndComputeFps()
+
+                val now = android.os.SystemClock.uptimeMillis()
+                val dueForUiUpdate = now - lastUiPublishAt >= UI_PUBLISH_INTERVAL_MS
+                val sizeChanged = w != _state.value.frameWidth || h != _state.value.frameHeight
+                if (dueForUiUpdate || sizeChanged) {
+                    lastUiPublishAt = now
                     update { prev ->
                         prev.copy(
                             frameWidth = w,
@@ -532,22 +601,22 @@ class VirtualDisplaySession(
                             fps = fps,
                         )
                     }
-                    publishPreview(frame)
-                } finally {
-                    frame.release()
                 }
+                publishPreview(frame)
 
-                // ★ 上限 60fps。
+                // ★ 上限 [MAX_FPS]。
                 //
-                //   之前取到帧就立刻回去取下一帧，采集频率完全由 AImageReader
-                //   的产出速度决定 —— 高刷屏上能到 60fps 甚至更高，而这个循环
-                //   每轮要做指纹计算（逐点采样）+ 跨进程读 3.7MB + 可能的
-                //   Bitmap 转换，60fps 已是多数设备的屏幕刷新上限，再高没有意义。
+                // ## 时间基准必须是「本帧**开始取**的时刻」
                 //
-                //   用"距上一帧的时间差"来补 sleep，而不是固定 sleep 33ms：
-                //   本轮的取帧+处理本身就要花时间，固定 sleep 会让实际帧率
-                //   明显低于目标帧率。
-                val elapsed = android.os.SystemClock.uptimeMillis() - lastCaptureAt
+                // 之前 lastCaptureAt 是在 `recordFrameAndComputeFps()` 里设的，
+                // 也就是"处理完之后"。于是 `elapsed = now - lastCaptureAt ≈ 0`，
+                // 每帧都固定睡满 16ms —— 处理时间（约 13ms）全加在上面，
+                // 周期 = 13 + 16 = 29ms，实测正好卡在 **34fps**，从来上不去。
+                //
+                // 现在用帧开始的时刻算：周期 = max(16ms, 处理耗时)。
+                // 处理 13ms 时就是 16ms = 60fps，处理 20ms 时才是 50fps。
+                // 节流只在"这一轮比目标还快"时才补睡。
+                val elapsed = android.os.SystemClock.uptimeMillis() - frameStartedAt
                 val remain = MIN_FRAME_INTERVAL_MS - elapsed
                 if (remain > 0) delay(remain)
             }
@@ -564,19 +633,18 @@ class VirtualDisplaySession(
      */
     private val frameTimes = java.util.ArrayDeque<Long>()
 
-    /** 上一帧被取到的时刻，用于节流到 [MAX_FPS]。 */
-    @Volatile
-    private var lastCaptureAt = 0L
+    /** 上次推送界面状态的时间。界面刷新固定 1Hz，不跟采集帧率走。 */
+    private var lastUiPublishAt = 0L
+
 
     /**
      * 记一帧并返回当前实时帧率。
      *
      * 统计的是**实际取到的帧数**（不管内容有没有变化）—— 这才是"帧率"。
-     * 而"画面是否在动"是另一件事，用内容指纹判断（见 [lastFingerprint]）。
+     * 而"画面是否在动"是另一件事 —— 采集停了 fps 会掉到 0，卡住则 fps 正常但内容不动。
      */
     private fun recordFrameAndComputeFps(): Int {
         val now = android.os.SystemClock.uptimeMillis()
-        lastCaptureAt = now
 
         frameTimes.addLast(now)
         while (frameTimes.isNotEmpty() && now - frameTimes.first() > FPS_WINDOW_MS) {
@@ -633,25 +701,11 @@ class VirtualDisplaySession(
         previewFlow.value = bitmap
     }
 
-    /** 对整帧稀疏采样算一个指纹。全黑帧的指纹恒定，所以"一直全黑"会被识别出来。 */
-    private fun fingerprint(mat: Mat): Long {
-        var hash = 1125899906842597L
-        val stepY = (mat.rows() / 12).coerceAtLeast(1)
-        val stepX = (mat.cols() / 16).coerceAtLeast(1)
-        var y = 0
-        while (y < mat.rows()) {
-            var x = 0
-            while (x < mat.cols()) {
-                val p = mat.get(y, x)
-                if (p != null) {
-                    for (v in p) hash = hash * 31 + v.toLong()
-                }
-                x += stepX
-            }
-            y += stepY
-        }
-        return hash
-    }
+    // fingerprint() 已删除。
+    //
+    // 它原本用来判断"画面是否在动"（内容指纹变化才算活帧）。改成实时帧率后
+    // 这个判断不再需要，而它每帧要对整帧做 192 次 `mat.get()` —— 每次都是
+    // 一次 JNI 调用，在 34fps 下就是每秒 6500 次。留着纯属白烧 CPU。
 
     /**
      * 停止：先停轮询，再释放屏。
@@ -686,13 +740,21 @@ class VirtualDisplaySession(
     }
 
     private fun cleanup() {
+        // 先停轮询再释放资源。顺序反了的话，轮询协程会对着已释放的缓冲 /
+        // 已关闭的采集端继续跑，每轮一次 JNI 调用，直到进程结束。
+        frameJob?.cancel()
+        frameJob = null
+
         runCatching { shellService?.releaseVirtualDisplay() }
         runCatching { VirtualDisplayCreator.release(localDisplay) }
         // 采集端在 shell 侧，随 releaseVirtualDisplay 一起释放（见 Pvz2UserService）
+
+        // 帧缓冲是 native 内存（两个 Mat 共约 7.4 MB），必须显式释放，
+        // 否则每次开关虚拟屏都漏一块。
+        releaseFrameBuffers()
+
         shellService = null
         localDisplay = null
-
-        lastFingerprint = 0
     }
 
     /**
@@ -764,6 +826,14 @@ class VirtualDisplaySession(
         const val VD_HEIGHT = 720
         const val VD_DPI = 240
         const val POLL_INTERVAL_MS = 120L
+
+        /**
+         * 界面状态刷新间隔。
+         *
+         * 采集可以跑到 60fps，但界面没必要跟着刷 —— 用户看的是一个"帧率多少"
+         * 的读数，每秒更新一次就够了。跟着刷只会让数字乱跳、白占主线程。
+         */
+        const val UI_PUBLISH_INTERVAL_MS = 1000L
 
         /** 帧率统计窗口：过去 1 秒内收到多少帧就是多少 fps。 */
         const val FPS_WINDOW_MS = 1000L
