@@ -61,8 +61,14 @@ class VirtualDisplaySession(
         /** 最近一帧的尺寸，界面用来判断"有没有画面"。 */
         val frameWidth: Int = 0,
         val frameHeight: Int = 0,
-        /** 累计收到的帧数。**只在内容变化时 +1**，避免把残影当活帧。 */
-        val liveFrameCount: Int = 0,
+        /**
+         * 实时帧率（帧/秒）。
+         *
+         * 统计的是**实际取到的帧数**，窗口 1 秒、上限 30。
+         * 之前这里是"累计帧数"，但那个数字只增不减，看不出画面是不是卡住了 ——
+         * 帧率才能立刻反映"采集还活着吗"。
+         */
+        val fps: Int = 0,
         /** 判定依据的原文，出问题时直接看这一行。 */
         val diagnostics: String = "",
 
@@ -370,21 +376,75 @@ class VirtualDisplaySession(
         Log.i(TAG, "launchAppOnDisplay($packageName, $displayId) -> $launched")
         update { it.copy(message = "启动指令已发出（$launched），等待任务出现…") }
 
-        // 给系统时间把任务建起来。**命中就立刻退出**。
+        // ★ 启动**瞬间**就采一次窗口分布。
         //
-        // ⚠️ 之前写的是 `return@repeat` —— 那等价于 continue，不是 break。
-        //    于是即使第一次就命中，循环还会继续跑满 6 次、白等 3 秒，
-        //    而这 3 秒恰好是虚拟屏最需要尽快稳定的时刻。改用带 break 的 for。
+        //   用户反馈"游戏启动时会在主屏闪一下"。任务级 API（getTaskDisplayId）
+        //   只回答"任务在哪块屏"，看不到启动窗口（splash / starting window）——
+        //   而闪现很可能正是它造成的：系统在游戏进程冷启动期间先挂一个
+        //   starting window，那一刻任务还没落到副屏上。
+        //
+        //   这里在 launch 刚返回、游戏进程还在冷启动时采一次，日志里就能看到
+        //   "启动瞬间有没有窗口在主屏(0)"。这是唯一能证实/推翻该假设的证据，
+        //   不采就只能猜。
+        val windowsAtLaunch = queryWindowDisplay(service, packageName)
+        Log.i(TAG, "启动瞬间窗口分布：${windowsAtLaunch.raw}")
+        appendHistory("启动瞬间：${windowsAtLaunch.raw}")
+
+        // 给系统时间把任务建起来。
+        //
+        // ## 为什么要分两段轮询
+        //
+        // 真机上观察到：游戏启动时会**在主屏闪一下**，然后才出现在虚拟屏上。
+        // 之前的轮询间隔是 500ms —— 第一枪打在 500ms，而闪现就发生在最初
+        // 这半秒里，等于完全看不见，也没机会纠正。
+        //
+        // 现在前 [LAUNCH_POLL_FAST_TIMES] 次每 [LAUNCH_POLL_FAST_INTERVAL_MS]
+        // 打一枪（合计约 1 秒），把轨迹记进事件流水；之后退回慢速轮询。
+        //
+        // ★ 快速段还有一个作用：**发现落在主屏就立刻搬走**。
+        //   等它自己过去要等好几枪，每一枪都是用户能看到的一次闪现。
+        //   一发现 current==0 就马上 moveTaskToDisplay，能把可见时间压到最短。
         var onDisplay = false
-        for (i in 0 until LAUNCH_POLL_TIMES) {
-            delay(LAUNCH_POLL_INTERVAL_MS)
+        var everSawPrimary = false
+        var correctedCount = 0
+        val trajectory = StringBuilder()
+
+        for (i in 0 until LAUNCH_POLL_FAST_TIMES) {
+            delay(LAUNCH_POLL_FAST_INTERVAL_MS)
             val current = service.getTaskDisplayId(packageName)
-            Log.i(TAG, "第 ${i + 1} 次轮询：$packageName 在 display $current（期望 $displayId）")
+            trajectory.append(if (i == 0) "$current" else "→$current")
+
             if (current == displayId) {
                 onDisplay = true
+                Log.i(TAG, "第 ${i + 1} 次（快速）：$packageName 已在 display $displayId，轨迹 $trajectory")
                 break
             }
+
+            // 落在主屏 = 用户正看着游戏盖住物理屏。立刻搬，不等下一枪。
+            if (current == 0) {
+                everSawPrimary = true
+                correctedCount++
+                Log.w(TAG, "第 ${i + 1} 次（快速）：$packageName 落在主屏，立即搬移到 $displayId")
+                runCatching { service.moveTaskToDisplay(packageName, displayId) }
+            }
         }
+
+        if (!onDisplay) {
+            for (i in 0 until LAUNCH_POLL_TIMES) {
+                delay(LAUNCH_POLL_INTERVAL_MS)
+                val current = service.getTaskDisplayId(packageName)
+                trajectory.append("→$current")
+                if (current == 0) everSawPrimary = true
+                Log.i(TAG, "第 ${i + 1} 次（慢速）：$packageName 在 display $current（期望 $displayId）")
+                if (current == displayId) {
+                    onDisplay = true
+                    break
+                }
+            }
+        }
+
+        // 把轨迹写进事件流水 —— 这是判断"主屏闪现"到底发生了多久的唯一依据。
+        appendHistory("任务轨迹：${trajectory.ifEmpty { "未出现" }}")
 
         if (!onDisplay) {
             Log.w(TAG, "启动后任务没到副屏，尝试 moveTaskToDisplay 兜底")
@@ -393,7 +453,26 @@ class VirtualDisplaySession(
             delay(800)
             onDisplay = service.getTaskDisplayId(packageName) == displayId
             Log.i(TAG, "兜底搬移 taskId=$moved，最终在副屏=$onDisplay")
+        } else if (everSawPrimary) {
+            // 任务曾经落在主屏（用户看到的那一下闪现）。虽然现在已经过去了，
+            // 仍要记一笔 —— 这是"启动时闪主屏"的直接证据。
+            Log.w(TAG, "$packageName 启动过程中曾在主屏出现过，轨迹 $trajectory")
+            appendHistory("⚠️ 启动时曾在主屏出现（轨迹 $trajectory）")
         }
+
+        // ★ 再采一次**窗口**分布。
+        //
+        //   `getTaskDisplayId` 只回答"任务在哪块屏"，看不到启动窗口（splash）。
+        //   用户看到的"游戏在主屏闪一下"，很可能是游戏进程冷启动时系统先给它
+        //   挂了一个 starting window，而那一刻任务还没落到副屏上。
+        //   只有窗口级采样才能证实或推翻这个假设 —— 所以这里记一笔，
+        //   下次日志里能看到 `窗口分布：...` 这一行。
+        if (onDisplay) {
+            val windows = queryWindowDisplay(service, packageName)
+            Log.i(TAG, "启动后窗口分布：${windows.raw}")
+            appendHistory("窗口分布：${windows.raw}")
+        }
+
 
         val tasks = runCatching { service.dumpTasks() }.getOrDefault("")
         update {
@@ -445,23 +524,67 @@ class VirtualDisplaySession(
                     lastFingerprint = fp
                     val w = frame.width()
                     val h = frame.height()
+                    val fps = recordFrameAndComputeFps()
                     update { prev ->
                         prev.copy(
                             frameWidth = w,
                             frameHeight = h,
-                            // 只有内容真的变了才算"活帧"
-                            liveFrameCount = if (isNew) prev.liveFrameCount + 1 else prev.liveFrameCount,
+                            fps = fps,
                         )
                     }
                     publishPreview(frame)
                 } finally {
                     frame.release()
                 }
-                // 取到帧后不 sleep：立刻回去取下一帧（acquireLatest 会自动丢旧帧）。
-                // 需要节流时由采集端本身的帧率决定，而不是靠这里人为限速。
+
+                // ★ 上限 60fps。
+                //
+                //   之前取到帧就立刻回去取下一帧，采集频率完全由 AImageReader
+                //   的产出速度决定 —— 高刷屏上能到 60fps 甚至更高，而这个循环
+                //   每轮要做指纹计算（逐点采样）+ 跨进程读 3.7MB + 可能的
+                //   Bitmap 转换，60fps 已是多数设备的屏幕刷新上限，再高没有意义。
+                //
+                //   用"距上一帧的时间差"来补 sleep，而不是固定 sleep 33ms：
+                //   本轮的取帧+处理本身就要花时间，固定 sleep 会让实际帧率
+                //   明显低于目标帧率。
+                val elapsed = android.os.SystemClock.uptimeMillis() - lastCaptureAt
+                val remain = MIN_FRAME_INTERVAL_MS - elapsed
+                if (remain > 0) delay(remain)
             }
         }
     }
+
+    // ---------------------------------------------------------------- 帧率
+
+    /**
+     * 最近一段时间内每帧的时间戳，用来算实时帧率。
+     *
+     * 只保留 [FPS_WINDOW_MS] 窗口内的，超期的从头部移除 —— 于是
+     * `size` 直接就是"过去一秒收到了多少帧"。
+     */
+    private val frameTimes = java.util.ArrayDeque<Long>()
+
+    /** 上一帧被取到的时刻，用于节流到 [MAX_FPS]。 */
+    @Volatile
+    private var lastCaptureAt = 0L
+
+    /**
+     * 记一帧并返回当前实时帧率。
+     *
+     * 统计的是**实际取到的帧数**（不管内容有没有变化）—— 这才是"帧率"。
+     * 而"画面是否在动"是另一件事，用内容指纹判断（见 [lastFingerprint]）。
+     */
+    private fun recordFrameAndComputeFps(): Int {
+        val now = android.os.SystemClock.uptimeMillis()
+        lastCaptureAt = now
+
+        frameTimes.addLast(now)
+        while (frameTimes.isNotEmpty() && now - frameTimes.first() > FPS_WINDOW_MS) {
+            frameTimes.removeFirst()
+        }
+        return Fps.compute(frameTimes, now)
+    }
+
 
     // ---------------------------------------------------------------- 预览
 
@@ -642,6 +765,18 @@ class VirtualDisplaySession(
         const val VD_DPI = 240
         const val POLL_INTERVAL_MS = 120L
 
+        /** 帧率统计窗口：过去 1 秒内收到多少帧就是多少 fps。 */
+        const val FPS_WINDOW_MS = 1000L
+
+        /** 帧率上限，同时也是采集节流目标。 */
+        const val MAX_FPS = 60
+
+        /** 两帧之间的最小间隔，用来把采集压在 30fps 以内。 */
+        const val MIN_FRAME_INTERVAL_MS = 1000L / MAX_FPS
+
+        /** 窗口数据少于这个时长时不做折算，避免刚启动时报出假的低帧率。 */
+        const val MIN_FPS_SPAN_MS = 300L
+
         /** 预览刷新间隔。60fps 全转 Bitmap 太重，10fps 看着已经够流畅。 */
         const val PREVIEW_INTERVAL_MS = 100L
 
@@ -651,7 +786,17 @@ class VirtualDisplaySession(
         /** 队列空时的让出时长。取到帧时不 sleep，所以这个值不影响帧率上限。 */
         const val IDLE_POLL_MS = 8L
         const val FRAME_WAIT_MS = 800L
+        /** 慢速轮询次数（快速段之后继续等）。 */
         const val LAUNCH_POLL_TIMES = 10
+
+        /**
+         * 启动后的快速采样次数。
+         *
+         * 主屏闪现发生在最初半秒内，500ms 的第一枪根本看不见。
+         * 20 次 × 50ms ≈ 1 秒，足够覆盖"进程冷启动 → 窗口创建"这段。
+         */
+        const val LAUNCH_POLL_FAST_TIMES = 20
+        const val LAUNCH_POLL_FAST_INTERVAL_MS = 50L
         const val LAUNCH_POLL_INTERVAL_MS = 500L
 
         /** force-stop 后等任务消失的轮询次数（每次 200ms）。 */

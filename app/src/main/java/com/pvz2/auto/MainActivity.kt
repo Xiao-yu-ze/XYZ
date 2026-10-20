@@ -255,8 +255,9 @@ class MainActivity : AppCompatActivity() {
         detailView.text = when {
             !state.running -> ""
             state.frameWidth == 0 -> state.message
-            state.liveFrameCount == 0 -> getString(R.string.vd_no_content)
-            else -> getString(R.string.vd_live_frames, state.liveFrameCount) +
+            // 帧率为 0 说明这一秒一帧都没取到 —— 采集断了或屏上没有内容。
+            state.fps == 0 -> getString(R.string.vd_no_content)
+            else -> getString(R.string.vd_live_frames, state.fps) +
                 (if (state.appOnDisplay) "" else "\n" + state.message)
         }
 
@@ -343,7 +344,7 @@ class MainActivity : AppCompatActivity() {
                         appendLine("建屏是否成功: ${if (st.displayId > 0) "是（displayId=${st.displayId}）" else "否"}")
                         appendLine("屏是否 TRUSTED: ${if (st.displayTrusted) "是（窗口可以挂上去）" else "否（窗口挂不上去）"}")
                         appendLine("应用是否在副屏: ${if (st.appOnDisplay) "是" else "否"}")
-                        appendLine("画面更新次数: ${st.liveFrameCount}")
+                        appendLine("实时帧率: ${st.fps} fps（上限 $VirtualDisplaySession.MAX_FPS）")
                         appendLine("当前状态: ${st.message}")
                         appendLine()
                         appendLine("建屏时的报告（屏已释放也保留）:")

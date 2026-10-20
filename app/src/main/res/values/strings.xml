@@ -37,8 +37,8 @@
     <string name="vd_state_idle">虚拟屏未启动</string>
     <string name="vd_preview_desc">虚拟屏实时画面</string>
     <string name="vd_running_format">虚拟屏 %1$d 运行中 · %2$d×%3$d</string>
-    <string name="vd_live_frames">画面更新 %1$d 次</string>
-    <string name="vd_no_content">虚拟屏已建，但没有画面更新 —— 游戏可能没搬上去，或界面还没开始渲染。</string>
+    <string name="vd_live_frames">%1$d fps</string>
+    <string name="vd_no_content">虚拟屏已建，但取不到画面 —— 游戏可能没搬上去，或还没开始渲染。</string>
     <string name="vd_stopped">虚拟屏已停止</string>
     <string name="vd_failed_format">建失败：%1$s</string>
     <string name="btn_export_log">导出日志</string>
