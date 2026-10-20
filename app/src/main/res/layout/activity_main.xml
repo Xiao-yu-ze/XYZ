@@ -397,12 +397,44 @@
                  现在只保留一个：注入自检。它仍然是**唯一**能回答
                  "事件到底能不能进到虚拟屏"的办法，其它工具都做不到。 -->
 
-            <!-- 注入自检：在虚拟屏上点一下屏幕中心，并直接显示系统是否接受。
-                 不经过识别、不经过脚本 —— 只验证注入通道本身。 -->
+            <!-- 注入自检：在虚拟屏上点一下指定位置，并直接显示系统是否接受。
+                 不经过识别、不经过脚本 —— 只验证注入通道本身。
+
+                 坐标可填：默认是屏幕正中 (640,360)。要验证"某个按钮点不中"时，
+                 填那个按钮的坐标再点一次，就能区分"注入不通"和"坐标不对"。 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/etTapX"
+                    style="@style/Text.Body"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="@string/hint_tap_x"
+                    android:inputType="number"
+                    android:singleLine="true" />
+
+                <EditText
+                    android:id="@+id/etTapY"
+                    style="@style/Text.Body"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:hint="@string/hint_tap_y"
+                    android:inputType="number"
+                    android:singleLine="true" />
+            </LinearLayout>
+
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnTestTap"
                 style="@style/AppButton.Outline"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="8dp"
                 android:text="@string/btn_test_tap" />
 
             <TextView

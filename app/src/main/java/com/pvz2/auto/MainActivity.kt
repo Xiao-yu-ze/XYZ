@@ -47,6 +47,10 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val TAG = "MainActivity"
+
+        /** 虚拟屏尺寸。建屏时写死 1280×720（见 VirtualDisplaySession）。 */
+        const val VD_WIDTH = 1280
+        const val VD_HEIGHT = 720
     }
 
     private lateinit var shizukuStateView: TextView
@@ -575,19 +579,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 在虚拟屏正中注入一次点击，并把系统是否接受**直接显示在界面上**。
+     * 注入自检：在虚拟屏上点一下**指定坐标**，并把四条路径的结果直接显示出来。
      *
      * ## 为什么要这个按钮
      *
      * "游戏点不动"至少有四种原因，而它们在日志里长得差不多：
-     *  1. 事件打到了错误的 display（我们之前就是这样，写死 0）；
+     *  1. 事件打到了错误的 display；
      *  2. 事件发对了，但那块屏上没有可触摸窗口；
      *  3. 识别没命中，压根没触发点击；
      *  4. 脚本没跑。
      *
      * 这个按钮**绕开 3 和 4**，只测 1 和 2：不依赖识别、不依赖脚本，
      * 直接用 AIDL 的 `tapOnDisplay` 往会话当前的 displayId 发一次点击。
+     *
+     * ## 为什么一次试四条路径
+     *
+     * 单看"被拒"两个字无法定位原因。四条路径的**失败方式**不同，
+     * 组合起来正好能把原因分开（见下面的判读逻辑）。
      */
+    private fun mark(ok: Boolean): String = if (ok) "✓ 接受" else "✗ 被拒"
+
     private fun testVirtualDisplayTap() {
         val resultView = findViewById<TextView>(R.id.tvTestTapResult)
         val displayId = VirtualDisplaySession.sharedState.value.displayId
@@ -597,6 +608,13 @@ class MainActivity : AppCompatActivity() {
             resultView.text = getString(R.string.test_tap_no_display)
             return
         }
+
+        // 坐标从输入框读，空着就用屏幕正中。
+        // 虚拟屏是 1280×720，中心 (640, 360)。
+        val x = findViewById<EditText>(R.id.etTapX).text.toString().toIntOrNull()
+            ?.coerceIn(0, VD_WIDTH - 1) ?: (VD_WIDTH / 2)
+        val y = findViewById<EditText>(R.id.etTapY).text.toString().toIntOrNull()
+            ?.coerceIn(0, VD_HEIGHT - 1) ?: (VD_HEIGHT / 2)
 
         resultView.setTextColor(ContextCompat.getColor(this, R.color.ink_muted))
         resultView.text = getString(R.string.test_tap_running, displayId)
@@ -609,25 +627,72 @@ class MainActivity : AppCompatActivity() {
                     val service = client.await()
                         ?: return@withContext "ERROR: Shizuku 服务未连接（${client.lastError ?: "超时"}）"
 
-                    // 屏幕正中。虚拟屏是 1280×720，中心 (640, 360)。
-                    // 按住 80ms —— 低于一帧的点击在低帧率下会被丢。
-                    val x = 640
-                    val y = 360
-                    val ok = runCatching { service.tapOnDisplay(displayId, x, y, 80) }
-                        .onFailure { Log.w(TAG, "测试点击抛异常", it) }
+                    // 四条路径同时试。它们失败的**方式**不一样，正好能把原因分开：
+                    //
+                    //   A. injectInputEvent + setDisplayId(虚拟屏)  ← 线上用的这条
+                    //   B. injectInputEvent + display 0             ← 对照组：注入本身通不通
+                    //   C. `input -d <id> tap`                      ← shell 的官方路径
+                    //   D. `input tap`                              ← 对照组
+                    //
+                    // 判读：
+                    //   A✗ B✓ C✓ → 是 setDisplayId/副屏路由的问题
+                    //   A✗ B✗ C✗ → 权限或 InputManager 层的问题
+                    //   A✗ C✓    → 我们的注入实现有 bug，改用 shell 路径
+                    val report = StringBuilder()
+                    report.appendLine("display=$displayId  坐标 ($x, $y)")
+                    report.appendLine()
+
+                    val a = runCatching { service.tapOnDisplay(displayId, x, y, 80) }
                         .getOrDefault(false)
+                    report.appendLine("A inject+display=$displayId : ${mark(a)}")
 
-                    val info = runCatching { service.describeDisplay(displayId) }
+                    val b = runCatching { service.tapOnDisplay(0, x, y, 80) }
+                        .getOrDefault(false)
+                    report.appendLine("B inject+display=0        : ${mark(b)}")
+
+                    val cOut = runCatching {
+                        service.exec("input -d $displayId tap $x $y")
+                    }.getOrDefault("")
+                    // `input` 失败只往 stderr 写、退出码仍是 0，只能看输出。
+                    val c = cOut.isBlank()
+                    report.appendLine("C shell input -d $displayId   : ${mark(c)}")
+                    if (!c) report.appendLine("   └ $cOut")
+
+                    val dOut = runCatching { service.exec("input tap $x $y") }.getOrDefault("")
+                    val d = dOut.isBlank()
+                    report.appendLine("D shell input (display 0) : ${mark(d)}")
+                    if (!d) report.appendLine("   └ $dOut")
+
+                    report.appendLine()
+                    report.appendLine("判读：")
+                    report.appendLine(
+                        when {
+                            a && c -> "✓ 两条主路径都通。若游戏无反应，问题在识别/坐标。"
+                            !a && c -> "C 通、A 不通 → 我们的 injectInputEvent 实现有问题，\n" +
+                                "  应改用 shell 的 input -d 路径。"
+                            a && !c -> "A 通、C 不通 → shell 的 input 不支持 -d，\n" +
+                                "  继续用 injectInputEvent。"
+                            !b && !d -> "连 display 0 都失败 → 是权限层问题（INJECT_EVENTS），\n" +
+                                "  不是副屏路由问题。"
+                            else -> "两条都不通，但 display 0 能通 → 副屏路由被拒。\n" +
+                                "  需要看 InputDispatcher 的 drop 原因。"
+                        }
+                    )
+
+                    val perm = runCatching {
+                        service.exec("dumpsys package com.android.shell | grep -i INJECT_EVENTS")
+                    }.getOrDefault("")
+                    report.appendLine()
+                    report.appendLine("shell 的 INJECT_EVENTS：")
+                    report.appendLine(if (perm.isBlank()) "  （查不到，可能没这个权限）" else "  ${perm.trim()}")
+
+                    val win = runCatching { service.exec("dumpsys window windows | grep -E 'Window #|mDisplayId'") }
                         .getOrDefault("")
+                    report.appendLine()
+                    report.appendLine("窗口分布：")
+                    report.appendLine(win.trim().take(600))
 
-                    if (ok) {
-                        "✓ 系统接受了这次点击（display=$displayId, $x,$y）\n" +
-                            "说明注入通道是通的；若游戏仍无反应，问题在识别/脚本层。\n$info"
-                    } else {
-                        "✗ 系统拒绝了这次点击（display=$displayId, $x,$y）\n" +
-                            "常见原因：游戏窗口不在这块屏上 / 没有可触摸窗口 /\n" +
-                            "窗口设了 FLAG_NOT_TOUCHABLE。\n$info"
-                    }
+                    report.toString()
                 } catch (t: Throwable) {
                     "ERROR: ${t.message}"
                 } finally {
@@ -636,12 +701,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             resultView.text = text
-            resultView.setTextColor(
-                ContextCompat.getColor(
-                    this@MainActivity,
-                    if (text.startsWith("✓")) R.color.state_ok else R.color.state_bad
-                )
-            )
+            resultView.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ink_muted))
         }
     }
 
