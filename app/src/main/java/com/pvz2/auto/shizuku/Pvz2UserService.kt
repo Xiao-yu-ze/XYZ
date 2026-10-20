@@ -218,6 +218,10 @@ class Pvz2UserService : IPvz2Service.Stub() {
     @Volatile
     private var virtualDisplaySurface: Surface? = null
 
+    /** 采集尺寸。建屏时记下，取帧按它分配缓冲。 */
+    private var captureWidth = 0
+    private var captureHeight = 0
+
     @Volatile
     private var virtualDisplayId: Int = -1
 
@@ -431,6 +435,9 @@ class Pvz2UserService : IPvz2Service.Stub() {
             Log.e(TAG, "native 采集端创建失败")
             return -1
         }
+        // 记下尺寸：取帧时按它分配缓冲，不再反查 native（反查会吃掉一帧）。
+        captureWidth = width
+        captureHeight = height
         return createVirtualDisplay(name, width, height, dpi, surface, flags)
     }
 
@@ -446,7 +453,15 @@ class Pvz2UserService : IPvz2Service.Stub() {
      * 代价是每帧一次 write+read（720p 约 3.7 MB）。先保证功能跑通，真嫌慢再换。
      */
     override fun acquireFrameFd(): ParcelFileDescriptor? {
-        val size = runCatching { NativeCapture.frameSize() }.getOrDefault(0)
+        // ★ 用**建屏时已知的尺寸**分配缓冲，不要先调 frameSize()。
+        //
+        //   之前的写法是先 `NativeCapture.frameSize()` —— 那个函数内部会
+        //   `AImageReader_acquireLatestImage` 拿走一帧再 delete 掉，只为读宽高；
+        //   紧接着 `acquireFrame` 又取一次。等于**每帧白扔一帧**，
+        //   而且如果队列里只有一帧，第二取就什么都拿不到 —— 表现为"一直 0 帧"。
+        //
+        //   尺寸在 createDisplayWithCapture 时就知道，直接存下来用。
+        val size = captureWidth * captureHeight * 4
         if (size <= 0) return null
 
         return runCatching {
@@ -478,10 +493,12 @@ class Pvz2UserService : IPvz2Service.Stub() {
     }
 
     /** 采集端状态，一行摘要。导出日志时看这一行判断"到底有没有帧"。 */
-    override fun captureStatus(): String {
-        val size = runCatching { NativeCapture.frameSize() }.getOrDefault(0)
-        return if (size > 0) "有帧（${size} 字节）" else "无帧"
-    }
+    override fun captureStatus(): String =
+        if (captureWidth > 0 && captureHeight > 0) {
+            "采集端就绪 ${captureWidth}x$captureHeight（每帧 ${captureWidth * captureHeight * 4} 字节）"
+        } else {
+            "未建采集端"
+        }
 
     override fun releaseVirtualDisplay() {
         val display = virtualDisplay

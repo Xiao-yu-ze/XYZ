@@ -302,6 +302,9 @@ class MainActivity : AppCompatActivity() {
                     val display = service.describeDisplay(
                         VirtualDisplaySession.sharedState.value.displayId
                     )
+                    // 采集端状态：判断"到底有没有取到帧"的直接依据。
+                    val capture = runCatching { service.captureStatus() }
+                        .getOrElse { "ERROR: ${it.message}" }
                     val st = VirtualDisplaySession.sharedState.value
                     buildString {
                         appendLine("===== PVZ2 自动化 诊断日志 =====")
@@ -320,6 +323,7 @@ class MainActivity : AppCompatActivity() {
                         appendLine(st.buildReport.ifBlank { "（没有记录）" })
                         appendLine()
                         appendLine("导出时实时查询: $display")
+                        appendLine("采集端: $capture")
                         appendLine()
                         // ★ 事件流水：不受 logcat 被刷屏影响，这是最可靠的一段。
                         appendLine("----- 事件流水（本次运行全过程）-----")

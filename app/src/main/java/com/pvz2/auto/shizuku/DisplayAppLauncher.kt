@@ -83,9 +83,19 @@ internal object DisplayAppLauncher {
                     .invoke(opts, WINDOWING_MODE_FULLSCREEN)
             }.onFailure { Log.w(TAG, "setLaunchWindowingMode 失败（可忽略）", it) }
             opts.toBundle()
-        }.getOrElse {
+        }.onFailure {
             Log.e(TAG, "构造 ActivityOptions 失败", it)
-            null
+        }.getOrNull()
+
+        // ★ options 为 null 时**不能**继续走 Binder 路径。
+        //
+        //   ActivityOptions 里装的就是 launchDisplayId；它没了，startActivityAsUser
+        //   会老老实实在**主屏**启动，而且返回成功码。日志看起来一切正常，
+        //   用户看到的却是"整个屏幕变成游戏"。这种静默降级最难查，所以直接改走
+        //   `am start --display`，至少 displayId 还在。
+        if (options == null) {
+            Log.w(TAG, "ActivityOptions 构造失败，改用 am 命令（保留 displayId=$displayId）")
+            return launchViaAm(intent, displayId)
         }
 
         return runCatching {
@@ -94,7 +104,7 @@ internal object DisplayAppLauncher {
             // IActivityManager.startActivity 的参数随版本变，这里只打日志把签名露出来，
             // 真正的调用交给 startActivityAsUser 的更通用重载（见下）。
             Log.i(TAG, "startActivity 候选签名：${method.parameterTypes.joinToString { it.simpleName }}")
-            startActivityInternal(am, intent, options)
+            startActivityInternal(am, intent, options, displayId)
         }.getOrElse {
             Log.e(TAG, "startActivity Binder 调用失败", it)
             false
@@ -120,7 +130,8 @@ internal object DisplayAppLauncher {
     private fun startActivityInternal(
         am: Any,
         intent: Intent,
-        options: android.os.Bundle?
+        options: android.os.Bundle?,
+        displayId: Int
     ): Boolean {
         val all = am.javaClass.methods.filter { it.name == "startActivityAsUser" }
         all.forEach { m ->
@@ -137,7 +148,9 @@ internal object DisplayAppLauncher {
             ?: all.filter { it.parameterTypes.size >= 8 }.maxByOrNull { it.parameterTypes.size }
             ?: run {
                 Log.e(TAG, "没有可用的 startActivityAsUser 重载（带 Bundle 的也没有），改用 am 兜底")
-                return launchViaAm(intent, displayId = -1)
+                // ★ 这里必须把 displayId 传下去。之前硬编码 -1，
+                //   于是兜底路径永远在主屏启动，而日志只会说"启动指令已发出"。
+                return launchViaAm(intent, displayId)
             }
         val types = method.parameterTypes
         Log.i(TAG, "选用参数数=${types.size} 的重载")
@@ -212,19 +225,53 @@ internal object DisplayAppLauncher {
             method.isAccessible = true
             val ret = method.invoke(am, *args)
             Log.i(TAG, "startActivityAsUser 返回 $ret")
-            true
+
+            // ★ 必须检查返回码。
+            //
+            //   之前这里写死 `true` —— 只要反射没抛异常就当成功。但
+            //   `startActivityAsUser` 的返回值是 **start result 码**，负数是错误
+            //   （-97 = START_NOT_VISIBLE、-94 = START_CANCELED…）。把它当成功，
+            //   表现就是"启动指令已发出，但游戏根本没起来"，而日志里一片正常。
+            //
+            //   MaaFwApp 的做法是 `if (ret < 0) fallback to am command`，照抄。
+            val code = (ret as? Number)?.toInt() ?: 0
+            if (code < 0) {
+                Log.w(TAG, "startActivityAsUser 返回错误码 $code，改用 am 兜底")
+                launchViaAm(intent, displayId)
+            } else {
+                true
+            }
         }.getOrElse {
             Log.e(TAG, "startActivityAsUser 反射调用失败", it)
-            false
+            launchViaAm(intent, displayId)
         }
     }
 
-    /** 最后兜底：走 am 命令（--display 实测不可靠，但总比什么都不做强）。 */
+    /**
+     * 最后兜底：走 `am start`。
+     *
+     * ## 绝对不能拼成 `sh -c "..."` 字符串
+     *
+     * intent URI 长这样：
+     * ```
+     * intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;component=com.foo/.Main;end
+     * ```
+     * 里面全是**分号**，而 `sh -c` 把分号当命令分隔符 —— 整条命令会被切成
+     * 七八条互相独立的语句，`am` 只收到半截 URI，必然失败。
+     *
+     * 正确做法是 `ProcessBuilder` 传**参数数组**，由内核直接 exec，
+     * 完全不经过 shell。MaaFwApp 的 `startViaAmCommand` 就是这么写的。
+     */
     private fun launchViaAm(intent: Intent, displayId: Int): Boolean = runCatching {
         val spec = intent.toUri(Intent.URI_INTENT_SCHEME)
-        val cmd = if (displayId >= 0) "am start --display $displayId $spec" else "am start $spec"
-        Log.i(TAG, "兜底命令：$cmd")
-        val p = ProcessBuilder("sh", "-c", cmd).redirectErrorStream(true).start()
+        val args = if (displayId >= 0) {
+            arrayOf("am", "start", "--display", displayId.toString(), spec)
+        } else {
+            arrayOf("am", "start", spec)
+        }
+        Log.i(TAG, "兜底命令：${args.joinToString(" ")}")
+
+        val p = ProcessBuilder(*args).redirectErrorStream(true).start()
         val out = p.inputStream.bufferedReader().use { it.readText() }
         p.waitFor()
         Log.i(TAG, "am 输出：${out.trim().take(300)}")
@@ -257,14 +304,37 @@ internal object DisplayAppLauncher {
     /**
      * 取 PackageManager。
      *
-     * 三级回退，因为 `app_process` 里不一定有 Application：
-     *  1. `AppGlobals.getInitialApplication()` —— Shizuku starter 建过 Application 时可用；
-     *  2. `ActivityThread.currentApplication()`；
-     *  3. **系统 Context 的 PM** —— `getLaunchIntentForPackage` 不需要按 uid 过滤包名，
-     *     所以拿到系统 PM 也够用。实测前两级在纯 `app_process` 里都是 null，
-     *     真正起作用的是这一级。
+     * ## 做法照抄 MaaFwApp（`ActivityUtils.startAppOnDisplay`）
+     *
+     * ```kotlin
+     * val pm = FakeContext.get().packageManager
+     * ```
+     *
+     * ## 为什么不能用 `ActivityThread.systemMain()`
+     *
+     * Android 16 真机日志给出了确凿证据：
+     *
+     * ```
+     * W/DisplayAppLauncher: 取系统 PackageManager 失败
+     * Caused by: java.lang.RuntimeException: Can't create handler inside thread
+     *   Thread[binder:29199_3,5,main] that has not called Looper.prepare()
+     *     at android.app.ActivityThread.systemMain(ActivityThread.java:9631)
+     * ```
+     *
+     * `systemMain()` 内部 `new ActivityThread.H()`，而 Handler 必须在有 Looper 的
+     * 线程上构造。本方法是从 AIDL 的 Binder 线程调进来的 —— 那些线程没有 Looper。
+     *
+     * 后果是整条链断在第一步：造不出 launch intent → `launchOnDisplay` 返回 false
+     * → 游戏从未启动 → 任务查不到（`getTaskDisplayId` 返回 -2）→ 搬移也无从谈起
+     * → 屏上没内容 → 0 帧。日志里后面那一长串失败**全是这一个异常的下游**。
+     *
+     * `FakeContext` 的父类是 [ShellContext]，而后者由 [SystemThreadWorkarounds]
+     * **手工装配** ActivityThread（初始化时在 Looper 线程上做一次），之后从任何
+     * 线程读系统 Context 都不再需要 Looper。
      */
     private fun packageManager(): android.content.pm.PackageManager? {
+        // 前两级在纯 app_process 里通常都是 null（initForAllUsers 没跑过），
+        // 留着只是为了在宿主进程里调用时能走快路径。
         for (getter in arrayOf("getInitialApplication", "currentApplication")) {
             val pm = runCatching {
                 val app = when (getter) {
@@ -283,22 +353,17 @@ internal object DisplayAppLauncher {
             }
         }
 
-        // 第三级：系统 Context。ActivityThread.systemMain() 需要 Looper，这里本线程已 prepare。
-        val systemPm = runCatching {
-            val activityThreadClass = Class.forName("android.app.ActivityThread")
-            val thread = activityThreadClass
-                .getDeclaredMethod("systemMain")
-                .apply { isAccessible = true }
-                .invoke(null)
-            val ctx = activityThreadClass
-                .getDeclaredMethod("getSystemContext")
-                .apply { isAccessible = true }
-                .invoke(thread) as? android.content.Context
-            ctx?.packageManager
-        }.onFailure { Log.w(TAG, "取系统 PackageManager 失败", it) }
+        // 正解：FakeContext 的 PM。它背后是手工装配过的系统 Context，不碰 Looper。
+        val fakePm = runCatching { FakeContext.get().packageManager }
+            .onFailure { Log.w(TAG, "从 FakeContext 取 PackageManager 失败", it) }
             .getOrNull()
-        if (systemPm != null) Log.i(TAG, "PackageManager 来自系统 Context")
-        return systemPm
+        if (fakePm != null) {
+            Log.i(TAG, "PackageManager 来自 FakeContext")
+            return fakePm
+        }
+
+        Log.e(TAG, "拿不到 PackageManager —— 无法为应用构造 launch intent")
+        return null
     }
 
     private fun activityManager(): Any? = runCatching {

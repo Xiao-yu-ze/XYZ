@@ -279,25 +279,52 @@ class VirtualDisplaySession(
         // —— `launchDisplayId` 在这条路径上被完全忽略。
         // 用户看到的就是：点一下，整个物理屏变成游戏在跑，几秒后消失。
         //
-        // 必须先 force-stop，保证接下来是全新启动，launchDisplayId 才起作用。
-        val stopped = runCatching { service.exec("am force-stop $packageName") }.isSuccess
-        Log.i(TAG, "force-stop $packageName -> $stopped")
-        update { it.copy(message = "已停止旧任务，准备在副屏重新启动…") }
-        delay(600)
+        // MaaFwApp 的做法更细：已在目标屏就跳过 force-stop（避免反复杀进程
+        // 导致应用永远停在启动阶段）。这里照抄。
+        val alreadyThere = service.getTaskDisplayId(packageName) == displayId
+        if (alreadyThere) {
+            Log.i(TAG, "$packageName 已在 display $displayId，跳过 force-stop")
+        } else {
+            // ⚠️ 不能用 runCatching{...}.isSuccess 判断成败：
+            //    exec() 内部已经包了 runCatching，永不抛异常，
+            //    isSuccess 恒为 true —— 之前的日志里 `-> true` 是假的。
+            //    要判断得看输出内容。
+            val output = runCatching { service.exec("am force-stop $packageName") }
+                .getOrDefault("")
+            Log.i(TAG, "force-stop $packageName 输出：${output.trim().take(200)}")
+            update { it.copy(message = "已停止旧任务，准备在副屏重新启动…") }
+
+            // 等它真的消失。固定 delay 不够 —— 进程退出是异步的，
+            // 600ms 在慢设备上常常不够，于是紧接着的 launch 又会复用旧 task。
+            var gone = false
+            for (i in 0 until FORCE_STOP_POLL_TIMES) {
+                delay(FORCE_STOP_POLL_INTERVAL_MS)
+                if (service.getTaskDisplayId(packageName) == NO_TASK) {
+                    gone = true
+                    Log.i(TAG, "第 ${i + 1} 次确认：$packageName 的任务已消失")
+                    break
+                }
+            }
+            if (!gone) Log.w(TAG, "force-stop 后任务仍在，继续尝试启动")
+        }
 
         val launched = service.launchAppOnDisplay(packageName, displayId)
         Log.i(TAG, "launchAppOnDisplay($packageName, $displayId) -> $launched")
         update { it.copy(message = "启动指令已发出（$launched），等待任务出现…") }
 
-        // 给系统时间把任务建起来。**命中就立刻退出**，不做无意义的重试。
+        // 给系统时间把任务建起来。**命中就立刻退出**。
+        //
+        // ⚠️ 之前写的是 `return@repeat` —— 那等价于 continue，不是 break。
+        //    于是即使第一次就命中，循环还会继续跑满 6 次、白等 3 秒，
+        //    而这 3 秒恰好是虚拟屏最需要尽快稳定的时刻。改用带 break 的 for。
         var onDisplay = false
-        repeat(LAUNCH_POLL_TIMES) { i ->
+        for (i in 0 until LAUNCH_POLL_TIMES) {
             delay(LAUNCH_POLL_INTERVAL_MS)
             val current = service.getTaskDisplayId(packageName)
             Log.i(TAG, "第 ${i + 1} 次轮询：$packageName 在 display $current（期望 $displayId）")
             if (current == displayId) {
                 onDisplay = true
-                return@repeat
+                break
             }
         }
 
@@ -495,7 +522,14 @@ class VirtualDisplaySession(
         /** 队列空时的让出时长。取到帧时不 sleep，所以这个值不影响帧率上限。 */
         const val IDLE_POLL_MS = 8L
         const val FRAME_WAIT_MS = 800L
-        const val LAUNCH_POLL_TIMES = 6
+        const val LAUNCH_POLL_TIMES = 10
         const val LAUNCH_POLL_INTERVAL_MS = 500L
+
+        /** force-stop 后等任务消失的轮询次数（每次 200ms）。 */
+        const val FORCE_STOP_POLL_TIMES = 15
+        const val FORCE_STOP_POLL_INTERVAL_MS = 200L
+
+        /** `getTaskDisplayId` 表示"该包没有任务"的返回值（与 DisplayTaskMover 一致）。 */
+        const val NO_TASK = -2
     }
 }
