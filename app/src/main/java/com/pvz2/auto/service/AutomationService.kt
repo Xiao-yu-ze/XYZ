@@ -128,12 +128,7 @@ class AutomationService : Service() {
                 launchLoop { runShizukuLoop() }
             }
 
-            ACTION_GRAB_FRAME -> scope.launch { grabOneFrame() }
-
-            ACTION_PROBE -> scope.launch { runProbe() }
-
-            // ★ 虚拟屏：**持有**一块屏直到用户停止。这是产品形态的入口，
-            //   与下面的 ACTION_VD_PROBE（一次性探测、跑完就释放）不同。
+            // ★ 虚拟屏：**持有**一块屏直到用户停止。这是产品形态的入口。
             ACTION_VD_START -> {
                 startForegroundCompat()
                 // 包名由界面传进来（渠道选择），这里不再有硬编码默认值 ——
@@ -164,23 +159,10 @@ class AutomationService : Service() {
                 }
             }
 
-            // 一次性探测（诊断用，保留）：建屏 + 等首帧 + 存 PNG，然后释放。
-            ACTION_VD_PROBE -> {
-                startForegroundCompat()
-                launchLoop { runVirtualDisplayProbe() }
-            }
-
-            // 方案 C：识别链验证。干跑（只识别不点）与实跑（会点击）分开两个入口，
-            // 避免误触 —— 第一次上真机必须走干跑。
-            ACTION_VERIFY_DRY -> {
-                startForegroundCompat()
-                launchLoop { withBootstrap { runVerifyChain(dryRun = true) } }
-            }
-
-            ACTION_VERIFY_RUN -> {
-                startForegroundCompat()
-                launchLoop { withBootstrap { runVerifyChain(dryRun = false) } }
-            }
+            // 抓帧 / 探针 / 建屏探针 / 验证链（干跑、实跑）五个诊断入口已删除。
+            // 它们都是排查早期问题的临时工具，问题解决后就没有用途了：
+            // 抓帧和建屏探针的功能被 ACTION_VD_START 覆盖，
+            // 验证链依赖的模板集早已不存在。留着只是死代码。
         }
         // 用 STICKY：虚拟屏挂在本服务上，服务被系统回收时屏会跟着没。
         // 重新创建后 onCreate 会重建 vdSession，但**不会**自动重新建屏 ——
@@ -342,40 +324,6 @@ class AutomationService : Service() {
         block()
     }
 
-    /**
-     * 方案 C：跑无尽挑战入口的**声明式识别链**（不做任何 Custom 动作）。
-     *
-     * 这条链覆盖模板匹配 / 多模板 / OCR 三种识别通道，用于回答
-     * 「识别层在真机上到底准不准」—— 这是决定要不要移植 MaaPVZ 完整引擎的前提。
-     */
-    private suspend fun runVerifyChain(dryRun: Boolean) {
-        if (!OpenCVLoader.initLocal()) {
-            fail("OpenCV 原生库加载失败")
-            return
-        }
-        val activeCapturer = capturer ?: return
-        val activeInjector = injector ?: return
-
-        val recognizer = Recognizer(this)
-        // OCR 加载失败不阻断：模板匹配那两条节点仍然会跑，只是 OCR 节点永远不命中。
-        val ocr = OcrEngine(this).also { it.load() }
-        recognizer.ocr = ocr
-
-        try {
-            BotState.setStatus(if (dryRun) "干跑中（不点击）" else "运行中（会点击）")
-            PipelineRunner(
-                context = this,
-                capturer = activeCapturer,
-                injector = activeInjector,
-                recognizer = recognizer,
-                dryRun = dryRun
-            ).run(VerifyChain.ENTRY)
-            BotState.setStatus("识别链走完（详见日志 PipelineRunner / NodeGraph）")
-        } finally {
-            runCatching { ocr.close() }
-            runCatching { recognizer.release() }
-        }
-    }
 
     /**
      * Loads the native OpenCV library and the 720p templates.
@@ -405,157 +353,7 @@ class AutomationService : Service() {
 
     // -------------------------------------------------------------- one-shot
 
-    /**
-     * 识别自检：抓一帧，逐个模板打分并写日志。
-     *
-     * 存在的意义是让识别层**可验证**：模板匹配会给出 0~1 的分数，
-     * 分数本身就是证据 —— 不需要"看"截图也能确认模板、缩放、ROI 是否正确。
-     * 纯只读，不点击任何东西。
-     */
-    private suspend fun runProbe() {
-        if (!OpenCVLoader.initLocal()) {
-            fail("OpenCV 原生库加载失败")
-            return
-        }
-        if (!ShizukuBridge.hasPermission()) {
-            fail("识别自检需要 Shizuku 权限（用来截图）")
-            return
-        }
 
-        shizukuClient.bind()
-        val service = shizukuClient.await()
-        if (service == null) {
-            fail("Shizuku UserService 未连接")
-            return
-        }
-
-        val recognizer = Recognizer(this)
-        try {
-            RecognitionProbe(this, ShizukuScreenCapturer(shizukuClient), recognizer)
-                .probeAndLog(ProbeTargets.ALL)
-            BotState.setStatus("识别自检完成，见日志 RecognitionProbe")
-        } finally {
-            recognizer.release()
-        }
-    }
-
-    /**
-     * 虚拟屏探测 · 第一步：只建屏 + 拿首帧，**不搬 App、不注入**。
-     *
-     * 为什么不一口气做完：虚拟屏最讨厌的失败方式不是「建不出来」，而是
-     * 「建出来了，但没有任何内容渲染进来」。这两种情况的排查方向完全相反，
-     * 所以先用最小动作把两件事分开回答：
-     *
-     *   1. **displayId 拿到了吗** —— 拿到了说明权限与 flags 是对的（shell 身份 +
-     *      PUBLIC + 不带 AUTO_MIRROR + 版本对应的 TRUSTED）。
-     *   2. **3 秒内有帧吗** —— 有帧说明 Surface 通路真的打通了（GPU 出帧 → ImageReader）。
-     *      注意：**空屏没有内容渲染时就是不出帧，这是预期行为，不是失败。**
-     *
-     * 拿到帧就存一张 PNG 到应用私有目录，让你能用眼睛直接看这块屏渲染了什么 ——
-     * 比任何日志都直观。
-     */
-    private suspend fun runVirtualDisplayProbe() {
-        if (!OpenCVLoader.initLocal()) {
-            fail("OpenCV 原生库加载失败")
-            return
-        }
-
-        // flags 按系统版本算。算错一位就会 SecurityException 或游戏挂不上窗口，
-        // 所以这里把拆解后的名字也打进状态栏，真机排查时一眼能看到缺哪一位。
-        val flags = VirtualDisplayFlags.forSdk(Build.VERSION.SDK_INT)
-        BotState.setStatus("建虚拟屏 ${VD_WIDTH}x$VD_HEIGHT flags=${VirtualDisplayFlags.describe(flags)}")
-
-        val surface = VirtualDisplaySurface(VD_WIDTH, VD_HEIGHT)
-        var inProcessDisplay: Any? = null
-        var shizukuService: IPvz2Service? = null
-
-        try {
-            // ① 先在**本进程**里建。
-            //
-            // 这么做的理由：createVirtualDisplay 会用「调用者包的 getPackageName()」做
-            // `packageName must match the calling uid` 校验。本进程的包就是
-            // com.pvz2.auto，天然匹配，所以这条路不依赖 Shizuku 的运行身份。
-            // 而这块屏带了 PUBLIC 位，是 public 的，别的 uid（游戏）照样能挂窗口 ——
-            // **建屏者是谁不影响谁能用这块屏**。
-            val displayId = runCatching {
-                val created = VirtualDisplayCreator.create(
-                    callerContext = this,
-                    name = VD_NAME,
-                    width = VD_WIDTH,
-                    height = VD_HEIGHT,
-                    dpi = VD_DPI,
-                    surface = surface.surface,
-                    flags = flags
-                )
-                inProcessDisplay = created.virtualDisplay
-                created.displayId
-            }.onFailure {
-                // 常见原因：隐藏 API 限制（App 进程里反射 @hide 方法可能被拦）。
-                // 这不是终点，下面还有 shell 那条路。
-                Log.w(TAG, "本进程建屏失败，改用 shell 身份再试", it)
-            }.getOrDefault(-1)
-
-            val actualDisplayId: Int
-            if (displayId > 0) {
-                Log.i(TAG, "本进程建屏成功 displayId=$displayId")
-                actualDisplayId = displayId
-            } else {
-                // ② 退回 shell 身份（Shizuku UserService）。
-                if (!ShizukuBridge.hasPermission()) {
-                    fail("本进程建屏失败，且没有 Shizuku 权限可以退路")
-                    return
-                }
-                shizukuClient.bind()
-                val service = shizukuClient.await()
-                if (service == null) {
-                    fail("本进程建屏失败；Shizuku UserService 也未连接：" +
-                        (shizukuClient.lastError ?: "超时"))
-                    return
-                }
-                shizukuService = service
-                val shellDisplayId = service.createVirtualDisplay(
-                    VD_NAME, VD_WIDTH, VD_HEIGHT, VD_DPI, surface.surface, flags
-                )
-                if (shellDisplayId <= 0) {
-                    fail(
-                        "两条路都建不出虚拟屏（本进程失败，shell 返回 " +
-                            "$shellDisplayId）。原因见日志 Pvz2UserService：若是 " +
-                            "packageName must match the calling uid，说明 Shizuku 以 root " +
-                            "身份运行，需改用 ADB/无线调试方式启动。"
-                    )
-                    return
-                }
-                Log.i(TAG, "shell 身份建屏成功 displayId=$shellDisplayId")
-                actualDisplayId = shellDisplayId
-            }
-
-            BotState.setStatus("虚拟屏 displayId=$actualDisplayId，等首帧…")
-            val frame = surface.awaitFrame(VD_FIRST_FRAME_TIMEOUT_MS)
-            if (frame == null) {
-                fail(
-                    "虚拟屏已建（displayId=$actualDisplayId），但 ${VD_FIRST_FRAME_TIMEOUT_MS}ms 内无帧。" +
-                        "空屏没有内容渲染时就是这样，属预期 —— 把游戏搬上来之后才会有帧"
-                )
-                return
-            }
-
-            try {
-                val saved = savePng(frame, "vd_$actualDisplayId")
-                BotState.setStatus(
-                    "虚拟屏首帧 ${frame.width()}x${frame.height()}" +
-                        (saved?.let { "，已存：$it" } ?: "，但保存失败")
-                )
-            } finally {
-                frame.release()
-            }
-        } finally {
-            // 无论成败都要收干净：虚拟屏不释放会一直占着一个 display id，
-            // 反复探测几次之后系统就不肯再建了。
-            runCatching { shizukuService?.releaseVirtualDisplay() }
-            VirtualDisplayCreator.release(inProcessDisplay)
-            surface.close()
-        }
-    }
 
     /** 存一张 PNG 到 `<外部私有目录>/shots/`。返回绝对路径，失败返回 null。 */
     private fun savePng(frame: org.opencv.core.Mat, namePrefix: String): String? {
@@ -578,52 +376,6 @@ class AutomationService : Service() {
     }
 
     /** Saves a single frame so the user can crop templates out of it. */
-    private suspend fun grabOneFrame() {
-        if (!OpenCVLoader.initLocal()) {
-            fail("OpenCV 原生库加载失败")
-            return
-        }
-        if (!ShizukuBridge.hasPermission()) {
-            fail("抓取截图需要 Shizuku 权限")
-            return
-        }
-
-        shizukuClient.bind()
-        val service = shizukuClient.await()
-        if (service == null) {
-            fail("Shizuku UserService 未连接")
-            return
-        }
-
-        val frame = ShizukuScreenCapturer(shizukuClient).capture()
-        if (frame == null) {
-            fail("截图失败")
-            return
-        }
-
-        try {
-            val bitmap = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(frame, bitmap)
-
-            val baseDir = getExternalFilesDir(null)
-            if (baseDir == null) {
-                bitmap.recycle()
-                fail("没有可用的外部存储目录")
-                return
-            }
-            val directory = File(baseDir, "shots").apply { mkdirs() }
-            val file = File(directory, "shot_${System.currentTimeMillis()}.png")
-            FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            bitmap.recycle()
-
-            Log.i(TAG, "saved $file")
-            BotState.setStatus("已保存：${file.absolutePath}")
-        } finally {
-            frame.release()
-        }
-    }
-
-    // -------------------------------------------------------------- plumbing
 
     private fun fail(message: String) {
         Log.w(TAG, "cannot start: $message")
@@ -682,11 +434,6 @@ class AutomationService : Service() {
         private const val NOTIFICATION_ID = 1
 
         private const val ACTION_START_SHIZUKU = "com.pvz2.auto.START_SHIZUKU"
-        private const val ACTION_GRAB_FRAME = "com.pvz2.auto.GRAB_FRAME"
-        private const val ACTION_PROBE = "com.pvz2.auto.PROBE"
-        private const val ACTION_VERIFY_DRY = "com.pvz2.auto.VERIFY_DRY"
-        private const val ACTION_VERIFY_RUN = "com.pvz2.auto.VERIFY_RUN"
-        private const val ACTION_VD_PROBE = "com.pvz2.auto.VD_PROBE"
 
         /** 持有式虚拟屏：start 之后屏一直在，直到 stop。 */
         private const val ACTION_VD_START = "com.pvz2.auto.VD_START"
@@ -715,32 +462,9 @@ class AutomationService : Service() {
             ContextCompat.startForegroundService(context, intent(context, ACTION_START_SHIZUKU))
         }
 
-        fun grabFrame(context: Context) {
-            context.startService(intent(context, ACTION_GRAB_FRAME))
-        }
-
-        /**
-         * 识别自检：抓一帧，把每个模板的匹配分数打进日志。
-         * 开发期用来验证「模板 + 缩放 + ROI + 匹配算法」这条链路，不做任何点击。
-         *
-         * 用 startService 而不是 startForegroundService：这是一次性的只读操作，
-         * 不需要常驻前台服务。用后者会在 app 处于后台（游戏在前台）时抛
-         * ForegroundServiceStartNotAllowedException。
-         */
-        fun probe(context: Context) {
-            context.startService(intent(context, ACTION_PROBE))
-        }
-
-        /**
-         * 虚拟屏探测：建 720p 虚拟屏、等首帧、存一张 PNG。
-         *
-         * 用 `startForegroundService` 而不是 `startService`：这条路径要绑 UserService
-         * 并持有 ImageReader，属于"要活一会儿"的操作；而且 App 在后台时
-         * （游戏在前台）用 startService 会直接抛 ForegroundServiceStartNotAllowedException。
-         */
-        fun vdProbe(context: Context) {
-            ContextCompat.startForegroundService(context, intent(context, ACTION_VD_PROBE))
-        }
+        // grabFrame / probe / vdProbe / verifyDryRun / verifyRun 已删除。
+        // 它们对应的 action 分支和实现方法也一并删了 —— 都是排查早期问题的
+        // 临时工具，问题解决后没有调用方，留着只是死代码。
 
         /**
          * 在虚拟屏上启动游戏（持有式：屏一直在，直到 [vdStop]）。
@@ -757,22 +481,6 @@ class AutomationService : Service() {
         /** 停止虚拟屏：释放 display、游戏回到主屏。 */
         fun vdStop(context: Context) {
             ContextCompat.startForegroundService(context, intent(context, ACTION_VD_STOP))
-        }
-
-        /**
-         * 方案 C 干跑：跑识别链但**不点击**，把「本该点哪里」打进日志。
-         * 第一次在真机验证 pipeline 时用这个。
-         *
-         * 走 startForegroundService：这条路径要绑定 UserService 并持续截图，
-         * 是长时间操作，不是一次性只读操作，必须有前台服务保活。
-         */
-        fun verifyDryRun(context: Context) {
-            ContextCompat.startForegroundService(context, intent(context, ACTION_VERIFY_DRY))
-        }
-
-        /** 方案 C 实跑：识别链会**真的点击**。确认干跑日志无误后再用。 */
-        fun verifyRun(context: Context) {
-            ContextCompat.startForegroundService(context, intent(context, ACTION_VERIFY_RUN))
         }
 
         /** `stopService` is always permitted, unlike starting a service from the background. */

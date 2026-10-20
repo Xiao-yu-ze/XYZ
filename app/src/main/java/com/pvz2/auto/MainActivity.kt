@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -43,6 +44,10 @@ import rikka.shizuku.Shizuku
  * 没有 MediaProjection 授权流程了 —— 降级方案已移除，只剩 Shizuku 一条路。
  */
 class MainActivity : AppCompatActivity() {
+
+    private companion object {
+        const val TAG = "MainActivity"
+    }
 
     private lateinit var shizukuStateView: TextView
     private lateinit var statusView: TextView
@@ -119,20 +124,13 @@ class MainActivity : AppCompatActivity() {
             exportLogs()
         }
 
-        findViewById<MaterialButton>(R.id.btnGrabFrame).setOnClickListener {
-            AutomationService.grabFrame(this)
-        }
-        findViewById<MaterialButton>(R.id.btnProbe).setOnClickListener {
-            AutomationService.probe(this)
-        }
-        findViewById<MaterialButton>(R.id.btnVerifyDry).setOnClickListener {
-            AutomationService.verifyDryRun(this)
-        }
-        findViewById<MaterialButton>(R.id.btnVerifyRun).setOnClickListener {
-            AutomationService.verifyRun(this)
-        }
-        findViewById<MaterialButton>(R.id.btnVdProbe).setOnClickListener {
-            AutomationService.vdProbe(this)
+        // 只保留注入自检。
+        //
+        // 抓帧 / 探针 / 验证链那几个临时工具已经删掉：抓帧和建屏探针的功能
+        // 被主界面的启动按钮覆盖，验证链依赖的模板集也早已不存在。
+        // 留着只会让"该点哪个"变成一道谜题。
+        findViewById<MaterialButton>(R.id.btnTestTap).setOnClickListener {
+            testVirtualDisplayTap()
         }
 
         // 调试工具默认折叠：它不是主流程，常驻展开会把主路径挤出首屏。
@@ -574,6 +572,77 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<TextView>(R.id.tvProgress)
             .text = getString(R.string.step_progress, done.count { it }, done.size)
+    }
+
+    /**
+     * 在虚拟屏正中注入一次点击，并把系统是否接受**直接显示在界面上**。
+     *
+     * ## 为什么要这个按钮
+     *
+     * "游戏点不动"至少有四种原因，而它们在日志里长得差不多：
+     *  1. 事件打到了错误的 display（我们之前就是这样，写死 0）；
+     *  2. 事件发对了，但那块屏上没有可触摸窗口；
+     *  3. 识别没命中，压根没触发点击；
+     *  4. 脚本没跑。
+     *
+     * 这个按钮**绕开 3 和 4**，只测 1 和 2：不依赖识别、不依赖脚本，
+     * 直接用 AIDL 的 `tapOnDisplay` 往会话当前的 displayId 发一次点击。
+     */
+    private fun testVirtualDisplayTap() {
+        val resultView = findViewById<TextView>(R.id.tvTestTapResult)
+        val displayId = VirtualDisplaySession.sharedState.value.displayId
+
+        if (displayId <= 0) {
+            resultView.setTextColor(ContextCompat.getColor(this, R.color.state_bad))
+            resultView.text = getString(R.string.test_tap_no_display)
+            return
+        }
+
+        resultView.setTextColor(ContextCompat.getColor(this, R.color.ink_muted))
+        resultView.text = getString(R.string.test_tap_running, displayId)
+
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                val client = ShizukuUserServiceClient(applicationContext)
+                try {
+                    client.bind()
+                    val service = client.await()
+                        ?: return@withContext "ERROR: Shizuku 服务未连接（${client.lastError ?: "超时"}）"
+
+                    // 屏幕正中。虚拟屏是 1280×720，中心 (640, 360)。
+                    // 按住 80ms —— 低于一帧的点击在低帧率下会被丢。
+                    val x = 640
+                    val y = 360
+                    val ok = runCatching { service.tapOnDisplay(displayId, x, y, 80) }
+                        .onFailure { Log.w(TAG, "测试点击抛异常", it) }
+                        .getOrDefault(false)
+
+                    val info = runCatching { service.describeDisplay(displayId) }
+                        .getOrDefault("")
+
+                    if (ok) {
+                        "✓ 系统接受了这次点击（display=$displayId, $x,$y）\n" +
+                            "说明注入通道是通的；若游戏仍无反应，问题在识别/脚本层。\n$info"
+                    } else {
+                        "✗ 系统拒绝了这次点击（display=$displayId, $x,$y）\n" +
+                            "常见原因：游戏窗口不在这块屏上 / 没有可触摸窗口 /\n" +
+                            "窗口设了 FLAG_NOT_TOUCHABLE。\n$info"
+                    }
+                } catch (t: Throwable) {
+                    "ERROR: ${t.message}"
+                } finally {
+                    runCatching { client.unbind(remove = false) }
+                }
+            }
+
+            resultView.text = text
+            resultView.setTextColor(
+                ContextCompat.getColor(
+                    this@MainActivity,
+                    if (text.startsWith("✓")) R.color.state_ok else R.color.state_bad
+                )
+            )
+        }
     }
 
     /** Android 13 起通知权限才需要单独申请；更低版本视为已授予。 */

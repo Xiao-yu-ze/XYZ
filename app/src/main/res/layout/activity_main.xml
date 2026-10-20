@@ -389,55 +389,32 @@
             android:orientation="vertical"
             android:visibility="gone">
 
+            <!-- 这里曾经堆了 5 个按钮：验证链（dry/run）、探针、抓帧、建屏探针。
+                 它们都是排查早期问题的临时工具，问题解决后就没有用途了 ——
+                 抓帧和建屏探针的功能已经被主界面的启动按钮覆盖，
+                 验证链依赖的模板集也早已不存在。留着只会让"该点哪个"变成一道谜题。
+
+                 现在只保留一个：注入自检。它仍然是**唯一**能回答
+                 "事件到底能不能进到虚拟屏"的办法，其它工具都做不到。 -->
+
+            <!-- 注入自检：在虚拟屏上点一下屏幕中心，并直接显示系统是否接受。
+                 不经过识别、不经过脚本 —— 只验证注入通道本身。 -->
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnVerifyDry"
+                android:id="@+id/btnTestTap"
                 style="@style/AppButton.Outline"
                 android:layout_marginTop="4dp"
-                android:text="@string/btn_verify_dry" />
+                android:text="@string/btn_test_tap" />
+
+            <TextView
+                android:id="@+id/tvTestTapResult"
+                style="@style/Text.Hint"
+                android:layout_marginTop="6dp"
+                android:text="" />
 
             <TextView
                 style="@style/Text.Hint"
-                android:layout_marginTop="6dp"
-                android:text="@string/hint_verify" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnVerifyRun"
-                style="@style/AppButton.Outline"
-                android:layout_marginTop="4dp"
-                android:text="@string/btn_verify_run" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnProbe"
-                style="@style/AppButton.Outline"
-                android:layout_marginTop="8dp"
-                android:text="@string/btn_probe" />
-
-            <TextView
-                style="@style/Text.Hint"
-                android:layout_marginTop="6dp"
-                android:text="@string/hint_probe" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnGrabFrame"
-                style="@style/AppButton.Outline"
-                android:layout_marginTop="8dp"
-                android:text="@string/btn_grab_frame" />
-
-            <TextView
-                style="@style/Text.Hint"
-                android:layout_marginTop="6dp"
-                android:text="@string/hint_grab_frame" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnVdProbe"
-                style="@style/AppButton.Outline"
-                android:layout_marginTop="8dp"
-                android:text="@string/btn_vd_probe" />
-
-            <TextView
-                style="@style/Text.Hint"
-                android:layout_marginTop="6dp"
-                android:text="@string/hint_vd_probe" />
+                android:layout_marginTop="2dp"
+                android:text="@string/hint_test_tap" />
         </LinearLayout>
 
     </LinearLayout>

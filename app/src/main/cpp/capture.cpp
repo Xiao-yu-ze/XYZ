@@ -82,13 +82,21 @@ void ReleaseLocked() {
     if (g_capturer->reader != nullptr) {
         // 先摘 listener 再删 reader，否则回调可能打到已释放的对象上。
         AImageReader_setImageListener(g_capturer->reader, nullptr);
+        // ★ 只删 reader，**不要再单独 release window**。
+        //
+        //   `AImageReader_getWindow` 返回的那块 ANativeWindow 归 reader 所有：
+        //   reader 销毁时它自己会释放掉。之前我"推断"引用计数 +1、
+        //   多补了一句 ANativeWindow_release，结果就是**双重释放** ——
+        //   真机上直接 native crash：
+        //
+        //     F/DEBUG #08 pc ... Pvz2UserService.releaseCapturer+16
+        //     F/DEBUG #10 pc ... Pvz2UserService.releaseVirtualDisplay+8
+        //
+        //   这是凭推断改 native 代码的代价。ANativeWindow_toSurface 那边
+        //   拿到的 Java Surface 也是同一个 owner，Java 侧 release() 即可。
         AImageReader_delete(g_capturer->reader);
-    }
-    if (g_capturer->window != nullptr) {
-        // AImageReader_getWindow 是**引用计数 +1** 的，删掉 reader 不会替你
-        // 释放这个窗口引用。之前一直漏了这一句，每建/释放一轮漏一个引用，
-        // 底层 GraphicBuffer 也归还不了。
-        ANativeWindow_release(g_capturer->window);
+        g_capturer->reader = nullptr;
+        g_capturer->window = nullptr;
     }
     delete g_capturer;
     g_capturer = nullptr;
