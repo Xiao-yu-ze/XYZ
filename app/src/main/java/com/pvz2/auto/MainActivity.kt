@@ -20,6 +20,13 @@ import com.pvz2.auto.shizuku.ShizukuUserServiceClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
+import android.widget.EditText
+import android.widget.Spinner
+import androidx.core.widget.doAfterTextChanged
+import com.pvz2.auto.core.ChannelPrefs
+import com.pvz2.auto.core.Pvz2Channels
 import com.pvz2.auto.service.AutomationService
 import com.pvz2.auto.service.VirtualDisplaySession
 import com.pvz2.auto.shizuku.ShizukuBridge
@@ -88,11 +95,20 @@ class MainActivity : AppCompatActivity() {
 
         // 虚拟屏：主功能区的两个按钮
         findViewById<MaterialButton>(R.id.btnVdStart).setOnClickListener {
-            AutomationService.vdStart(this)
+            val pkg = ChannelPrefs.resolvePackage(this)
+            if (pkg.isNullOrBlank()) {
+                // 没有可用包名时别静默失败 —— 直接告诉用户该做什么。
+                findViewById<TextView>(R.id.tvChannelHint).text =
+                    getString(R.string.channel_not_found)
+            } else {
+                AutomationService.vdStart(this, pkg)
+            }
         }
         findViewById<MaterialButton>(R.id.btnVdStop).setOnClickListener {
             AutomationService.vdStop(this)
         }
+
+        setupChannelPicker()
 
         // 导出日志：把关键日志存成文件并弹分享。
         // 真机上没有电脑连着的时候，这是唯一能把现场发给别人的办法。
@@ -131,6 +147,89 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+    /**
+     * 渠道选择器。
+     *
+     * 三条行为：
+     *  ① 进界面时**自动识别**设备上已装的渠道（包名匹配），认出来就选上；
+     *  ② 用户手动换渠道 → 记住；
+     *  ③ 选「自定义包名…」→ 显示输入框，内容也记住。
+     *
+     * 为什么需要它：不同渠道的包名不同，选错就启动不了游戏，
+     * 而之前代码里硬编码的是 OPPO 渠道的包名。
+     */
+    private fun setupChannelPicker() {
+        val spinner = findViewById<Spinner>(R.id.spChannel)
+        val customInput = findViewById<EditText>(R.id.etCustomPackage)
+        val hint = findViewById<TextView>(R.id.tvChannelHint)
+
+        // 选项 = 全部渠道 + 末尾的「自定义包名…」
+        val labels = Pvz2Channels.ALL.map { "${it.label}（${it.packageName}）" } +
+            getString(R.string.channel_custom)
+        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
+
+        val customIndex = Pvz2Channels.ALL.size
+
+        val savedKey = ChannelPrefs.savedChannelKey(this)
+        val savedCustom = ChannelPrefs.savedCustomPackage(this)
+        val detected = Pvz2Channels.detect(installedPackages())
+
+        val initialIndex = when {
+            savedCustom.isNotEmpty() -> customIndex
+            savedKey != null -> Pvz2Channels.ALL.indexOfFirst { it.key == savedKey }.takeIf { it >= 0 } ?: 0
+            detected != null -> Pvz2Channels.ALL.indexOf(detected)
+            else -> Pvz2Channels.ALL.indexOf(Pvz2Channels.DEFAULT)
+        }
+        spinner.setSelection(initialIndex)
+
+        if (savedCustom.isNotEmpty()) {
+            customInput.setText(savedCustom)
+            customInput.visibility = View.VISIBLE
+        }
+        when {
+            savedKey == null && savedCustom.isEmpty() && detected != null ->
+                hint.text = getString(R.string.channel_detected, detected.label, detected.packageName)
+
+            detected == null && savedCustom.isEmpty() ->
+                hint.text = getString(R.string.channel_not_found)
+        }
+
+        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (position == customIndex) {
+                    customInput.visibility = View.VISIBLE
+                    hint.text = getString(R.string.hint_custom_package)
+                } else {
+                    customInput.visibility = View.GONE
+                    val channel = Pvz2Channels.ALL[position]
+                    ChannelPrefs.saveChannel(this@MainActivity, channel.key)
+                    // 选了具体渠道就清掉自定义包名，否则它会一直优先生效。
+                    ChannelPrefs.saveCustomPackage(this@MainActivity, "")
+                    hint.text = getString(R.string.channel_picked, channel.label, channel.packageName)
+                }
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+
+        customInput.doAfterTextChanged { text ->
+            val value = text?.toString()?.trim().orEmpty()
+            if (value.isEmpty()) return@doAfterTextChanged
+            // 只做格式校验，不要求已安装 —— 用户可能在另一台设备上装好了。
+            if (value.matches(Regex("[A-Za-z0-9._]+"))) {
+                ChannelPrefs.saveCustomPackage(this, value)
+                hint.text = getString(R.string.channel_picked, "自定义", value)
+            } else {
+                hint.text = getString(R.string.channel_custom_invalid)
+            }
+        }
+    }
+
+    /** 设备上已安装的包名。用于自动认渠道。 */
+    private fun installedPackages(): Set<String> = runCatching {
+        packageManager.getInstalledPackages(0).map { it.packageName }.toSet()
+    }.getOrDefault(emptySet())
 
     /**
      * 把虚拟屏状态渲染到界面。

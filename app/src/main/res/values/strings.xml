@@ -24,6 +24,13 @@
     <string name="btn_allow_notifications">授予通知权限</string>
 
     <!-- ==================== 主界面 · 虚拟屏 ==================== -->
+    <string name="label_channel">渠道</string>
+    <string name="hint_custom_package">输入包名，例如 com.popcap.pvz2cthdop</string>
+    <string name="channel_custom">自定义包名…</string>
+    <string name="channel_detected">已自动识别：%1$s（%2$s）</string>
+    <string name="channel_not_found">没有在设备上找到任何已知渠道的游戏，请手动选择或输入包名。</string>
+    <string name="channel_picked">将启动：%1$s（%2$s）</string>
+    <string name="channel_custom_invalid">包名不能为空，且只能包含字母、数字、点和下划线。</string>
     <string name="btn_vd_start">在虚拟屏启动游戏</string>
     <string name="btn_vd_stop">停止并释放</string>
     <string name="hint_virtual_display">建一块 1280×720 的虚拟屏，把游戏搬到里面运行。游戏不会占用你的物理屏幕，你在本界面就能看到它的画面。</string>

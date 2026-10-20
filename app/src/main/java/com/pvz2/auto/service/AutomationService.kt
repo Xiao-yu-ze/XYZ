@@ -136,8 +136,14 @@ class AutomationService : Service() {
             //   与下面的 ACTION_VD_PROBE（一次性探测、跑完就释放）不同。
             ACTION_VD_START -> {
                 startForegroundCompat()
-                val pkg = intent.getStringExtra(EXTRA_TARGET_PACKAGE) ?: DEFAULT_TARGET_PACKAGE
-                scope.launch { vdSession.start(pkg) }
+                // 包名由界面传进来（渠道选择），这里不再有硬编码默认值 ——
+                // 硬编码过 OPPO 渠道的包名，用户装别的渠道就启动不了。
+                val pkg = intent.getStringExtra(EXTRA_TARGET_PACKAGE)
+                if (pkg.isNullOrBlank()) {
+                    BotState.setStatus("没有指定游戏包名")
+                } else {
+                    scope.launch { vdSession.start(pkg) }
+                }
             }
 
             ACTION_VD_STOP -> {
@@ -640,13 +646,10 @@ class AutomationService : Service() {
         private const val ACTION_VD_STOP = "com.pvz2.auto.VD_STOP"
         private const val EXTRA_TARGET_PACKAGE = "target_package"
 
-        /**
-         * 默认搬到副屏的应用（PvZ2 中文版）。
-         *
-         * 硬编码是有意的：本项目的目标就是这一个游戏，多一层"选择应用"的界面
-         * 只会增加噪声。将来要支持别的游戏，从界面传 extra 覆盖即可。
-         */
-        const val DEFAULT_TARGET_PACKAGE = "com.popcap.pvz2cthdop"
+        // 这里**不再**有默认包名。
+        //
+        // 曾经硬编码 com.popcap.pvz2cthdop（OPPO 渠道），结果用户装的是别的渠道时
+        // 根本启动不了游戏。现在包名一律由界面（渠道选择）传进来。
 
         /** 虚拟屏参数：720p @ 240dpi，与 MaaFwApp 的默认档一致。 */
         private const val VD_NAME = "pvz2-virtual"
@@ -698,9 +701,9 @@ class AutomationService : Service() {
          * 用 `startForegroundService`：屏必须挂在前台服务的生命周期上，
          * 否则服务被系统回收时屏就没了。而且界面在后台调用时也只有这条路径合法。
          */
-        fun vdStart(context: Context, targetPackage: String? = null) {
+        fun vdStart(context: Context, targetPackage: String) {
             val i = intent(context, ACTION_VD_START)
-            if (targetPackage != null) i.putExtra(EXTRA_TARGET_PACKAGE, targetPackage)
+            i.putExtra(EXTRA_TARGET_PACKAGE, targetPackage)
             ContextCompat.startForegroundService(context, i)
         }
 

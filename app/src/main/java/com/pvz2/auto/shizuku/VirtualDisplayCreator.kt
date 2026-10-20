@@ -143,25 +143,57 @@ internal object VirtualDisplayCreator {
     }
 
     /**
-     * 生成 flags 候选列表，从"最全"到"最简"。
+     * 生成 flags 候选列表，按成功率从高到低排。
      *
-     * 降级逻辑：先试额外位（OWN_FOCUS / TRUSTED），再逐个去掉。
-     * 这样老的 ROM（比如 Android 12）会在第一位或第二位就成功，
-     * 新的 ROM 则能用上全部特性。
+     * ## `OWN_CONTENT_ONLY` 必须保留（这条是 Android 16 真机日志证明的）
+     *
+     * 曾经以为「去掉 OWN_CONTENT_ONLY 能让 PUBLIC 生效」，于是把它排到了候选首位。
+     * 真机上的后果是 `DisplayManagerService` 打了这两行：
+     *
+     * ```
+     * Public virtual displays are auto mirror by default,
+     *   hence adding VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR.
+     * Auto mirror displays must be in the default display group,
+     *   hence ignoring VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP.
+     * ```
+     *
+     * 也就是说：**没有 OWN_CONTENT_ONLY，PUBLIC 屏会被自动加上 AUTO_MIRROR，
+     * 变成一块"镜像屏"**，被塞进默认 display group。这种屏不能承载 Activity ——
+     * 应用启动不上去，`launchDisplayId` 完全不起作用。
+     *
+     * AOSP 里正是 `OWN_CONTENT_ONLY` 负责清掉 `AUTO_MIRROR`：
+     * ```java
+     * if ((flags & FLAG_OWN_CONTENT_ONLY) != 0) flags &= ~FLAG_AUTO_MIRROR;
+     * ```
+     *
+     * ## 顺带纠正一个更早的错误判断
+     *
+     * 我曾从「`DisplayDeviceInfo` 里没有 FLAG_PUBLIC」推断出「PUBLIC 被抹掉了」。
+     * 那是错的：`DisplayDeviceInfo` **根本没有 FLAG_PUBLIC 这个标志**，
+     * 只有反向的 `FLAG_PRIVATE`。缺 PUBLIC 表现为「没有 FLAG_PRIVATE」，
+     * 而不是「少了某一行」。我一直在一个不存在的字段上找证据。
+     *
+     * ## 候选顺序
+     *
+     * 1. 带 OWN_CONTENT_ONLY + TRUSTED + OWN_FOCUS —— 真机上的正解
+     * 2. 带 OWN_CONTENT_ONLY + OWN_FOCUS —— 没有 ADD_TRUSTED_DISPLAY 时（如 MuMu）
+     * 3. 带 OWN_CONTENT_ONLY —— 最简可用
+     * 4/5. 去掉 OWN_CONTENT_ONLY —— **只在前面全失败时兜底**，
+     *      能建出屏但会是镜像屏，应用挂不上去
      */
     private fun flagCandidates(baseFlags: Int): List<Int> {
         val ownContent = VirtualDisplayFlags.OWN_CONTENT_ONLY
         val ownFocus = VirtualDisplayFlags.OWN_FOCUS
         val trusted = VirtualDisplayFlags.TRUSTED
-        // 把 OWN_CONTENT_ONLY 摘掉：实测它会让系统抹掉 FLAG_PUBLIC，
-        // 于是非 owner uid（游戏）访问不到这块屏 —— 窗口挂不上、
-        // IME 报 untrusted、注入被丢，全是同一个根因。
         val withoutOwnContent = baseFlags and ownContent.inv()
         return listOf(
-            withoutOwnContent or trusted or ownFocus,
-            withoutOwnContent or ownFocus,
+            // 正解：既是 trusted，又不是镜像屏
             baseFlags or trusted or ownFocus,
+            baseFlags or ownFocus,
             baseFlags,
+            // 兜底：能建屏（但会变成镜像屏，应用挂不上）
+            withoutOwnContent or trusted or ownFocus,
+            withoutOwnContent,
         ).distinct()
     }
 

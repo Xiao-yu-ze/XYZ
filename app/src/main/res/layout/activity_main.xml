@@ -178,6 +178,44 @@
             style="@style/Text.Hint"
             android:text="@string/hint_virtual_display" />
 
+        <!-- 渠道选择：不同渠道包名不同，选错了根本启动不了游戏。
+             默认会从已安装列表里自动识别，认不出来才需要手动选。 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                style="@style/Text.Body"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/label_channel" />
+
+            <Spinner
+                android:id="@+id/spChannel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+        <EditText
+            android:id="@+id/etCustomPackage"
+            style="@style/Text.Body"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/hint_custom_package"
+            android:inputType="text"
+            android:singleLine="true"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvChannelHint"
+            style="@style/Text.Hint"
+            android:text="" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

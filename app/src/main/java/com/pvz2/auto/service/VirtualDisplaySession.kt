@@ -397,15 +397,36 @@ class VirtualDisplaySession(
         return hash
     }
 
-    /** 停止：先停轮询，再释放屏（顺序反了会让画面线程读到已释放的 buffer）。 */
+    /**
+     * 停止：先停轮询，再释放屏。
+     *
+     * ## 不能把诊断信息一起清掉
+     *
+     * 之前这里直接造一个 `State(message = "已停止")` 全新对象 ——
+     * buildReport / displayId / displayTrusted / history 全部归零。
+     * 用户建好屏、点停止、再导出日志，看到的就是
+     * 「建屏是否成功: 否」「没有事件记录」，把真正发生的成功覆盖掉了。
+     *
+     * 诊断信息应当**保留到下一次建屏**，而不是跟随运行状态重置。
+     */
     fun stop() {
         frameJob?.cancel()
         frameJob = null
         cleanup()
-        update {
-            State(message = "已停止", diagnostics = "")
-        }
-        Log.i(TAG, "虚拟屏会话已停止")
+
+        val prev = _state.value
+        val tail = if (prev.displayId > 0) "（上次用过 displayId=${prev.displayId}）" else ""
+        appendHistory("已停止$tail")
+
+        val next = _state.value.copy(
+            running = false,
+            message = "已停止$tail",
+            diagnostics = "",
+            history = eventLog.toList(),
+        )
+        _state.value = next
+        shared.value = next
+        Log.i(TAG, "虚拟屏会话已停止（保留 buildReport / history 供导出）")
     }
 
     private fun cleanup() {
@@ -418,10 +439,33 @@ class VirtualDisplaySession(
         lastFingerprint = 0
     }
 
+    /**
+     * 更新状态，并把 message 的变化记进事件流水。
+     *
+     * ## 为什么自己记流水
+     *
+     * 之前诊断全靠 logcat。但真机上游戏会把 logcat 缓冲刷得飞快，
+     * 抓出来只剩三行（第一次真机日志就是这样），整个建屏过程全丢。
+     * 自己的流水存在内存里，不受别人刷屏影响。
+     */
     private fun update(transform: (State) -> State) {
         val next = transform(_state.value)
-        _state.value = next
-        shared.value = next
+        if (next.message != _state.value.message) {
+            appendHistory(next.message)
+        }
+        val withLog = next.copy(history = eventLog.toList())
+        _state.value = withLog
+        shared.value = withLog
+    }
+
+    /** 事件流水本体。只在 [update] 与 [stop] 里写。 */
+    private val eventLog = mutableListOf<String>()
+
+    private fun appendHistory(message: String) {
+        val stamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+            .format(java.util.Date())
+        eventLog += "[$stamp] $message"
+        while (eventLog.size > MAX_HISTORY) eventLog.removeAt(0)
     }
 
 

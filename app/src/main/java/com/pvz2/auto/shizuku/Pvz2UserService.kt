@@ -163,22 +163,40 @@ class Pvz2UserService : IPvz2Service.Stub() {
         val dump = runCatching { runShell("dumpsys display") }.getOrDefault("")
         if (dump.isEmpty()) return "ERROR: dumpsys display 无输出"
 
-        // 按 displayId 找对应的 DisplayDeviceInfo：它前面会有一行
-        // `Display 10:` 或 `mDisplayId=10`，用非贪婪窗口取最近的那一段。
+        // 按 `DisplayDeviceInfo{...}` 逐个解析，**不靠 mDisplayId 定位**。
+        //
+        // 之前的做法是「往上找最近的 mDisplayId」来配对，但那一段的排版在
+        // Android 16 上变了 —— 结果永远匹配不上，日志里一直是
+        // 「display=47 未找到」，而系统明明报了 FLAG_TRUSTED。
+        //
+        // 更可靠的做法：每个 DisplayDeviceInfo 里都带 uniqueId，而我们的屏
+        // 名固定是 VD_NAME，直接按名字找。
         val blocks = dump.split("DisplayDeviceInfo{")
         for (block in blocks.drop(1)) {
             val head = block.substringBefore("}\n")
-            // 判断这块屏属于哪个 id：往上看它所在段落里的 mDisplayId
-            val before = dump.substring(0, dump.indexOf("DisplayDeviceInfo{$block").coerceAtLeast(0))
-            val idMatch = Regex("mDisplayId=(\\d+)").findAll(before).lastOrNull()
-            val ownerId = idMatch?.groupValues?.get(1)?.toIntOrNull() ?: continue
-            if (ownerId != displayId) continue
+            if (!head.contains(VIRTUAL_DISPLAY_NAME)) continue
 
             val trusted = head.contains("FLAG_TRUSTED")
+            val autoMirror = head.contains("FLAG_AUTO_MIRROR")
+            val private = head.contains("FLAG_PRIVATE")
             val type = Regex("type ([A-Z]+)").find(head)?.groupValues?.get(1) ?: "?"
             val owner = Regex("owner ([^,\\s]+)").find(head)?.groupValues?.get(1) ?: "?"
-            val flags = Regex("FLAG_[A-Z_]+").findAll(head).map { it.value }.toList()
-            return "display=$displayId type=$type trusted=$trusted owner=$owner flags=${flags.joinToString("|")}"
+            val size = Regex("(\\d+) x (\\d+)").find(head)
+                ?.let { "${it.groupValues[1]}x${it.groupValues[2]}" } ?: "?"
+
+            // AUTO_MIRROR 是"镜像屏"的标志 —— 有它就无法承载 Activity，
+            // launchDisplayId 会完全不起作用。这一行值得单独点出来。
+            val verdict = when {
+                autoMirror -> "镜像屏（应用挂不上去）"
+                private -> "私有屏（别的 uid 访问不到）"
+                trusted -> "可承载应用 ✓"
+                else -> "无 TRUSTED（可能挂不上）"
+            }
+            return buildString {
+                append("display=$displayId type=$type size=$size trusted=$trusted ")
+                append("autoMirror=$autoMirror private=$private owner=$owner ")
+                append("判定=$verdict")
+            }
         }
         return "display=$displayId 未找到（屏可能没建成或已释放）"
     }
@@ -523,6 +541,9 @@ class Pvz2UserService : IPvz2Service.Stub() {
          * 用它是为了绕开"跨进程传 3.7 MB 一帧"的问题（Binder 单次上限 1 MB）。
          */
         const val FRAME_DIR = "/data/local/tmp/pvz2"
+
+        /** 虚拟屏名字。dumpsys 里靠它认出我们自己那块屏（displayId 配对不可靠）。 */
+        const val VIRTUAL_DISPLAY_NAME = "pvz2-virtual"
 
         /** 初始化系统 Context 的等待上限。正常是毫秒级，5 秒只是防死等。 */
         const val CONTEXT_TIMEOUT_SEC = 5L
