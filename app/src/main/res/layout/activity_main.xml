@@ -268,9 +268,13 @@
             android:gravity="center_horizontal"
             android:orientation="vertical">
 
+        <!-- 宽度用 wrap_content 而不是 match_parent：
+             LinearLayout 的 gravity 只对**比父容器窄**的子 View 生效，
+             写 match_parent 时子 View 占满整行，居中无从谈起 ——
+             面板收窄后就会贴在左边。 -->
         <com.pvz2.auto.ui.AspectFrameLayout
             android:id="@+id/flPreview"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="@drawable/bg_preview"
             android:clipToOutline="true"

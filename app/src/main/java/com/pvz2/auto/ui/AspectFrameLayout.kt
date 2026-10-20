@@ -51,6 +51,10 @@ class AspectFrameLayout @JvmOverloads constructor(
 
         // 减掉左右 padding：面板的"内容宽度"才是画面能用的宽度。
         // 不减的话，每边 padding 都会被算进 16:9 里，画面被撑得比容器宽。
+        //
+        // AT_MOST 是 width=wrap_content 时的常态（外层居中容器给的就是它）：
+        // getSize() 是**上限**，我们直接拿它当目标宽度 —— 面板本来就该占满
+        // 可用宽度，只是触到高度上限时才收窄。所以 EXACTLY 与 AT_MOST 同一套算法。
         val availWidth = (MeasureSpec.getSize(widthMeasureSpec) -
             paddingLeft - paddingRight).coerceAtLeast(0)
         if (availWidth <= 0) {
