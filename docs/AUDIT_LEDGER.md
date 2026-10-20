@@ -236,27 +236,89 @@ AIDL 同步调用 → **一次点击占一个 Binder 线程 60ms**。点满 16 �
 
 ## 七、修复顺序
 
-**第一批（会崩 / 会静默失败）**
-1. native 采集器加锁
-2. cancelAndJoin
-3. pfd 关闭
-4. shell 侧缓冲复用
-5. `Hit.box` 填充
-6. `ANativeWindow_release`
-7. `releaseVirtualDisplay` 提前 return
+**第一批（会崩 / 会静默失败）** — ✅ 已完成（`60e8583`）
+1. ✅ native 采集器加锁
+2. ✅ cancelAndJoin
+3. ✅ pfd 关闭
+4. ✅ shell 侧缓冲复用
+5. ✅ `Hit.box` 填充
+6. ✅ `ANativeWindow_release`
+7. ✅ `releaseVirtualDisplay` 提前 return
 
-**第二批（用户要的"快"）**
-8. 识别改接虚拟屏帧（干掉 screencap/PNG/fork）
-9. `tap` 去掉 `Thread.sleep`
-10. `rate_limit` 调整
-11. 预览去掉双重转换
+**第二批（用户要的"快"）** — 部分完成（`96e411f`）
+8. ✅ 识别改接虚拟屏帧（干掉 screencap/PNG/fork）
+9. ✅ `tap` 去掉 `Thread.sleep`
+10. ✅ `rate_limit` 1000ms → 16ms
+11. ✅ 预览去掉双重转换
 
 **第三批（平台契约）**
-12. `isAccessible`
-13. display group 互斥
-14. launch 返回码
-15. Looper 装配
+12. ✅ `isAccessible`
+13. ✅ display group 互斥
+14. ✅ launch 返回码
+15. ⬜ Looper 装配（递归 SOE / 假 main Looper）
 
 **第四批（1080p 移植）**
-16. `scale` 短边
-17. 其余 P3
+16. ⬜ `scale` 短边
+17. ⬜ 其余 P3
+
+---
+
+## 八、真机回归：虚拟屏建不起来（已修）
+
+**现象**：点启动 → `DeadObjectException`，UserService 进程崩溃。
+
+**日志证据**：
+```
+I/Pvz2Capture: capturer ready: 1280x720, surface=0x7878dbe001
+I/Pvz2Capture: capturer released          ← 刚建好就被释放
+F/DEBUG: #06 ... createVirtualDisplay+38
+F/DEBUG: #08 ... createDisplayWithCapture+72
+```
+
+**根因**：`createDisplayWithCapture` 先 `NativeCapture.setup()` 拿到 surface，
+再调 `createVirtualDisplay()`，而后者第一行是 `releaseVirtualDisplay()`
+——把刚建好的采集端连同 surface 一起释放，随后用已销毁的 Surface 建屏。
+
+**这是"把 `NativeCapture.release()` 移出提前 return"引入的回归**：
+审计说的是"拆成 releaseDisplay() 与 releaseCapturer()"，我只做了后半句。
+
+**修复**：拆成三个函数，`createVirtualDisplay` 内部只调 `releaseDisplay()`。
+
+---
+
+## 九、通道顺序：一个藏了很久的错误
+
+**结论（审计实测确认）**：
+
+| 数据源 | CV 类型 | 通道顺序 |
+|---|---|---|
+| `Bitmap.Config.ARGB_8888` 内存布局 | — | **R,G,B,A** |
+| `Utils.bitmapToMat` 输出（模板） | CV_8UC4 | **R,G,B,A**（不交换） |
+| `AIMAGE_FORMAT_RGBA_8888` + 逐行 memcpy | CV_8UC4 | **R,G,B,A**（不交换） |
+
+两边一致 —— 所以**删掉 `cvtColor(RGBA2BGR)` 是对的**。
+
+**但下游三处一直按 BGR 解释**，其中两处会静默出错：
+
+| 位置 | 原来 | 后果 | 改为 |
+|---|---|---|---|
+| `Recognizer.matchColor` HSV 分支 | `COLOR_BGR2HSV` | **红蓝判反**，红色算成蓝色色相 | `COLOR_RGB2HSV` |
+| `Recognizer.matchColor` 非 HSV 分支 | 4 通道直接 `inRange` | alpha 当第 4 通道比 [0,0] → **掩码恒空，永不命中** | 先 `COLOR_RGBA2BGR` 降通道 |
+| `OcrEngine` 两处 | `COLOR_BGRA2RGB`（=交换） | PP-OCR 收到红蓝反转的图，**识别率静默下降** | `COLOR_RGBA2RGB` |
+| `Recognition.GreenMask` | `COLOR_BGRA2BGR`（=不交换） | 变量名叫 bgr 实际是 RGB，**巧合正确**（纯绿 R/B 对称） | `COLOR_RGBA2BGR` |
+
+最后一条特别值得记：它"没炸"不是因为写对了，是因为找的颜色恰好对称。
+
+---
+
+## 十、待办（未修）
+
+| 项 | 说明 |
+|---|---|
+| Looper 装配 | `SystemThreadWorkarounds` 递归到 StackOverflowError 才收敛；工作线程 `Looper.prepare()` 后不 `loop()`，`sMainLooper` 指向死线程 → 所有主线程回调永不执行 |
+| `scale` 用短边 | `ScreenAdapter` 现在用 `screenHeight/720`，竖屏截图会算出 2.667 而非 1.5 |
+| OCR 后处理常量 | 膨胀核 9×3、`MIN_BOX`、`y0/10` 分桶全是物理像素写死，1080p 会把一行切成多框 |
+| `AImageReader` 监听器 | 现在是轮询，事件驱动可做到空闲 0% CPU |
+| 帧传输换 `MemoryFile` | 现在每帧写 3.7MB 到 `/data/local/tmp`（真实 flash），60fps = 221 MB/s |
+| 副屏注入真机验证 | HANDOFF 记为"被 no touchable window 挡住"，但那是"游戏还没搬上去"时测的，**条件已变，需重测** |
+
