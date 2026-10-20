@@ -50,8 +50,14 @@ class Recognizer(private val context: Context) {
         }
 
         val next = ScreenAdapter(width, height)
-        val rebuilt = HashMap<String, Mat>(scaled.size)
-        for ((path, original) in scaled) {
+        val rebuilt = HashMap<String, Mat>(originals.size)
+        // ★ 必须从 **originals** 重建，不能从 scaled。
+        //
+        //   之前遍历的是 scaled（上一次的缩放结果），于是每次尺寸变化都在
+        //   "已经缩放过"的图上再缩放一次：100px 的逻辑模板先按 scale=1.5
+        //   变成 150px，尺寸再变到 scale=2.0 时以 150px 为源 → 300px，
+        //   而正确答案是 200px。反复切分辨率还会累积插值失真。
+        for ((path, original) in originals) {
             rebuilt[path] = scale(original, next) ?: continue
         }
 
@@ -72,8 +78,8 @@ class Recognizer(private val context: Context) {
         if (frame.empty()) return null
         return when (recognition) {
             is Recognition.Template -> matchTemplate(frame, recognition, current)
-            is Recognition.Ocr -> matchOcr(frame, recognition)
-            is Recognition.Color -> matchColor(frame, recognition)
+            is Recognition.Ocr -> matchOcr(frame, recognition, current)
+            is Recognition.Color -> matchColor(frame, recognition, current)
             is Recognition.AnyOf -> recognition.items
                 .firstNotNullOfOrNull { recognize(frame, it, current) }
             Recognition.DirectHit -> Hit(1.0, 0.0, 0.0)
@@ -100,6 +106,40 @@ class Recognizer(private val context: Context) {
         return best
     }
 
+    /**
+     * 把 pipeline 里的 `roi`（720p 逻辑坐标 `[x,y,w,h]`）换成物理像素矩形。
+     *
+     * ## 为什么需要这一步
+     *
+     * `RecognizeTarget` / `NodeDef` 的契约都写明"ROI 全是 720p 逻辑坐标"，
+     * 而 `matchTemplate` / `matchColor` / `matchOcr` 三个匹配器拿到的 `frame`
+     * 是**物理像素**的截图。两者之间必须过 [ScreenAdapter]，否则：
+     *
+     * - 1280×720 虚拟屏：scale=1、offsetX=0 → 两者恰好相等，看不出问题；
+     * - 1080p 手机 / 模拟器：scale=1.5 → ROI 缩在左上角，识别全部落空；
+     * - 命中框与点击点同样整体偏移。
+     *
+     * 旧路径 [TemplateMatcher] 一直是正确调用 `toScreenRect()` 的，
+     * 而新写的 Recognizer 层把这一步丢了 —— 属于重构时漏掉的换算，
+     * 被 720p 主路线掩盖着。
+     *
+     * @return 物理像素矩形；ROI 完全在屏外时返回 null
+     */
+    private fun roiToPhysical(
+        roi: IntArray?,
+        current: ScreenAdapter,
+        frame: Mat
+    ): org.opencv.core.Rect? {
+        // roi 为空 = 全屏搜索
+        if (roi == null || roi.size < 4) {
+            return org.opencv.core.Rect(0, 0, frame.width(), frame.height())
+        }
+        val logical = android.graphics.Rect(
+            roi[0], roi[1], roi[0] + roi[2], roi[1] + roi[3]
+        )
+        return current.toScreenRect(logical)
+    }
+
     private fun matchOne(
         frame: Mat,
         path: String,
@@ -110,7 +150,17 @@ class Recognizer(private val context: Context) {
         if (template.empty()) return null
         if (template.width() > frame.width() || template.height() > frame.height()) return null
 
-        val roi = Boxes.toCvRect(recognition.roi, frame.width(), frame.height())
+        // ★ ROI 是 **720p 逻辑坐标**，必须先经 ScreenAdapter 换成物理像素。
+        //
+        //   之前这里调的是 `Boxes.toCvRect(roi, frame.width(), frame.height())` ——
+        //   把逻辑值直接当物理像素用。在 1280×720 的虚拟屏上 scale=1、offset=0，
+        //   两者恰好相等，所以一直看不出来；一旦跑在 1080p 手机 / 模拟器上，
+        //   scale≠1，搜索区会缩在左上角，识别全部落空。
+        //
+        //   旧路径 `TemplateMatcher` 是正确调用 `toScreenRect()` 的，
+        //   新写的 Recognizer 层把它绕过去了 —— 属于重构时丢掉的换算。
+        val roi = roiToPhysical(recognition.roi, current, frame)
+            ?: return null
         if (roi.width < template.width() || roi.height < template.height()) return null
 
         val region = frame.submat(roi)
@@ -139,12 +189,16 @@ class Recognizer(private val context: Context) {
             val centerLogical = current.toLogical(centerXpx.toFloat(), centerYpx.toFloat())
             val topLeftLogical = current.toLogical(boxX.toFloat(), boxY.toFloat())
 
-            // 模板的**逻辑**尺寸。缩放前模板就活在 720p 逻辑空间里，
-            // 所以它的逻辑宽高就是本体的宽高。
-            // （曾写成 template.width() * scale / scale 这种自相抵消的形式，
-            //   结果虽然一样，但两套坐标系混在一行里，改一半就会静默错位。）
-            val logicalWidth = template.width()
-            val logicalHeight = template.height()
+            // 模板的**逻辑**尺寸。
+            //
+            // `template` 是 loadScaled() 返回的**已缩放**图，它的 width/height
+            // 是物理像素。之前直接把这两个值当逻辑尺寸用，于是 scale≠1 时
+            // 框比实际大出 scale 倍（1.5 倍设备上框放大 50%）。
+            //
+            // 逻辑尺寸 = 物理尺寸 / scale。用 current.scale 反算，
+            // 而不是去 originals 里再查一遍 —— 两者的比值恒等于 scale。
+            val logicalWidth = template.width() / current.scale
+            val logicalHeight = template.height() / current.scale
 
             return Hit(
                 score = mm.maxVal,
@@ -166,8 +220,11 @@ class Recognizer(private val context: Context) {
 
     // ---------------------------------------------------------------- 找色
 
-    private fun matchColor(frame: Mat, recognition: Recognition.Color): Hit? {
-        val roi = Boxes.toCvRect(recognition.roi, frame.width(), frame.height())
+    private fun matchColor(frame: Mat, recognition: Recognition.Color, current: ScreenAdapter): Hit? {
+        // ROI 同样是 720p 逻辑坐标，必须换算（见 roiToPhysical 的注释）。
+        // 之前这里和 matchTemplate 用同一套"直接当物理像素"的写法，
+        // 两层对坐标系的假设都是错的，只是 720p 上互相抵消了。
+        val roi = roiToPhysical(recognition.roi, current, frame) ?: return null
         val region = frame.submat(roi)
         val hsv = Mat()
         val mask = Mat()
@@ -186,10 +243,14 @@ class Recognizer(private val context: Context) {
             val count = Core.countNonZero(mask)
             if (count < recognition.count) return null
 
-            // 命中后返回 ROI 中心：调用方只关心"这段区域是不是这个颜色"。
-            val cx = roi.x + roi.width / 2.0
-            val cy = roi.y + roi.height / 2.0
-            return Hit(count.toDouble(), cx, cy)
+            // 命中后返回 ROI 中心。对外统一是 **720p 逻辑坐标**，
+            // 所以这里必须把物理中心换算回去 —— 之前直接返回 roi 的物理中心，
+            // 在 scale≠1 的设备上调用方点下去会偏。
+            val center = current.toLogical(
+                (roi.x + roi.width / 2.0).toFloat(),
+                (roi.y + roi.height / 2.0).toFloat()
+            )
+            return Hit(count.toDouble(), center.x.toDouble(), center.y.toDouble())
         } finally {
             mask.release()
             hsv.release()
@@ -199,9 +260,9 @@ class Recognizer(private val context: Context) {
 
     // ---------------------------------------------------------------- OCR
 
-    private fun matchOcr(frame: Mat, recognition: Recognition.Ocr): Hit? {
+    private fun matchOcr(frame: Mat, recognition: Recognition.Ocr, current: ScreenAdapter): Hit? {
         val engine = ocr ?: return null
-        val roi = Boxes.toCvRect(recognition.roi, frame.width(), frame.height())
+        val roi = roiToPhysical(recognition.roi, current, frame) ?: return null
         val region = frame.submat(roi)
         try {
             val lines = engine.recognize(region, recognition.threshold)

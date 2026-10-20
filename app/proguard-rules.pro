@@ -8,5 +8,5 @@
 -keep class rikka.shizuku.** { *; }
 -keep class moe.shizuku.** { *; }
 
-# The fallback AccessibilityService is instantiated by the framework from the manifest.
--keep class com.pvz2.auto.fallback.Pvz2AccessibilityService { *; }
+# 无障碍降级方案已整个移除（用户明确要求不要降级路径），
+# 原来这里 keep 的 fallback.Pvz2AccessibilityService 已不存在。

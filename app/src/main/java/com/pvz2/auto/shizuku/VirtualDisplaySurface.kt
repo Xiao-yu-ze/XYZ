@@ -50,7 +50,7 @@ class VirtualDisplaySurface(
      * 没有任何东西负责"显示"—— 表现就是窗口不往上挂、渲染行为异常。
      *
      * 正确做法（照 ShadowAuto）：建屏时传一个**真正的输出 surface**
-     * （见 [com.pvz2.auto.shizuku.VirtualDisplaySink]），截图时才用
+     * （现由 native 采集端担当，见 Pvz2UserService.createDisplayWithCapture）
      * `VirtualDisplay.setSurface()` 临时切到 ImageReader，取完立刻切回去。
      */
     val surface: Surface get() = reader.surface

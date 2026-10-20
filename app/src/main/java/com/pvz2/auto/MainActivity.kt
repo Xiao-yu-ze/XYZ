@@ -305,14 +305,19 @@ class MainActivity : AppCompatActivity() {
         hint.text = getString(R.string.log_export_ok, "正在抓取…")
 
         lifecycleScope.launch {
+            // 抓日志用的连接。用完必须 unbind —— 之前每次导出都新建一个 client
+            // 并 bind() 却从不 unbind，每点一次"导出日志"就多挂一条 UserService
+            // 连接，反复导出会累积。
+            val client = ShizukuUserServiceClient(applicationContext)
+
             val text = withContext(Dispatchers.IO) {
-                runCatching {
-                    val client = ShizukuUserServiceClient(applicationContext)
-                    client.bind()
-                    val service = client.await()
-                    if (service == null) {
-                        return@runCatching "ERROR: Shizuku 服务未连接（${client.lastError ?: "超时"}）"
-                    }
+                try {
+                    runCatching {
+                        client.bind()
+                        val service = client.await()
+                        if (service == null) {
+                            return@runCatching "ERROR: Shizuku 服务未连接（${client.lastError ?: "超时"}）"
+                        }
                     val own = service.grabLogcat(
                         "VirtualDisplayCreator|VirtualDisplaySession|Pvz2UserService|DisplayAppLauncher|DisplayTaskMover|Pvz2Capture",
                         800
@@ -362,8 +367,13 @@ class MainActivity : AppCompatActivity() {
                         appendLine("----- ② 系统侧（权限 / 显示服务 / 输入分发）-----")
                         appendLine(system)
                     }
+                    }.getOrElse { "ERROR: ${it.message}" }
+                } finally {
+                    // 只断开连接，不杀 UserService —— 虚拟屏可能正在跑，
+                    // 那由 vdStop / onDestroy 负责。
+                    runCatching { client.unbind(remove = false) }
                 }
-            }.getOrElse { "ERROR: ${it.message}" }
+            }
 
             val file = withContext(Dispatchers.IO) {
                 runCatching {

@@ -466,7 +466,9 @@ class Pvz2UserService : IPvz2Service.Stub() {
 
         return runCatching {
             val dir = File(FRAME_DIR).apply { mkdirs() }
-            val file = File(dir, "frame.rgba")
+            // ★ 目录权限只在第一次设一次，之后不再动。
+            //   目录 0777 是为了让 App 进程（不同 uid）能进来读。
+            ensureDirReadable(dir)
 
             val buffer = ByteBuffer.allocateDirect(size)
             if (!NativeCapture.acquireFrame(buffer, IntArray(2))) {
@@ -474,7 +476,17 @@ class Pvz2UserService : IPvz2Service.Stub() {
             }
             buffer.position(0)
 
-            FileOutputStream(file).use { out ->
+            // ★ 先写临时文件，再原子 rename。
+            //
+            //   之前直接写 `frame.rgba` 然后立刻 open 它 —— 写端和读端之间
+            //   没有任何同步，App 可能在写到一半时打开文件，读到**半截帧**
+            //   （下半部分是上一次的旧数据，或者全是 0）。这种帧拿去识别会
+            //   得到莫名其妙的结果，而且偶发、极难复现。
+            //
+            //   rename 在同一文件系统上是原子的：读端要么看到旧的完整文件，
+            //   要么看到新的完整文件，不存在中间态。
+            val tmp = File(dir, "frame.tmp")
+            FileOutputStream(tmp).use { out ->
                 val chunk = ByteArray(64 * 1024)
                 while (buffer.hasRemaining()) {
                     val n = minOf(chunk.size, buffer.remaining())
@@ -482,14 +494,39 @@ class Pvz2UserService : IPvz2Service.Stub() {
                     out.write(chunk, 0, n)
                 }
             }
-            // 让 App 进程（不同 uid）也能读。
-            runCatching {
-                Runtime.getRuntime().exec(arrayOf("chmod", "666", file.absolutePath)).waitFor()
+            // 用 Java API 设权限，**不要 fork 一个 chmod 进程**。
+            // 之前每帧都 `Runtime.exec("chmod")` —— 每秒十几次 fork，
+            // 开销比拷贝 3.7MB 还大，而且 chmod 本身也可能失败。
+            tmp.setReadable(true, false)
+
+            val file = File(dir, "frame.rgba")
+            if (!tmp.renameTo(file)) {
+                // rename 失败（极少数情况：目标被占用）。退回直接覆盖写。
+                Log.w(TAG, "rename 失败，退回直接写入")
+                tmp.copyTo(file, overwrite = true)
+                tmp.delete()
+                file.setReadable(true, false)
             }
 
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
         }.onFailure { Log.e(TAG, "取帧失败", it) }
             .getOrNull()
+    }
+
+    /** 帧目录只需设一次权限，之后复用。 */
+    @Volatile
+    private var frameDirReady = false
+
+    private fun ensureDirReadable(dir: File) {
+        if (frameDirReady) return
+        runCatching {
+            // 0777：让 App 进程（不同 uid）能进入目录并读文件。
+            // 目录里只有帧文件，不含任何敏感信息。
+            dir.setExecutable(true, false)
+            dir.setReadable(true, false)
+            dir.setWritable(true, false)
+        }
+        frameDirReady = true
     }
 
     /** 采集端状态，一行摘要。导出日志时看这一行判断"到底有没有帧"。 */

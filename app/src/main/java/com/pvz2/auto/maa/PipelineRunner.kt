@@ -125,8 +125,7 @@ object VerifyChain {
      * 用于识别自检的模板清单 —— 全是这条链上真正会用到的图。
      * 和 [ProbeTargets] 不同：那些是无尽挑战局内的图，这些是**入口界面**的图。
      */
-    val TEMPLATES: List<String> = listOf(
-        "maapvz/create_yard/竞技.png",
-        "maapvz/Endless/无尽挑战.png"
-    )
+    // 原 TEMPLATES 常量已删除：没有任何调用方，且路径带的是已废弃的
+    // `maapvz/` 前缀（现役资源在 res/raw 下按 NodeDef 的 id 索引）。
+    // 留着只会让后来的人以为它还在用，照着它的格式写资源路径必踩。
 }

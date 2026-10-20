@@ -147,9 +147,14 @@ internal object GreenMask {
             // inRange 给的是"绿色位置=255"，掩码语义正好相反，取反。
             org.opencv.core.Core.bitwise_not(mask, mask)
 
-            val greenPixels = org.opencv.core.Core.countNonZero(
-                Mat().also { org.opencv.core.Core.inRange(bgr, lower, upper, it) }
-            )
+            // 数绿色像素：mask 取反后"非绿=255"，所以绿色数 = 总数 - countNonZero。
+            //
+            // 之前是另外建一个 Mat 再做一次 inRange 去数，而那个临时 Mat
+            // 是 `Mat().also { ... }` 写出来的，**没有任何引用能 release 它**。
+            // Mat 是 native 内存，长时间自动化里每轮匹配漏一块，最终 OOM。
+            // 这里复用已有的 mask，一个临时对象都不需要。
+            val total = bgr.rows() * bgr.cols()
+            val greenPixels = total - org.opencv.core.Core.countNonZero(mask)
             // 绿色像素太少说明这不是掩码模板，用掩码反而降低匹配率。
             if (greenPixels <= 4) {
                 mask.release()

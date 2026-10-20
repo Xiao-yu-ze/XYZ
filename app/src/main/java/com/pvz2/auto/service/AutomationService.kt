@@ -147,6 +147,15 @@ class AutomationService : Service() {
             }
 
             ACTION_VD_STOP -> {
+                // ★ 必须先 startForeground。
+                //
+                //   本 action 是用 `startForegroundService()` 拉起来的
+                //   （见 vdStop()），系统要求 5 秒内调 startForeground()，
+                //   否则 Android 12+ 直接抛 ForegroundServiceDidNotStartInTimeException
+                //   把进程干掉。而这个分支只做"停屏 + stopSelf"，原来一次都没调，
+                //   属于**必然崩溃**的路径 —— 只是停得快时来不及触发。
+                startForegroundCompat()
+
                 // 用户主动要求释放：标记后连服务一起停（onDestroy 会据此释放屏）。
                 userStopped = true
                 scope.launch {

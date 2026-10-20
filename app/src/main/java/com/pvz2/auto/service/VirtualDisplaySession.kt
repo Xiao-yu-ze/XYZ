@@ -124,6 +124,14 @@ class VirtualDisplaySession(
             update { it.copy(running = false, message = "Shizuku 服务不可用（无法建屏）") }
             return false
         }
+        // ★ 存进字段，否则 cleanup() 里的释放是死代码。
+        //
+        //   之前 service 只是个局部变量，`shellService` 从头到尾没被赋过值，
+        //   于是 cleanup() 里 `shellService?.releaseVirtualDisplay()` 永远不执行，
+        //   屏只能等 UserService 进程退出才被系统回收。start() 中途失败时
+        //   屏会残留（虽然 UserService 重建时会先释放自己缓存的旧屏，不累积，
+        //   但那是兜底，不该依赖）。
+        shellService = service
 
         val displayId = runCatching {
             service.createDisplayWithCapture(
@@ -490,10 +498,16 @@ class VirtualDisplaySession(
             bmp
         }.getOrNull() ?: return
 
-        // 旧的 bitmap 必须回收：预览每秒换 10 张，不回收就是每秒 37 MB 垃圾。
-        val old = previewFlow.value
+        // ★ 不主动 recycle 旧 bitmap。
+        //
+        //   之前是 `old?.recycle()`。但 ImageView 可能仍持有上一帧：Activity
+        //   退到后台时 collect 停止、轮询却继续，ImageView 里存的就是那张
+        //   已被回收的 Bitmap，回到前台重绘直接崩 "Canvas: trying to use a
+        //   recycled bitmap"。
+        //
+        //   每秒 10 张 720p ARGB 约 37 MB/s，看起来很多，但这些是**托管内存**，
+        //   ART 会正常回收；而手动 recycle 换来的是随机崩溃。宁可让 GC 处理。
         previewFlow.value = bitmap
-        if (old !== bitmap) runCatching { old?.recycle() }
     }
 
     /** 对整帧稀疏采样算一个指纹。全黑帧的指纹恒定，所以"一直全黑"会被识别出来。 */
@@ -578,7 +592,19 @@ class VirtualDisplaySession(
     }
 
     /** 事件流水本体。只在 [update] 与 [stop] 里写。 */
-    private val eventLog = mutableListOf<String>()
+    /**
+     * 事件流水本体。
+     *
+     * 用 [CopyOnWriteArrayList] 而不是 ArrayList：本类的 scope 是
+     * `Dispatchers.IO`（多线程池），[stop] 与帧轮询协程可能在不同线程上
+     * 同时读写这个列表 —— `stop()` 里 `frameJob.cancel()` 之后没有 join，
+     * 而帧循环可能正卡在不可取消的 binder 读取里，返回后仍会调 [update]
+     * → [appendHistory] 写入。普通 ArrayList 在这种交错下会抛
+     * ConcurrentModificationException。
+     *
+     * 写入频率是"状态变化时"，每次一条，量极小，CopyOnWrite 的写放大无所谓。
+     */
+    private val eventLog = java.util.concurrent.CopyOnWriteArrayList<String>()
 
     private fun appendHistory(message: String) {
         val stamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
