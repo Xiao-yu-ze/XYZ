@@ -3,6 +3,8 @@ package com.pvz2.auto.service
 import android.os.ParcelFileDescriptor
 import org.opencv.core.CvType
 import org.opencv.imgproc.Imgproc
+import android.graphics.Bitmap
+import org.opencv.android.Utils
 import android.os.Build
 import android.util.Log
 import com.pvz2.auto.IPvz2Service
@@ -224,21 +226,69 @@ class VirtualDisplaySession(
     /** 窗口归属：`mDisplayId=N` 里的 N，查不到返回 -1。 */
     private data class WindowInfo(val raw: String, val displayId: Int)
 
+    /**
+     * 查这个包**所有**窗口分别在哪块屏上。
+     *
+     * ## 为什么不能用 `grep -A2 | grep -m1`
+     *
+     * 之前是这么写的：
+     * ```bash
+     * dumpsys window windows | grep -A2 '$packageName' | grep -m1 'mDisplayId='
+     * ```
+     * 两个问题：
+     *  1. `-A2` 会连带匹配到**相邻窗口**的行，`mDisplayId` 可能是别人的；
+     *  2. `-m1` 只取第一个，而一个应用通常有多个窗口
+     *     （主 Activity、splash、输入法、Toast），只要有一个在主屏就会误判。
+     *
+     * 真机上就踩到了：报告说「已在副屏 ✓」，用户看到的却是整个物理屏被游戏占满。
+     * 所以这里改成**把该包的每个窗口都列出来**，并给出「有没有窗口还在主屏」的结论。
+     */
     private fun queryWindowDisplay(service: IPvz2Service?, packageName: String): WindowInfo {
-        // 只取该包 Activity 的窗口那一段。用 -A2 抓它下面两行里的 mDisplayId。
-        val raw = runCatching {
-            service?.exec(
-                "dumpsys window windows | grep -A2 '$packageName' | grep -m1 'mDisplayId='"
-            )
-        }.getOrNull().orEmpty().trim()
+        // 用 awk 按窗口分段解析：每个 `Window #N Window{... pkg}` 块里取它的 mDisplayId。
+        // 比 grep 上下文匹配可靠得多。
+        val script = """
+            dumpsys window windows 2>/dev/null | awk '
+              /^  Window #/ { win=${'$'}0 }
+              /mDisplayId=/ {
+                if (win != "" && win ~ /$packageName/) {
+                  match(${'$'}0, /mDisplayId=[0-9]+/)
+                  if (RSTART > 0) print substr(${'$'}0, RSTART, RLENGTH) " " win
+                  win = ""
+                }
+              }'
+        """.trimIndent()
 
-        val id = Regex("mDisplayId=(\\d+)").find(raw)?.groupValues?.get(1)?.toIntOrNull() ?: -1
-        val text = if (id >= 0) {
-            "窗口 mDisplayId=$id" + if (id == 0) "（仍在主屏 —— 未成功）" else "（已在副屏 ✓）"
-        } else {
-            "窗口归属：查不到（应用可能没启动）"
+        val raw = runCatching { service?.exec(script) }.getOrNull().orEmpty().trim()
+
+        val lines = raw.lines().filter { it.contains("mDisplayId=") }
+        if (lines.isEmpty()) {
+            return WindowInfo("窗口归属：查不到（应用可能没启动，或窗口列表为空）", -1)
         }
-        return WindowInfo(text, id)
+
+        val ids = lines.mapNotNull {
+            Regex("mDisplayId=(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull()
+        }
+        if (ids.isEmpty()) {
+            return WindowInfo("窗口归属：解析失败", -1)
+        }
+
+        // 主屏（0）上还有窗口 = 没搬干净，用户会看到游戏占着物理屏。
+        val onPrimary = ids.count { it == 0 }
+        val onTarget = ids.count { it > 0 }
+        val distinct = ids.distinct().sorted()
+
+        val text = buildString {
+            append("窗口分布：共 ${ids.size} 个窗口，display=$distinct")
+            if (onPrimary > 0) {
+                append("；⚠️ $onPrimary 个仍在主屏(0)")
+            }
+            if (onTarget > 0) {
+                append("；$onTarget 个在副屏")
+            }
+        }
+        // 只要还有窗口在主屏，就判定为「没完全搬过去」——
+        // 这正是「整个屏幕变成游戏」的形态。
+        return WindowInfo(text, if (onPrimary > 0) 0 else distinct.firstOrNull() ?: -1)
     }
 
     /**
@@ -395,6 +445,7 @@ class VirtualDisplaySession(
                             liveFrameCount = if (isNew) prev.liveFrameCount + 1 else prev.liveFrameCount,
                         )
                     }
+                    publishPreview(frame)
                 } finally {
                     frame.release()
                 }
@@ -402,6 +453,47 @@ class VirtualDisplaySession(
                 // 需要节流时由采集端本身的帧率决定，而不是靠这里人为限速。
             }
         }
+    }
+
+    // ---------------------------------------------------------------- 预览
+
+    /** 上次发布预览的时间戳。用来节流 —— 60fps 全量转 Bitmap 会把主线程拖死。 */
+    private var lastPreviewAt = 0L
+
+    /**
+     * 把一帧发布给界面。
+     *
+     * ## 为什么之前预览一直是黑的
+     *
+     * 采集链路其实是通的（真机日志里 `画面更新次数: 740` 证明取到了 740 帧），
+     * 但**没有任何代码把帧送到 ImageView** —— `ivVdPreview` 从定义至今
+     * 一次都没被赋过值。采集端取到的像素全留在内存里，界面上什么都看不到。
+     *
+     * ## 为什么要节流
+     *
+     * Mat → Bitmap 是全量像素拷贝（720p 约 3.7 MB）。每个采集帧都转一次
+     * （最高 60fps）会吃掉大量 CPU 并让 GC 抖动。预览给人看，10fps 足够。
+     */
+    private fun publishPreview(frame: Mat) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastPreviewAt < PREVIEW_INTERVAL_MS) return
+        lastPreviewAt = now
+
+        val bitmap = runCatching {
+            val bmp = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888)
+            // frame 是 BGR。直接 matToBitmap 会把 B/R 对调（颜色偏蓝）。
+            // 先转 RGBA 再存，界面上的颜色才是对的。
+            val rgba = Mat()
+            Imgproc.cvtColor(frame, rgba, Imgproc.COLOR_BGR2RGBA)
+            Utils.matToBitmap(rgba, bmp)
+            rgba.release()
+            bmp
+        }.getOrNull() ?: return
+
+        // 旧的 bitmap 必须回收：预览每秒换 10 张，不回收就是每秒 37 MB 垃圾。
+        val old = previewFlow.value
+        previewFlow.value = bitmap
+        if (old !== bitmap) runCatching { old?.recycle() }
     }
 
     /** 对整帧稀疏采样算一个指纹。全黑帧的指纹恒定，所以"一直全黑"会被识别出来。 */
@@ -506,6 +598,14 @@ class VirtualDisplaySession(
          */
         val shared = MutableStateFlow(VirtualDisplaySession.State())
 
+        /**
+         * 预览帧。界面直接 collect 它设进 ImageView。
+         *
+         * 用单独的 flow 而不是塞进 [State]：Bitmap 是可变大对象，
+         * 放进 State 会让每次状态变化都把它复制一份引用，也容易忘了回收。
+         */
+        val previewFlow = MutableStateFlow<Bitmap?>(null)
+
         /** 界面读它。只读，不暴露 MutableStateFlow。 */
         val sharedState: kotlinx.coroutines.flow.StateFlow<VirtualDisplaySession.State> = shared.asStateFlow()
 
@@ -515,6 +615,9 @@ class VirtualDisplaySession(
         const val VD_HEIGHT = 720
         const val VD_DPI = 240
         const val POLL_INTERVAL_MS = 120L
+
+        /** 预览刷新间隔。60fps 全转 Bitmap 太重，10fps 看着已经够流畅。 */
+        const val PREVIEW_INTERVAL_MS = 100L
 
         /** 事件流水最多保留多少条。 */
         const val MAX_HISTORY = 200

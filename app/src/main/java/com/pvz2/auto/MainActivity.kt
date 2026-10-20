@@ -27,6 +27,7 @@ import android.widget.Spinner
 import androidx.core.widget.doAfterTextChanged
 import com.pvz2.auto.core.ChannelPrefs
 import com.pvz2.auto.core.Pvz2Channels
+import android.widget.ImageView
 import com.pvz2.auto.service.AutomationService
 import com.pvz2.auto.service.VirtualDisplaySession
 import com.pvz2.auto.shizuku.ShizukuBridge
@@ -109,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupChannelPicker()
+        observePreview()
 
         // 导出日志：把关键日志存成文件并弹分享。
         // 真机上没有电脑连着的时候，这是唯一能把现场发给别人的办法。
@@ -260,6 +262,26 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<MaterialButton>(R.id.btnVdStart).isEnabled = !state.running
         findViewById<MaterialButton>(R.id.btnVdStop).isEnabled = state.running
+    }
+
+    /**
+     * 订阅预览帧并显示到 ImageView。
+     *
+     * ## 为什么之前那块屏一直是黑的
+     *
+     * 采集端其实一直在工作（真机日志里 `画面更新次数: 740`），但**没有任何代码
+     * 把帧送到界面** —— `ivVdPreview` 从布局定义至今一次都没被赋过值。
+     * 采集到的像素全留在内存里烂掉，用户看到的就是一块永远空白的区域。
+     */
+    private fun observePreview() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                VirtualDisplaySession.previewFlow.collect { bitmap ->
+                    val view = findViewById<ImageView>(R.id.ivVdPreview)
+                    view.setImageBitmap(bitmap)
+                }
+            }
+        }
     }
 
     override fun onStart() {
