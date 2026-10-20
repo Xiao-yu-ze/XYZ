@@ -267,7 +267,21 @@ class AutomationService : Service() {
             vdSession,
             ShizukuScreenCapturer(shizukuClient)
         )
-        injector = ShizukuTouchInjector(shizukuClient)
+        // ★ 注入必须打到**虚拟屏**上，不能打主屏。
+        //
+        //   虚拟屏是另一块屏，注入到 display 0 的事件它收不到 ——
+        //   表现就是"点了完全没反应"。之前这里写死了 0，整条
+        //   识别→点击链路一直在点主屏。
+        //
+        //   displayId 从会话状态里实时读：建屏前它是 -1，
+        //   建好后变成真实 id。用 lambda 而不是传值，这样
+        //   建屏/重建屏之后不用重新构造 injector。
+        //
+        //   -1 时回退到 0（主屏）—— 那是"还没建虚拟屏、直接在
+        //   主屏上跑"的合法场景。
+        injector = ShizukuTouchInjector(shizukuClient) {
+            vdSession.state.value.displayId.takeIf { it > 0 } ?: 0
+        }
         runLoop()
     }
 
@@ -310,7 +324,21 @@ class AutomationService : Service() {
         BotState.setStatus("Shizuku 就绪 ($displaySize)")
 
         capturer = ShizukuScreenCapturer(shizukuClient)
-        injector = ShizukuTouchInjector(shizukuClient)
+        // ★ 注入必须打到**虚拟屏**上，不能打主屏。
+        //
+        //   虚拟屏是另一块屏，注入到 display 0 的事件它收不到 ——
+        //   表现就是"点了完全没反应"。之前这里写死了 0，整条
+        //   识别→点击链路一直在点主屏。
+        //
+        //   displayId 从会话状态里实时读：建屏前它是 -1，
+        //   建好后变成真实 id。用 lambda 而不是传值，这样
+        //   建屏/重建屏之后不用重新构造 injector。
+        //
+        //   -1 时回退到 0（主屏）—— 那是"还没建虚拟屏、直接在
+        //   主屏上跑"的合法场景。
+        injector = ShizukuTouchInjector(shizukuClient) {
+            vdSession.state.value.displayId.takeIf { it > 0 } ?: 0
+        }
         block()
     }
 

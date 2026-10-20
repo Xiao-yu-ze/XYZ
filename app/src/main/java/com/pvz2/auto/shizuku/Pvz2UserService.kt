@@ -85,9 +85,19 @@ class Pvz2UserService : IPvz2Service.Stub() {
     /**
      * 在指定 display 上滑动。
      *
-     * 这条用 shell 的 `input -d <displayId> swipe ...` 而不是自己拼 MOVE 序列：
-     * `input` 命令本身就支持 `-d`，而手写 MOVE 序列要自己算插值和时间戳，
-     * 收益不大、出错面更大。等以后真需要精细控制（压感/多点）再换。
+     * ## 为什么不再用 `input -d <id> swipe`
+     *
+     * 原来走的是 shell 命令，理由是"`input` 本身支持 `-d`，手写 MOVE 序列麻烦"。
+     * 但那条路有两个问题：
+     *
+     *  1. **成败无从判断**。`input` 失败时往 stderr 写东西、退出码仍是 0，
+     *     所以这里只能无条件 `return true` —— 滑动静默失败，上层完全不知道。
+     *  2. **和点击不是同一条路径**。点击走 `injectInputEvent`（已验证可用），
+     *     滑动走 shell。两条路各自有各自的坑，排查时得同时怀疑两套逻辑。
+     *
+     * 现在统一到 [DisplayInputInjector]，用与点击完全相同的注入通道，
+     * 只是中间插入若干 MOVE 事件。这样"点击能到虚拟屏、滑动也能到"是
+     * 同一个前提，不会出现一半通一半不通。
      */
     override fun swipeOnDisplay(
         displayId: Int,
@@ -96,17 +106,7 @@ class Pvz2UserService : IPvz2Service.Stub() {
         x2: Int,
         y2: Int,
         durationMs: Int
-    ): Boolean = runCatching {
-        val output = runShell("input -d $displayId swipe $x1 $y1 $x2 $y2 $durationMs")
-        // `input` 失败时会往 stderr 写东西（已合并进 stdout）而不是返回非零，只能看输出。
-        if (output.isNotBlank()) {
-            Log.w(TAG, "swipeOnDisplay 输出：$output")
-        }
-        true
-    }.getOrElse {
-        Log.e(TAG, "swipeOnDisplay 失败", it)
-        false
-    }
+    ): Boolean = DisplayInputInjector.swipe(displayId, x1, y1, x2, y2, durationMs)
 
     override fun exec(command: String): String =
         runCatching { runShell(command) }.getOrElse { "ERROR: ${it.message}" }

@@ -101,6 +101,76 @@ internal object DisplayInputInjector {
     }
 
     /**
+     * 在 [displayId] 上从 (x1,y1) 滑到 (x2,y2)，耗时 [durationMs]。
+     *
+     * ## 为什么自己拼 MOVE 序列
+     *
+     * 之前走的是 `input -d <id> swipe`。那条路失败时只往 stderr 写东西、
+     * 退出码仍是 0，所以只能无条件当成功 —— 滑动静默失败，上层完全不知道。
+     *
+     * 现在用与点击**完全相同**的注入通道（[inject] + `setDisplayId`），
+     * 只是中间插入若干 MOVE。好处是"点击能到副屏"与"滑动能到副屏"
+     * 变成同一个前提，不会一半通一半不通。
+     *
+     * ## 事件节奏
+     *
+     * DOWN 用 `WAIT_FOR_FINISH` 等它真的进管线，否则紧跟的 MOVE 会和它
+     * 在同一个 vsync 里被合并，手势被识别成"瞬间跳变"而不是拖动。
+     * MOVE 与 UP 用 `ASYNC` 省一帧延迟。
+     *
+     * MOVE 的**时间戳**是算出来的（`downTime + 第 i 步的偏移`），
+     * 不是靠 `Thread.sleep` 真等 —— 后者会占住 Binder 线程（见 [tap] 的注释）。
+     * InputDispatcher 判定手势速度用的是事件时间差，不是两次调用之间的真实间隔。
+     *
+     * @return 全部事件都被系统接受才返回 true
+     */
+    fun swipe(
+        displayId: Int,
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
+        durationMs: Int
+    ): Boolean {
+        val duration = durationMs.coerceIn(1, 5_000)
+        val downTime = SystemClock.uptimeMillis()
+
+        val downOk = inject(
+            displayId, downTime, downTime, MotionEvent.ACTION_DOWN,
+            x1, y1, MODE_WAIT_FOR_FINISH
+        )
+        if (!downOk) {
+            Log.w(TAG, "滑动起点按下被拒 display=$displayId ($x1,$y1)")
+            return false
+        }
+
+        var allOk = true
+        for (i in 1..MOVE_STEPS) {
+            val fraction = i.toFloat() / MOVE_STEPS
+            val mx = (x1 + (x2 - x1) * fraction).toInt()
+            val my = (y1 + (y2 - y1) * fraction).toInt()
+            // 最后一步的 MOVE 与 UP 同一时刻没有意义，留出 1 步给 UP。
+            val offset = (duration.toLong() * i / (MOVE_STEPS + 1))
+            val ok = inject(
+                displayId, downTime, downTime + offset, MotionEvent.ACTION_MOVE,
+                mx, my, MODE_ASYNC
+            )
+            if (!ok) allOk = false
+        }
+
+        val upOk = inject(
+            displayId, downTime, downTime + duration, MotionEvent.ACTION_UP,
+            x2, y2, MODE_ASYNC
+        )
+        if (!upOk) allOk = false
+
+        if (!allOk) {
+            Log.w(TAG, "滑动有事件被拒 display=$displayId ($x1,$y1)->($x2,$y2)")
+        }
+        return allOk
+    }
+
+    /**
      * `InputEvent.setDisplayId(int)` 是 @hide，编译期看不到，只能反射。
      *
      * 在 app_process（shell/root 身份）里反射隐藏 API 不受限制；如果这段代码被拿到
@@ -139,4 +209,13 @@ internal object DisplayInputInjector {
         Log.e(TAG, "injectInputEvent 调用失败", it)
         false
     }
+
+    /**
+     * 一次滑动拆成几个 MOVE。
+     *
+     * 太少（比如 2 个）会被识别成"跳变"而不是拖动；
+     * 太多会白占注入带宽。8 步在 300ms 的手势上是 37ms 一步，
+     * 足够让 InputDispatcher 算出正确的速度。
+     */
+    private const val MOVE_STEPS = 8
 }
