@@ -139,10 +139,16 @@ internal object GreenMask {
         val lower = org.opencv.core.Scalar(0.0, 250.0, 0.0, 0.0)
         val upper = org.opencv.core.Scalar(10.0, 255.0, 10.0, 255.0)
 
-        // 模板是 BGRA（bitmapToMat 得到 CV_8UC4），先转成 BGR 再 inRange。
+        // 模板是 CV_8UC4，通道序 **R,G,B,A**（`bitmapToMat` 原样搬运，不交换）。
+        // 要拿真正的 BGR 必须用 `COLOR_RGBA2BGR`（= 交换）。
+        //
+        // 之前写的 `COLOR_BGRA2BGR` 是"丢 alpha、不交换"，对 RGBA 输入得到的是
+        // **RGB 顺序**的 3 通道，只是变量名叫 bgr 而已。这一处没炸是因为下游
+        // 找的是纯绿 (0,255,0) —— R 与 B 对称，交换与否结果相同。
+        // 属于"巧合正确"，不是写对了。
         val bgr = Mat()
         try {
-            Imgproc.cvtColor(template, bgr, Imgproc.COLOR_BGRA2BGR)
+            Imgproc.cvtColor(template, bgr, Imgproc.COLOR_RGBA2BGR)
             org.opencv.core.Core.inRange(bgr, lower, upper, mask)
             // inRange 给的是"绿色位置=255"，掩码语义正好相反，取反。
             org.opencv.core.Core.bitwise_not(mask, mask)

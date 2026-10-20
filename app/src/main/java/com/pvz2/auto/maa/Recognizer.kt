@@ -232,9 +232,31 @@ class Recognizer(private val context: Context) {
         val mask = Mat()
         try {
             if (recognition.method == COLOR_METHOD_HSV) {
-                Imgproc.cvtColor(region, hsv, Imgproc.COLOR_BGR2HSV)
+                // ★ 通道顺序必须与帧的真实布局一致。
+                //
+                //   帧是 `AImageReader` 的 RGBA_8888 → CV_8UC4，通道序
+                //   **R,G,B,A**（与模板的 `bitmapToMat` 输出一致）。
+                //   而 `COLOR_BGR2HSV` 会把 ch0 当成 B —— 红色于是被算成
+                //   蓝色的色相，**红/蓝判反，而且完全不报错**。
+                //
+                //   4 通道要用 `COLOR_RGB2HSV`（它接受 4 通道输入并忽略 alpha）。
+                val code = if (region.channels() == 4) {
+                    Imgproc.COLOR_RGB2HSV
+                } else {
+                    Imgproc.COLOR_BGR2HSV
+                }
+                Imgproc.cvtColor(region, hsv, code)
             } else {
-                region.copyTo(hsv)
+                // 直接比颜色值。
+                //
+                // ★ 4 通道时必须先降到 3 通道：`inRange` 的 Scalar 只给了 3 个
+                //   分量，第 4 位默认 0，而 alpha 恒为 255 —— 它会被当作第 4
+                //   个通道去比 [0,0]，掩码**永远为空**，节点静默不命中。
+                if (region.channels() == 4) {
+                    Imgproc.cvtColor(region, hsv, Imgproc.COLOR_RGBA2BGR)
+                } else {
+                    region.copyTo(hsv)
+                }
             }
             Core.inRange(
                 hsv,

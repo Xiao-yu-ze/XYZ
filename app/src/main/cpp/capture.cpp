@@ -136,8 +136,18 @@ Java_com_pvz2_auto_shizuku_NativeCapture_nativeSetup(
     status = AImageReader_getWindow(capturer->reader, &capturer->window);
     if (status != AMEDIA_OK || capturer->window == nullptr) {
         LOGE("AImageReader_getWindow 失败: %d", status);
-        ReleaseLocked();
+        // 这里**不能**调 ReleaseLocked()：g_capturer 此时还是 nullptr
+        // （要到下面才赋值），那一句永远是空操作。真正要清的是这次
+        // new 出来的局部 capturer。
+        //
+        // 而且 getWindow 失败时 window 可能已经被写出了一个非空值 ——
+        // 那也是引用计数 +1 的，不释放就漏了。
+        if (capturer->window != nullptr) {
+            ANativeWindow_release(capturer->window);
+            capturer->window = nullptr;
+        }
         AImageReader_delete(capturer->reader);
+        capturer->reader = nullptr;
         delete capturer;
         return nullptr;
     }

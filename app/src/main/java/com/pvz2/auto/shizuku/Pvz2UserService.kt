@@ -241,7 +241,9 @@ class Pvz2UserService : IPvz2Service.Stub() {
     }
 
     /** 采集尺寸。建屏时记下，取帧按它分配缓冲。 */
+    @Volatile
     private var captureWidth = 0
+    @Volatile
     private var captureHeight = 0
 
     @Volatile
@@ -361,6 +363,7 @@ class Pvz2UserService : IPvz2Service.Stub() {
      * 全程反射，因为 `createVirtualDisplay` 是 @hide。但这在 app_process 里没问题：
      * 隐藏 API 限制针对的是普通应用进程，而我们是 shell 身份起的 app_process。
      */
+    @Synchronized
     override fun createVirtualDisplay(
         name: String,
         width: Int,
@@ -369,7 +372,16 @@ class Pvz2UserService : IPvz2Service.Stub() {
         surface: Surface?,
         flags: Int
     ): Int {
-        releaseVirtualDisplay()
+        // ★ 只放屏，**不能**放采集端。
+        //
+        //   createDisplayWithCapture 会先 NativeCapture.setup() 拿到 surface，
+        //   再进来建屏。如果这里放采集端，就会把刚建好、正要用的那块 surface
+        //   连同 AImageReader 一起销毁 —— 随后拿一块已经没了的 Surface 去
+        //   createVirtualDisplay，native 层直接 SIGSEGV，UserService 进程崩溃，
+        //   App 侧只看到 DeadObjectException。
+        //
+        //   这正是把 NativeCapture.release() 移出提前 return 之后踩到的坑。
+        releaseDisplay()
 
         if (surface == null || !surface.isValid) {
             Log.e(TAG, "建虚拟屏失败：传进来的 Surface 无效")
@@ -424,7 +436,14 @@ class Pvz2UserService : IPvz2Service.Stub() {
             // AUTO_MIRROR / 缺少 TRUSTED）、NoSuchMethodException（ROM 改了签名）。
             // 把原始异常全打出来 —— 真机排查全靠它。
             Log.e(TAG, "建虚拟屏抛异常", t)
-            releaseVirtualDisplay()
+            // 只放屏。
+            //
+            // 这个方法可能被 createDisplayWithCapture 调（此时采集端归它管），
+            // 也可能被 AIDL 单独调（此时没有采集端）。用 releaseVirtualDisplay()
+            // 会把别人会话的采集端一起拆掉，所以这里只碰屏。
+            // 采集端的清理由 createDisplayWithCapture 的调用方或 AIDL
+            // releaseVirtualDisplay 负责。
+            releaseDisplay()
             -1
         }
     }
@@ -442,7 +461,21 @@ class Pvz2UserService : IPvz2Service.Stub() {
      * 于是 App 里的预览永远是黑的。用户看到的就是「软件里那块屏一直没反应」。
      *
      * 所以：在本进程建 reader、拿 surface、建屏，三者天然一致。
+     *
+     * ## 为什么整个方法要加锁
+     *
+     * 这些是 AIDL 方法，跑在 **Binder 线程池**（不止一个线程）。建屏本身
+     * 要花一两百毫秒，用户完全可能在这期间又点一次启动，于是两个线程同时
+     * 进来：
+     *   T1: releaseVirtualDisplay() → setup() 拿到 reader A
+     *   T2: releaseVirtualDisplay() → 把 reader A 删了 → setup() 拿到 reader B
+     *   T1: 拿**已销毁的** surface 去建屏 → native SIGSEGV
+     *
+     * 这和真机上刚踩到的那次崩溃是**同一个签名**，而且 native 侧的 mutex
+     * 拦不住 —— 竞争发生在 Kotlin 层（谁先调 release、谁先调 setup）。
+     * 所以建屏 / 释放 / 单独建屏这三个入口必须串行化。
      */
+    @Synchronized
     override fun createDisplayWithCapture(
         name: String,
         width: Int,
@@ -450,6 +483,7 @@ class Pvz2UserService : IPvz2Service.Stub() {
         dpi: Int,
         flags: Int
     ): Int {
+        // 这是"重建整条链路"，所以屏和采集端都要先清干净。
         releaseVirtualDisplay()
 
         val surface = NativeCapture.setup(width, height)
@@ -569,7 +603,16 @@ class Pvz2UserService : IPvz2Service.Stub() {
             "未建采集端"
         }
 
-    override fun releaseVirtualDisplay() {
+    /**
+     * 只释放**屏**（虚拟显示 + 它用的那块 Surface），不碰采集端。
+     *
+     * 之所以必须拆开：`createDisplayWithCapture` 的流程是
+     * 「先建采集端拿 surface → 再建屏」，而建屏函数开头要先清掉上一块屏。
+     * 如果那里顺手把采集端也放了，就会销毁刚建好、正要用的 surface，
+     * 随后用一块已销毁的 Surface 建屏 → native SIGSEGV，
+     * UserService 整个进程崩掉，App 只看到 DeadObjectException。
+     */
+    private fun releaseDisplay() {
         val display = virtualDisplay
         val surface = virtualDisplaySurface
         val id = virtualDisplayId
@@ -577,16 +620,12 @@ class Pvz2UserService : IPvz2Service.Stub() {
         virtualDisplaySurface = null
         virtualDisplayId = -1
 
-        // ★ 不能在这里 `if (display == null) return`。
+        // ★ 屏和 Surface 要**各自判断**，不能用 `if (display == null) return`。
         //
-        //   之前就是这么写的，而建屏失败路径恰好满足 display == null：
-        //   createDisplayWithCapture 先 NativeCapture.setup() 成功（拿着
-        //   AImageReader + 3 个 GraphicBuffer + Surface），随后
-        //   createVirtualDisplay 抛异常 → catch 里调 releaseVirtualDisplay
-        //   → 因为 virtualDisplay 还是 null 就 return 了 → **采集端全泄漏**，
-        //   一直漏到 UserService 进程退出。
-        //
-        //   所以：屏和采集端是两回事，各自独立释放。
+        //   display 为 null 但 surface 不为 null 是真实存在的状态：
+        //   采集端 setup 成功、建屏失败，此时 virtualDisplaySurface 已经被
+        //   赋了值（createVirtualDisplay 里 L419-421 才一起写，但异常路径上
+        //   可能只写了一半）。提前 return 会让那块 Surface 没人释放。
         if (display != null) {
             // 顺序要紧：先释放屏，再释放 Surface。反过来的话屏还挂在一块已经
             // 没了的 buffer 队列上，某些 ROM 会直接崩在 native 层。
@@ -594,13 +633,35 @@ class Pvz2UserService : IPvz2Service.Stub() {
                 .onFailure { Log.w(TAG, "释放虚拟屏失败", it) }
         }
         runCatching { surface?.release() }
-
-        // 采集端（native AImageReader + window）无条件释放。
-        runCatching { NativeCapture.release() }
-        // 堆外采集缓冲也一起放掉，否则停屏后还占着 3.7MB direct 内存。
-        runCatching { releaseFrameBuffer() }
-
         if (display != null) Log.i(TAG, "虚拟屏已释放 displayId=$id")
+    }
+
+    /** 只释放**采集端**（native AImageReader + window）与堆外采集缓冲。 */
+    private fun releaseCapturer() {
+        runCatching { NativeCapture.release() }
+        runCatching { releaseFrameBuffer() }
+        // ★ 尺寸也要清。
+        //
+        //   否则建屏失败后 captureStatus() 还报"采集端就绪 1280x720"，
+        //   而 native 那边 g_capturer 已经是 nullptr —— 导出日志时会看到
+        //   一条彻底误导人的诊断。更糟的是 acquireFrameFd 会继续按旧尺寸
+        //   走，拿不到帧还每帧白分配 3.7MB 堆外内存。
+        captureWidth = 0
+        captureHeight = 0
+    }
+
+    /**
+     * AIDL 的释放入口：屏和采集端一起收。
+     *
+     * 注意**不能**用 `if (display == null) return` 提前退出 ——
+     * 建屏失败时 virtualDisplay 恰好是 null，而采集端可能已经建好了
+     * （setup 成功、建屏失败）。那种情况下提前 return 会把 reader 和
+     * 3 个 GraphicBuffer 一直泄漏到进程退出。
+     */
+    @Synchronized
+    override fun releaseVirtualDisplay() {
+        releaseDisplay()
+        releaseCapturer()
     }
 
     /** 当前虚拟屏的 displayId，没有则 -1。调试用。 */

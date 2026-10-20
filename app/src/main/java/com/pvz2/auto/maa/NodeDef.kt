@@ -23,7 +23,18 @@ data class NodeDef(
     /** 识别重试窗口，毫秒。官方默认 20000。 */
     val timeout: Long = 20_000L,
     /** 两轮识别之间的最小间隔，毫秒。官方默认 1000。 */
-    val rateLimit: Long = 1_000L,
+    /**
+     * 每轮识别的最低耗时（毫秒）。不足则补睡。
+     *
+     * ## 为什么默认改成 16 而不是 Maa 的 1000
+     *
+     * 1000ms 意味着**每秒只识别一次** —— 对"Boss 放技能要立即打断"这个
+     * 需求来说等于没有识别。16ms 与虚拟屏的采集帧率（约 60fps）对齐，
+     * 既不浪费 CPU，也不会漏掉一两帧内的变化。
+     *
+     * 需要更激进的节点可以在 pipeline JSON 里显式写 `rate_limit: 0`。
+     */
+    val rateLimit: Long = DEFAULT_RATE_LIMIT_MS,
     /** 识别到动作之间的等待，毫秒。官方默认 200。 */
     val preDelay: Long = 200L,
     /** 动作到下一轮识别之间的等待，毫秒。官方默认 200。 */
@@ -172,7 +183,7 @@ object PipelineParser {
             next = parseNameList(obj.opt("next")),
             onError = parseNameList(obj.opt("on_error")),
             timeout = obj.optLong("timeout", 20_000L),
-            rateLimit = obj.optLong("rate_limit", 1_000L),
+            rateLimit = obj.optLong("rate_limit", DEFAULT_RATE_LIMIT_MS),
             preDelay = obj.optLong("pre_delay", 200L),
             postDelay = obj.optLong("post_delay", 200L),
             enabled = obj.optBoolean("enabled", true),
@@ -367,6 +378,17 @@ internal fun JSONObject.optStringList(key: String): List<String> {
 
 /** 供 [Recognition] 的 box 字段使用。 */
 internal fun Rect.isEmptyBox(): Boolean = width() == 0 && height() == 0
+
+/**
+ * 每轮识别的最低耗时默认值（毫秒）。
+ *
+ * 与虚拟屏的采集帧率（约 60fps）对齐 —— 再小就是空转，
+ * 再大就会漏掉一两帧内的画面变化。
+ *
+ * Maa 原版默认 1000ms，那是为"慢节奏点击"设计的；
+ * 本项目要的是"看到就立刻打断"，所以取 16。
+ */
+const val DEFAULT_RATE_LIMIT_MS = 16L
 
 /** 命中框在 Mat 上的居中裁剪工具，供自定义动作预处理使用。 */
 internal fun Mat.cropOrNull(rect: Rect): Mat? {

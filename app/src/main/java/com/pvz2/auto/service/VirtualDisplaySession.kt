@@ -199,21 +199,29 @@ class VirtualDisplaySession(
      */
     // ------------------------------------------------------------ 取帧缓冲
     //
-    // 每帧 1280×720×4 = 3.7 MB。之前每次取帧都重新分配：
-    //   ByteArray(3.7MB) → Mat(3.7MB) → put(3.7MB) → cvtColor 再分配 3.7MB
-    // 合计约 15 MB 的分配与拷贝，30fps 就是每秒 450 MB 的垃圾。
-    //
-    // 这是帧率卡在 34fps 左右的主要原因之一（另一部分是跨进程写文件）。
+    // 每帧 1280×720×4 = 3.7 MB。之前每次取帧都重新分配，加上 cvtColor，
+    // 一帧要分配+拷贝约 15 MB，30fps 就是每秒 450 MB 的垃圾。
     // 下面这些缓冲在会话期内复用，只在尺寸变化时重建。
 
     /** 读文件用的字节缓冲。 */
     private var frameBytes: ByteArray = ByteArray(0)
 
-    /** RGBA 源图（native）。 */
+    /**
+     * 帧本体（native）。**CV_8UC4，通道顺序 RGBA。**
+     *
+     * ## 为什么不再转 BGR
+     *
+     * 之前这里会 `cvtColor(RGBA2BGR)` 转成 3 通道，然后再给预览转回 RGBA
+     * —— 转过去又转回来，两次全图拷贝。
+     *
+     * 而识别侧根本不需要 BGR：
+     *  - `AImageReader` 的格式是 `RGBA_8888`，读出来就是 R,G,B,A；
+     *  - 模板是 `Utils.bitmapToMat(Bitmap ARGB_8888)`，同样是 R,G,B,A；
+     *  - `matchTemplate` 只要求 `type == _templ.type()`（都是 CV_8UC4）。
+     *
+     * 所以这一帧可以**直接**既是预览源、又是识别源，零转换。
+     */
     private var frameRgba: Mat? = null
-
-    /** BGR 结果图（native）。**复用** —— 调用方不得持有它超过本次循环。 */
-    private var frameBgr: Mat? = null
 
     /** 确保缓冲尺寸够用。尺寸没变就直接返回，不做任何分配。 */
     private fun ensureFrameBuffers(w: Int, h: Int): Boolean {
@@ -227,21 +235,52 @@ class VirtualDisplaySession(
             rgba?.release()
             frameRgba = Mat(h, w, CvType.CV_8UC4)
         }
-
-        val bgr = frameBgr
-        if (bgr == null || bgr.width() != w || bgr.height() != h) {
-            bgr?.release()
-            frameBgr = Mat(h, w, CvType.CV_8UC3)
-        }
         return true
     }
 
     private fun releaseFrameBuffers() {
         frameRgba?.release()
         frameRgba = null
-        frameBgr?.release()
-        frameBgr = null
         frameBytes = ByteArray(0)
+    }
+
+    /**
+     * 保护 [frameRgba] 的**读写互斥**。
+     *
+     * ## 为什么必须有
+     *
+     * [frameRgba] 有两个使用者，跑在不同线程：
+     *  - 帧轮询协程每 16ms 调一次 `rgba.put(0, 0, bytes, 0, need)` 写入 3.7MB；
+     *  - 识别线程调 [latestFrameCopy] 做 `clone()` 读走 3.7MB。
+     *
+     * `Mat.put` 是**逐行 memcpy，不是原子的**。两者重叠时 `clone()` 会读到
+     * 一个"上半新、下半旧"的撕裂帧 —— 拿这种帧做模板匹配不会报错，
+     * 只会偶发地识别不到东西，是最难查的那类 bug。
+     *
+     * ## 代价
+     *
+     * 两边各持锁 1~2ms（一次 3.7MB 拷贝）。60fps 的预算是 16ms，
+     * 串行化最多让采集掉一两帧，换来的是"绝不会读到撕裂帧"。
+     * 相比每次识别错都要重新怀疑一遍坐标/阈值/模板，这个交换很划算。
+     */
+    private val frameLock = Any()
+
+    /**
+     * 供**识别**使用的帧副本。
+     *
+     * 为什么返回副本而不是共享缓冲：[frameRgba] 由帧轮询协程持续覆写，
+     * 识别侧拿到引用后如果跨轮持有，会读到被改写一半的数据（见 [frameLock]）。
+     * `clone()` 是一次 3.7MB 拷贝（约 1~2ms），相比原来 `screencap -p` 的
+     * 40~90ms 可以忽略。
+     *
+     * 调用方**负责 release** 返回的 Mat。
+     *
+     * @return 没有帧或还没建屏时返回 null
+     */
+    fun latestFrameCopy(): Mat? = synchronized(frameLock) {
+        val src = frameRgba ?: return@synchronized null
+        if (src.empty()) return@synchronized null
+        runCatching { src.clone() }.getOrNull()
     }
 
     private fun readFrameFromService(service: IPvz2Service): Mat? {
@@ -274,11 +313,14 @@ class VirtualDisplaySession(
                 }
                 if (read < need) return null
 
-                val rgba = frameRgba ?: return null
-                val bgr = frameBgr ?: return null
-                rgba.put(0, 0, bytes, 0, need)
-                Imgproc.cvtColor(rgba, bgr, Imgproc.COLOR_RGBA2BGR)
-                bgr
+                // 写入也要持锁 —— 与 latestFrameCopy 的 clone 互斥，
+                // 否则识别会读到撕裂帧（见 frameLock 的注释）。
+                synchronized(frameLock) {
+                    val rgba = frameRgba ?: return null
+                    rgba.put(0, 0, bytes, 0, need)
+                }
+                // 不转 BGR —— 这一帧本身就是识别和预览都要的 RGBA（见 frameRgba 注释）。
+                frameRgba
             }
         } catch (t: Throwable) {
             Log.w(TAG, "读帧失败", t)
@@ -582,7 +624,7 @@ class VirtualDisplaySession(
                     continue
                 }
 
-                // ★ 这里**不能** release frame —— 它是复用的缓冲（见 frameBgr）。
+                // ★ 这里**不能** release frame —— 它是复用的缓冲（见 frameRgba）。
                 //   release 掉的话下一帧往同一块内存写就会崩，或者 OpenCV 内部
                 //   重新分配、复用彻底失效。缓冲的生命周期归 ensureFrameBuffers /
                 //   releaseFrameBuffers 管。
@@ -692,12 +734,9 @@ class VirtualDisplaySession(
 
         val bitmap = runCatching {
             val bmp = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888)
-            // frame 是 BGR。直接 matToBitmap 会把 B/R 对调（颜色偏蓝）。
-            // 先转 RGBA 再存，界面上的颜色才是对的。
-            val rgba = Mat()
-            Imgproc.cvtColor(frame, rgba, Imgproc.COLOR_BGR2RGBA)
-            Utils.matToBitmap(rgba, bmp)
-            rgba.release()
+            // frame 已经是 RGBA（CV_8UC4），matToBitmap 直接吃，**不需要转换**。
+            // 之前因为上游转成了 BGR，这里又转回 RGBA，两次全图拷贝来回折腾。
+            Utils.matToBitmap(frame, bmp)
             bmp
         }.getOrNull() ?: return
 
@@ -737,7 +776,7 @@ class VirtualDisplaySession(
         //   `cancel()` 是协作式的：帧循环可能正卡在不可取消的段里 ——
         //   Binder 取帧（跨进程）+ 3.7MB 读 + cvtColor，一次 15~40ms。
         //   cancel 下去它不会立刻停，还会把这一轮跑完，包括往
-        //   frameRgba / frameBgr 里写数据。
+        //   frameRgba 里写数据。
         //
         //   而 cleanup() 紧接着就把这两个 Mat release 掉了 —— 于是
         //   cvtColor 作用在已释放的 native 内存上：轻则 CvException 丢帧，

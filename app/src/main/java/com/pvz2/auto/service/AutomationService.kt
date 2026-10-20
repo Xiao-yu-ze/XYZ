@@ -256,7 +256,17 @@ class AutomationService : Service() {
         }
         BotState.setStatus("Shizuku 就绪（$displaySize）")
 
-        capturer = ShizukuScreenCapturer(shizukuClient)
+        // ★ 识别优先用虚拟屏帧，拿不到再回退 screencap。
+        //
+        //   `screencap -p` 那条路每帧要 fork 两个进程 + PNG 编码 + PNG 解码，
+        //   实测 40~90ms；而虚拟屏的帧本来就以 60fps 在出，复制一份只要 1~2ms。
+        //
+        //   Boss 放技能的窗口只有一两百毫秒 —— 这 40~90ms 的差距直接决定
+        //   能不能打断。这是"识别不够快"的头号原因。
+        capturer = VirtualDisplayCapturer(
+            vdSession,
+            ShizukuScreenCapturer(shizukuClient)
+        )
         injector = ShizukuTouchInjector(shizukuClient)
         runLoop()
     }

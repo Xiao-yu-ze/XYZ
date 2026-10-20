@@ -151,7 +151,11 @@ class OcrEngine(private val context: Context) : AutoCloseable {
             Imgproc.resize(region, resized, Size(dstW.toDouble(), dstH.toDouble()), 0.0, 0.0, Imgproc.INTER_LINEAR)
 
             // 模型吃 RGB；截图是 BGRA。
-            val code = if (resized.channels() == 4) Imgproc.COLOR_BGRA2RGB else Imgproc.COLOR_BGR2RGB
+            // ★ 帧是 RGBA（AImageReader / bitmapToMat 都是 R,G,B,A），要得到 RGB 必须用
+            //   `COLOR_RGBA2RGB`（= 丢 alpha、不交换）。
+            //   之前写的 `COLOR_BGRA2RGB` 等价于"交换"，把 RGBA 变成 BGR 交给
+            //   PP-OCR —— 模型收到的是红蓝反转的图，检测框和识别率静默下降。
+            val code = if (resized.channels() == 4) Imgproc.COLOR_RGBA2RGB else Imgproc.COLOR_BGR2RGB
             Imgproc.cvtColor(resized, rgb, code)
 
             val input = MatToTensor.nchw(rgb, mean = DET_MEAN, scale = DET_SCALE)
@@ -259,7 +263,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                 .coerceAtMost(REC_MAX_WIDTH)
             Imgproc.resize(crop, normalized, Size(dstW.toDouble(), REC_HEIGHT.toDouble()), 0.0, 0.0, Imgproc.INTER_LINEAR)
 
-            val code = if (normalized.channels() == 4) Imgproc.COLOR_BGRA2RGB else Imgproc.COLOR_BGR2RGB
+            val code = if (normalized.channels() == 4) Imgproc.COLOR_RGBA2RGB else Imgproc.COLOR_BGR2RGB
             Imgproc.cvtColor(normalized, rgb, code)
 
             val data = MatToTensor.nchw(rgb, mean = REC_MEAN, scale = REC_SCALE)
