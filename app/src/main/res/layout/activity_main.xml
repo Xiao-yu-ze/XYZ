@@ -238,28 +238,103 @@
                 android:text="@string/btn_vd_stop" />
         </LinearLayout>
 
-        <!-- 状态区：三行都是给人看的，出问题时先看这几行 -->
-        <TextView
-            android:id="@+id/tvVdState"
-            style="@style/Text.Body"
+        <!-- ==================== 画面预览 ====================
+
+             这块区域是本屏的**主角**：用户真正在看的就是它。
+             所以它占据整行宽度、按 16:9 自适应，而不是固定 180dp 高。
+
+             之前的写法是 `layout_height="180dp"` + `fitCenter`：
+             平板上这一行有 950dp 宽、却只有 180dp 高（5.3:1），
+             16:9 的画面按高度适配后只剩 320dp 宽 —— 不到宽度的三分之一，
+             其余全是黑的。既丑，也看不清游戏状态。
+
+             现在由 AspectFrameLayout 让**面板自己**保持 16:9，
+             内层 ImageView match_parent + fitCenter。
+             只有一个变量是宽度，所以任何状态下高度都不跳动。
+
+             background 负责填充与圆角，foreground 负责描边 ——
+             两者必须分开，见 bg_preview_stroke.xml 里的说明。
+
+             clipToOutline 让画面被圆角裁切 —— 否则直角画面会把
+             面板的圆角顶破。
+
+             外面这层 LinearLayout 只做**居中**：AspectFrameLayout 触到
+             高度上限时会把宽度一起收窄（保持 16:9），收窄后就靠这层
+             gravity=center_horizontal 让它站在屏幕中间，而不是贴左。 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+        <com.pvz2.auto.ui.AspectFrameLayout
+            android:id="@+id/flPreview"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_preview"
+            android:clipToOutline="true"
+            android:foreground="@drawable/bg_preview_stroke">
+
+            <!-- ImageView 铺满整块面板。面板是对的 16:9，
+                 所以 fitCenter 在这里几乎不产生多余留边；
+                 只有在触到 maxHeight 上限时才左右 letterbox。
+
+                 不要改用 adjustViewBounds：那与 fitCenter 是相反策略
+                 （前者"控件跟着图变"，后者"图跟着控件缩"），
+                 同时用会互相打断，且行为依赖 View 的测量顺序。 -->
+            <ImageView
+                android:id="@+id/ivVdPreview"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:contentDescription="@string/vd_preview_desc"
+                android:scaleType="fitCenter" />
+
+            <!-- 空状态：没启动时这块是纯黑的，如果不解释一句，
+                 看起来就像"坏了"。用一句安静的提示把它讲清楚。 -->
+            <TextView
+                android:id="@+id/tvPreviewEmpty"
+                style="@style/Text.Hint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="@string/vd_preview_empty"
+                android:textColor="@color/ink_faint" />
+        </com.pvz2.auto.ui.AspectFrameLayout>
+        </LinearLayout>
+
+        <!-- 预览下面的一行遥测：左边状态，右边帧率。
+             不做成卡片、不加边框 —— 它是画面的注释，不是独立模块。 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="@string/vd_state_idle" />
+            android:baselineAligned="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvVdState"
+                style="@style/Text.Body"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/vd_state_idle" />
+
+            <TextView
+                android:id="@+id/tvVdFps"
+                style="@style/Text.Hint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:visibility="gone" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/tvVdDetail"
             style="@style/Text.Hint"
+            android:layout_marginTop="2dp"
             android:text="" />
-
-        <!-- 画面预览：宽高比固定 16:9，黑屏也照样显示，好让"建屏成功但没内容"
-             和"根本建不出来"一眼能分开 -->
-        <ImageView
-            android:id="@+id/ivVdPreview"
-            android:layout_width="match_parent"
-            android:layout_height="180dp"
-            android:layout_marginTop="8dp"
-            android:background="@color/ink"
-            android:contentDescription="@string/vd_preview_desc"
-            android:scaleType="fitCenter" />
 
         <!-- 出问题时最重要的一件事：把日志弄出来。
              放在主功能区（不折叠），因为用户往往就是卡在这里需要求助。 -->

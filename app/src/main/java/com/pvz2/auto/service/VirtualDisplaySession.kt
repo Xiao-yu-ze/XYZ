@@ -153,14 +153,18 @@ class VirtualDisplaySession(
             update {
                 it.copy(
                     running = false,
-                    message = "建虚拟屏失败（displayId=$displayId）",
+                    message = "建虚拟屏失败",
                     diagnostics = "见 logcat 标签 Pvz2UserService / $TAG",
                 )
             }
             cleanup()
             return false
         }
-        update { it.copy(displayId = displayId, message = "虚拟屏就绪 displayId=$displayId") }
+        // displayId 是系统分配的、每次都不一样，对用户毫无意义 —— 只写进
+        // 事件流水备查，**不进 message**。message 会直接显示在状态行上，
+        // 之前用户就看到过"虚拟屏 59 运行中"里的那个 59。
+        appendHistory("虚拟屏就绪 displayId=$displayId")
+        update { it.copy(displayId = displayId, message = "虚拟屏就绪") }
 
         // ★ 建屏**当下**就把这块屏的客观状态记下来。
         //   导出日志时屏往往已被释放（服务被回收），那时再 dumpsys 什么也查不到。
@@ -796,17 +800,24 @@ class VirtualDisplaySession(
         cleanup()
 
         val prev = _state.value
-        val tail = if (prev.displayId > 0) "（上次用过 displayId=${prev.displayId}）" else ""
-        appendHistory("已停止$tail")
+        // displayId 只写日志。停止后它还会从 message 漏到状态行上，
+        // 用户会看到"已停止（上次用过 displayId=59）"—— 同样是噪音。
+        if (prev.displayId > 0) appendHistory("已停止（上次用过 displayId=${prev.displayId}）")
+        else appendHistory("已停止")
 
         val next = _state.value.copy(
             running = false,
-            message = "已停止$tail",
+            message = "已停止",
             diagnostics = "",
             history = eventLog.toList(),
         )
         _state.value = next
         shared.value = next
+
+        // 清掉最后一帧。否则停屏后画面上还挂着停止前的那张图（3.7MB 位图
+        // 被静态持有），看起来像"还在跑"。
+        previewFlow.value = null
+
         Log.i(TAG, "虚拟屏会话已停止（保留 buildReport / history 供导出）")
     }
 

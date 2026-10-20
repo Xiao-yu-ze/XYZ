@@ -15,6 +15,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
 import com.pvz2.auto.core.BotState
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.pvz2.auto.shizuku.ShizukuUserServiceClient
 import kotlinx.coroutines.Dispatchers
@@ -244,22 +245,64 @@ class MainActivity : AppCompatActivity() {
     private fun renderVirtualDisplay(state: VirtualDisplaySession.State) {
         val stateView = findViewById<TextView>(R.id.tvVdState)
         val detailView = findViewById<TextView>(R.id.tvVdDetail)
+        val fpsView = findViewById<TextView>(R.id.tvVdFps)
+        val emptyView = findViewById<TextView>(R.id.tvPreviewEmpty)
 
+        // 标题行讲"在跑 / 多大"，或者**讲错误**。
+        //
+        // ★ 之前这里是 `!running && displayId < 0 -> vd_state_idle` 抢先返回，
+        //   而 detail 行又在 `!running` 时置空 —— 于是"建虚拟屏失败"、
+        //   "Shizuku 服务不可用（无法建屏）"这些**真正有用的错误信息，
+        //   在界面上任何位置都不出现**，用户只看到一句"虚拟屏未启动"，
+        //   完全不知道出了什么事。
+        //
+        //   现在：没在跑的时候，只要 message 不是"未启动"这类无信息量的默认值，
+        //   就把它当标题显示出来。
         stateView.text = when {
-            !state.running && state.displayId < 0 -> getString(R.string.vd_state_idle)
             state.running && state.displayId > 0 && state.frameWidth > 0 ->
-                getString(R.string.vd_running_format, state.displayId, state.frameWidth, state.frameHeight)
+                getString(R.string.vd_running_format, state.frameWidth, state.frameHeight)
+            !state.running && state.message != getString(R.string.vd_state_idle) ->
+                state.message
+            !state.running -> getString(R.string.vd_state_idle)
             else -> state.message
         }
 
+        // 帧率单独一列，只在真的在跑时出现。它是遥测，不是状态。
+        val showFps = state.running && state.frameWidth > 0
+        fpsView.visibility = if (showFps) View.VISIBLE else View.GONE
+        if (showFps) {
+            fpsView.text = getString(R.string.vd_live_frames, state.fps)
+            // 帧率为 0 说明这一秒一帧都没取到 —— 用待办色提示"还没好"，
+            // 而不是红色（红色留给真正的错误）。
+            fpsView.setTextColor(
+                ContextCompat.getColor(
+                    this,
+                    if (state.fps == 0) R.color.state_todo else R.color.ink_faint
+                )
+            )
+        }
+
+        // 详情行：补充说明，不重复标题。
+        //
+        // 标题已经承载了错误信息，所以这里只在"在跑但有问题"时补充；
+        // 没在跑的时候置空，避免同一句话出现两遍。
         detailView.text = when {
             !state.running -> ""
-            state.frameWidth == 0 -> state.message
-            // 帧率为 0 说明这一秒一帧都没取到 —— 采集断了或屏上没有内容。
+            state.frameWidth == 0 -> ""
             state.fps == 0 -> getString(R.string.vd_no_content)
-            else -> getString(R.string.vd_live_frames, state.fps) +
-                (if (state.appOnDisplay) "" else "\n" + state.message)
+            else -> if (state.appOnDisplay) "" else state.message
         }
+
+        // 空状态文案：没启动 → "尚未启动"；建好了但还没出帧 → "等待画面…"。
+        // 不解释一句的话，这块纯黑区域看起来就像坏了。
+        //
+        // 文案在这里定，显隐统一交给 updatePreviewEmptyState()。
+        emptyView.text = if (state.running) {
+            getString(R.string.vd_preview_waiting)
+        } else {
+            getString(R.string.vd_preview_empty)
+        }
+        updatePreviewEmptyState()
 
         findViewById<MaterialButton>(R.id.btnVdStart).isEnabled = !state.running
         findViewById<MaterialButton>(R.id.btnVdStop).isEnabled = state.running
@@ -278,11 +321,30 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 VirtualDisplaySession.previewFlow.collect { bitmap ->
-                    val view = findViewById<ImageView>(R.id.ivVdPreview)
-                    view.setImageBitmap(bitmap)
+                    findViewById<ImageView>(R.id.ivVdPreview).setImageBitmap(bitmap)
+                    updatePreviewEmptyState()
                 }
             }
         }
+    }
+
+    /**
+     * 预览区空提示的唯一显隐入口。
+     *
+     * ## 为什么要收敛成一个函数
+     *
+     * 之前状态刷新（[renderVirtualDisplay]）和帧到达（[observePreview]）各写各的
+     * `setVisibility`，两边判据还不一样。改一处忘一处，就会出现
+     * "有画面但提示还盖在上面"这种问题。
+     *
+     * 判据只有一个：**ImageView 里有没有位图**。
+     * 帧率、running 状态都跟"有没有图"是两回事 ——
+     * 帧率掉到 0 时画面上可能还挂着上一帧，那时不该冒出"尚未启动"。
+     */
+    private fun updatePreviewEmptyState() {
+        val hasFrame = findViewById<ImageView>(R.id.ivVdPreview).drawable != null
+        findViewById<TextView>(R.id.tvPreviewEmpty).visibility =
+            if (hasFrame) View.GONE else View.VISIBLE
     }
 
     override fun onStart() {
