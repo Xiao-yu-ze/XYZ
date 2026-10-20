@@ -264,7 +264,11 @@ class MainActivity : AppCompatActivity() {
             !state.running && state.message != getString(R.string.vd_state_idle) ->
                 state.message
             !state.running -> getString(R.string.vd_state_idle)
-            else -> state.message
+            // 到这里只剩一种情况：running 但 displayId<=0 或 frameWidth==0，
+            // 也就是"正在建屏/搬应用"。此时 message 可能是 "未启动" 这个默认值
+            // （State 初始值没被覆盖），直接显示它会**撒谎**成"未启动"。
+            state.message != getString(R.string.vd_state_idle) -> state.message
+            else -> getString(R.string.vd_building)
         }
 
         // 帧率单独一列，只在真的在跑时出现。它是遥测，不是状态。
@@ -284,11 +288,16 @@ class MainActivity : AppCompatActivity() {
 
         // 详情行：补充说明，不重复标题。
         //
-        // 标题已经承载了错误信息，所以这里只在"在跑但有问题"时补充；
-        // 没在跑的时候置空，避免同一句话出现两遍。
+        // ★ 不要加 `frameWidth == 0 -> ""`。
+        //
+        //   "在跑、屏建好了、但 frameWidth 还是 0" 恰恰就是"建屏成功但取不到
+        //   画面"这个状态，而它正是 vd_no_content 要解释的事。之前先返回空串，
+        //   把那条提示整个吃掉了 —— 用户看到屏建好了但什么都不显示，
+        //   也不知道是游戏没搬上去还是卡住了。
+        //
+        //   现在让它落到 fps == 0 那一支（此时 fps 必然是 0）。
         detailView.text = when {
             !state.running -> ""
-            state.frameWidth == 0 -> ""
             state.fps == 0 -> getString(R.string.vd_no_content)
             else -> if (state.appOnDisplay) "" else state.message
         }

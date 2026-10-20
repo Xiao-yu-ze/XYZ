@@ -280,9 +280,13 @@
             android:clipToOutline="true"
             android:foreground="@drawable/bg_preview_stroke">
 
-            <!-- ImageView 铺满整块面板。面板是对的 16:9，
-                 所以 fitCenter 在这里几乎不产生多余留边；
-                 只有在触到 maxHeight 上限时才左右 letterbox。
+            <!-- ImageView 铺满整块面板。
+
+                 面板本身已经严格 16:9（触到高度上限时宽高一起收），
+                 画面也是 16:9，所以 fitCenter 在这里**不产生任何留边** ——
+                 帧率没上来、还没画面时才是纯色底。
+                 保留 fitCenter 只是为了画面与面板比例万一不一致时
+                 也不变形、不裁切。
 
                  不要改用 adjustViewBounds：那与 fitCenter 是相反策略
                  （前者"控件跟着图变"，后者"图跟着控件缩"），
