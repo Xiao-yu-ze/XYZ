@@ -48,14 +48,26 @@ internal object DisplayImePolicy {
     fun set(displayId: Int, policy: Int): Boolean = runCatching {
         val manager = windowManager() ?: return false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // ★ 必须 isAccessible = true。
+            //
+            //   manager 是 `IWindowManager$Stub$Proxy`，那个类是 **private static**
+            //   的（@hide）。方法本身是 public，但声明类不可访问 ——
+            //   `Method.invoke` 会抛 IllegalAccessException，然后被
+            //   runCatching 吞成一句"不致命"的警告。
+            //
+            //   结果是：IME 策略**从来没设上过**，而日志只说"不致命"。
+            //   这块屏因此拿不到本地 IME / 焦点语义，很可能就是
+            //   InputDispatcher 报 "no touchable window ... in display N" 的真因。
             manager.javaClass
                 .getMethod("setDisplayImePolicy", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                .apply { isAccessible = true }
                 .invoke(manager, displayId, policy)
         } else {
             // Android 10/11 只有布尔版；HIDE 概念在那时不存在，直接跳过。
             if (policy == POLICY_HIDE) return true
             manager.javaClass
                 .getMethod("setShouldShowIme", Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
+                .apply { isAccessible = true }
                 .invoke(manager, displayId, policy == POLICY_LOCAL)
         }
         Log.i(TAG, "display $displayId 的 IME 策略已设为 $policy")
@@ -75,6 +87,7 @@ internal object DisplayImePolicy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             manager.javaClass
                 .getMethod("getDisplayImePolicy", Int::class.javaPrimitiveType)
+                .apply { isAccessible = true }
                 .invoke(manager, displayId) as Int
         } else {
             val show = manager.javaClass

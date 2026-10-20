@@ -39,15 +39,32 @@ internal object DisplayInputInjector {
      * @return true 表示系统接受了这次注入；false 通常是缺 `INJECT_EVENTS` 权限
      */
     fun tap(displayId: Int, x: Int, y: Int, holdMs: Int): Boolean {
+        val hold = holdMs.coerceIn(1, 2_000).toLong()
         val downTime = SystemClock.uptimeMillis()
+        // 按住时长的终点。**只体现在事件时间戳上**，不靠真睡眠。
+        val upTime = downTime + hold
 
         val downOk = inject(
             displayId, downTime, downTime, MotionEvent.ACTION_DOWN, x, y, MODE_WAIT_FOR_FINISH
         )
-        // 最短按住：这一行是「偶尔点不中」的正面解药，不是可有可无的延时。
-        Thread.sleep(holdMs.coerceIn(1, 2_000).toLong())
+        // ★ 这里**不能** Thread.sleep。
+        //
+        //   之前是 `Thread.sleep(holdMs)`（默认 60ms），而这是在 **Binder
+        //   线程**上执行的 —— AIDL 是同步调用，一次点击就占住一个 Binder
+        //   线程整整 60ms。UserService 的 Binder 池默认 16 个线程，
+        //   连续点击点满 16 个之后，同进程的 acquireFrameFd（帧轮询）
+        //   就拿不到线程，采集直接停摆。
+        //
+        //   更关键的是：它是"动作最快 1ms"这个需求的**架构级天花板** ——
+        //   无论识别多快，一次打断的下限都是
+        //       hold(60) + DOWN(5~15) + UP(5~15) ≈ 75~95ms。
+        //
+        //   而 InputDispatcher 判定"按住多久"用的是 MotionEvent 的
+        //   **eventTime 差值**，不是两次调用之间真实隔了多久
+        //   （`input swipe` 就是这么实现的：两个事件背靠背发出，
+        //     时间戳相差 duration）。所以直接给 UP 一个未来的时间戳即可。
         val upOk = inject(
-            displayId, downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, MODE_ASYNC
+            displayId, downTime, upTime, MotionEvent.ACTION_UP, x, y, MODE_ASYNC
         )
 
         if (!downOk || !upOk) {

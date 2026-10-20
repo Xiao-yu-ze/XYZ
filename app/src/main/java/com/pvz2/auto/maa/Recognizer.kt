@@ -1,5 +1,7 @@
 package com.pvz2.auto.maa
 
+import kotlin.math.roundToInt
+
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.util.Log
@@ -241,7 +243,13 @@ class Recognizer(private val context: Context) {
                 mask
             )
             val count = Core.countNonZero(mask)
-            if (count < recognition.count) return null
+            // ★ count 是 Maa 的"像素个数下限"，标定在 720p 上。
+            //   但这里拿到的是**物理像素**数，而 ROI 的物理面积随 scale² 变化。
+            //   720p 下 scale=1，两者恰好相等，所以一直看不出来；
+            //   1080p（scale=1.5）同一 ROI 的像素数是 2.25 倍 ——
+            //   按 720p 标的阈值在 1080p 上会大面积误命中。
+            val needed = recognition.count * current.scale * current.scale
+            if (count < needed) return null
 
             // 命中后返回 ROI 中心。对外统一是 **720p 逻辑坐标**，
             // 所以这里必须把物理中心换算回去 —— 之前直接返回 roi 的物理中心，
@@ -250,7 +258,27 @@ class Recognizer(private val context: Context) {
                 (roi.x + roi.width / 2.0).toFloat(),
                 (roi.y + roi.height / 2.0).toFloat()
             )
-            return Hit(count.toDouble(), center.x.toDouble(), center.y.toDouble())
+            // 命中框 = 整个 ROI（与 MaaFramework 语义一致）。
+            //
+            // 之前这里不给 box，默认空 Rect() —— 于是 `target_offset` 在空框上
+            // 做偏移，直接算出屏幕外坐标。注意 ColorMatch 的"中心"是 ROI 中心
+            // 而不是色块质心，所以「ColorMatch + 点击」点的是整块 ROI 的正中。
+            val topLeft = current.toLogical(roi.x.toFloat(), roi.y.toFloat())
+            val bottomRight = current.toLogical(
+                (roi.x + roi.width).toFloat(),
+                (roi.y + roi.height).toFloat()
+            )
+            return Hit(
+                score = count.toDouble(),
+                centerX = center.x.toDouble(),
+                centerY = center.y.toDouble(),
+                box = android.graphics.Rect(
+                    topLeft.x.roundToInt(),
+                    topLeft.y.roundToInt(),
+                    bottomRight.x.roundToInt(),
+                    bottomRight.y.roundToInt()
+                )
+            )
         } finally {
             mask.release()
             hsv.release()
@@ -283,14 +311,35 @@ class Recognizer(private val context: Context) {
             } ?: return null
 
             // OCR 返回的是 ROI 内坐标，换算回逻辑坐标。
-            val current = adapter ?: return null
+            //
+            // ★ 不要在这里写 `val current = adapter ?: return null` —— 那会
+            //   **遮蔽同名参数 current**，用到一个可能过期的 adapter。
+            //   单线程下两者同值，一旦并发（Pvz2Ui 与 NodeGraph 共用一个
+            //   Recognizer）就会用错 scale，命中点整体按错误比例偏移。
+            //   用入参就行。
             val frameX = roi.x + matched.centerX
             val frameY = roi.y + matched.centerY
             val logical = current.toLogical(frameX, frameY)
+
+            // 命中框：把 ROI 内的框加回 ROI 原点，再换算成逻辑坐标。
+            //
+            // 之前这里是空的 Rect()，而 `target_offset` 是"在命中框上叠加
+            // 偏移矩形"。空框起步直接算出屏幕外坐标，点击必然落空。
+            val boxLeft = current.toLogical(roi.x + matched.boxX, roi.y + matched.boxY)
+            val boxRight = current.toLogical(
+                roi.x + matched.boxX + matched.boxWidth,
+                roi.y + matched.boxY + matched.boxHeight
+            )
             return Hit(
                 score = matched.confidence,
                 centerX = logical.x.toDouble(),
                 centerY = logical.y.toDouble(),
+                box = android.graphics.Rect(
+                    boxLeft.x.roundToInt(),
+                    boxLeft.y.roundToInt(),
+                    boxRight.x.roundToInt(),
+                    boxRight.y.roundToInt()
+                ),
                 text = matched.text
             )
         } finally {
@@ -313,11 +362,20 @@ class Recognizer(private val context: Context) {
         if (source.empty()) return null
         val target = Mat()
         return try {
+            // ★ 插值方式要按缩放方向选。
+            //
+            //   OpenCV 文档明确：INTER_AREA 适合**缩小**（抗混叠）；
+            //   强行用于放大时它退化成最近邻，边缘变块状。
+            //   720p 上 scale=1，resize 等价拷贝，所以一直没暴露；
+            //   1080p 上 scale=1.5 是放大 —— 模板被块状放大，而截图是游戏
+            //   真实 1.5 倍渲染，边缘结构对不上，分数系统性下降。
+            //   15×15 这种小模板（僵王的头）尤其严重。
+            val interp = if (current.scale < 1f) Imgproc.INTER_AREA else Imgproc.INTER_LINEAR
             Imgproc.resize(
                 source, target,
                 Size(),
                 current.scale.toDouble(), current.scale.toDouble(),
-                Imgproc.INTER_AREA
+                interp
             )
             if (target.empty()) {
                 target.release()

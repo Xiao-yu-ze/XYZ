@@ -39,7 +39,7 @@ class VirtualDisplayFlagsTest {
         // 加它是因为「有系统装饰的屏才被 WMS 当作可承载 Activity 的正常屏」。
         assertEquals(971, VirtualDisplayFlags.BASE)
         assertEquals(15360, VirtualDisplayFlags.API33_ADDED)
-        assertEquals(49152, VirtualDisplayFlags.API34_ADDED)
+        assertEquals(16384, VirtualDisplayFlags.API34_ADDED)
     }
 
     @Test
@@ -54,16 +54,16 @@ class VirtualDisplayFlagsTest {
         assertEquals(16331, VirtualDisplayFlags.forSdk(33))
 
         // Android 14 及以后：再加 OWN_FOCUS + DEVICE_DISPLAY_GROUP
-        assertEquals(65483, VirtualDisplayFlags.forSdk(34))
-        assertEquals(65483, VirtualDisplayFlags.forSdk(35))
-        assertEquals(65483, VirtualDisplayFlags.forSdk(36))
+        assertEquals(32715, VirtualDisplayFlags.forSdk(34))
+        assertEquals(32715, VirtualDisplayFlags.forSdk(35))
+        assertEquals(32715, VirtualDisplayFlags.forSdk(36))
     }
 
     @Test
     fun `非法版本号退化为基础集 不会算出负数或溢出`() {
         assertEquals(971, VirtualDisplayFlags.forSdk(0))
         assertEquals(971, VirtualDisplayFlags.forSdk(-1))
-        assertEquals(65483, VirtualDisplayFlags.forSdk(Int.MAX_VALUE))
+        assertEquals(32715, VirtualDisplayFlags.forSdk(Int.MAX_VALUE))
     }
 
     @Test

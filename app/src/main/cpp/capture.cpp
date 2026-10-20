@@ -28,6 +28,7 @@
 
 // memcpy 需要它；clang 不会隐式带上。
 #include <cstring>
+#include <mutex>
 
 #define LOG_TAG "Pvz2Capture"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -45,6 +46,35 @@ struct Capturer {
 // 单实例：一次只会有一块虚拟屏在跑。多实例需要的话再改成句柄表。
 Capturer *g_capturer = nullptr;
 
+/**
+ * 保护 [g_capturer] 的互斥锁。
+ *
+ * ## 为什么必须有
+ *
+ * 这些 JNI 函数来自 **UserService 的 Binder 线程池**（不止一个线程）：
+ *  - `acquireFrame` 由 App 的帧轮询每秒调 30~60 次；
+ *  - `release` 由 `releaseVirtualDisplay` 调（用户点停止、建屏失败、服务销毁）。
+ *
+ * 两者**必然在时间上重叠**：一次 acquire 要拷 3.7 MB（约 0.6~1 ms），
+ * 而 release 随时可能进来。没有锁时 `AImageReader_delete` 会和
+ * `AImageReader_acquireLatestImage` 竞争 → **use-after-free**。
+ *
+ * 表现极其恶劣：shell 进程直接 SIGSEGV 消失，虚拟屏跟着没，游戏一起退，
+ * 日志戛然而止 —— 看起来像"随机崩溃，重启就好"，几乎无法从日志定位。
+ *
+ * ## 为什么整段持锁而不是细粒度
+ *
+ * 拷一帧只要 0.6~1 ms，而 release 只在停止时发生一次。整段持锁最多让
+ * release 多等 1 ms，换来的是"绝不会 UAF"。细粒度引用计数更优雅，
+ * 但这里是崩溃点，**简单正确优先**。
+ */
+std::mutex g_mutex;
+
+/**
+ * 释放资源。**调用方必须已持有 g_mutex**。
+ *
+ * 名字里的 "Locked" 现在才是真的 —— 之前它无锁，是个谎。
+ */
 void ReleaseLocked() {
     if (g_capturer == nullptr) {
         return;
@@ -53,6 +83,12 @@ void ReleaseLocked() {
         // 先摘 listener 再删 reader，否则回调可能打到已释放的对象上。
         AImageReader_setImageListener(g_capturer->reader, nullptr);
         AImageReader_delete(g_capturer->reader);
+    }
+    if (g_capturer->window != nullptr) {
+        // AImageReader_getWindow 是**引用计数 +1** 的，删掉 reader 不会替你
+        // 释放这个窗口引用。之前一直漏了这一句，每建/释放一轮漏一个引用，
+        // 底层 GraphicBuffer 也归还不了。
+        ANativeWindow_release(g_capturer->window);
     }
     delete g_capturer;
     g_capturer = nullptr;
@@ -71,6 +107,8 @@ extern "C" {
 JNIEXPORT jobject JNICALL
 Java_com_pvz2_auto_shizuku_NativeCapture_nativeSetup(
         JNIEnv *env, jclass /*clazz*/, jint width, jint height) {
+    std::lock_guard<std::mutex> guard(g_mutex);
+
     if (g_capturer != nullptr) {
         LOGI("已有 capturer，先释放再重建");
         ReleaseLocked();
@@ -113,6 +151,7 @@ Java_com_pvz2_auto_shizuku_NativeCapture_nativeSetup(
 /** 释放采集端。可重复调用。 */
 JNIEXPORT void JNICALL
 Java_com_pvz2_auto_shizuku_NativeCapture_nativeRelease(JNIEnv * /*env*/, jclass /*clazz*/) {
+    std::lock_guard<std::mutex> guard(g_mutex);
     ReleaseLocked();
 }
 
@@ -130,6 +169,10 @@ Java_com_pvz2_auto_shizuku_NativeCapture_nativeRelease(JNIEnv * /*env*/, jclass 
 JNIEXPORT jboolean JNICALL
 Java_com_pvz2_auto_shizuku_NativeCapture_nativeAcquireFrame(
         JNIEnv *env, jclass /*clazz*/, jobject outBuffer, jintArray outSize) {
+    // 整段持锁：从 reader 取图到 memcpy 完成，release 不得插进来。
+    // 见 g_mutex 的注释 —— 这里不加锁就是 native use-after-free。
+    std::lock_guard<std::mutex> guard(g_mutex);
+
     if (g_capturer == nullptr || g_capturer->reader == nullptr) {
         return JNI_FALSE;
     }
@@ -219,6 +262,8 @@ Java_com_pvz2_auto_shizuku_NativeCapture_nativeAcquireFrame(
  */
 JNIEXPORT jint JNICALL
 Java_com_pvz2_auto_shizuku_NativeCapture_nativeFrameSize(JNIEnv * /*env*/, jclass /*clazz*/) {
+    std::lock_guard<std::mutex> guard(g_mutex);
+
     if (g_capturer == nullptr || g_capturer->reader == nullptr) {
         return 0;
     }

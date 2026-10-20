@@ -43,6 +43,17 @@ internal object DisplayAppLauncher {
 
     private const val TAG = "DisplayAppLauncher"
 
+    /**
+     * `ActivityManager.startActivity` 的返回码。
+     *
+     * 只有 `START_SUCCESS(0)` 才是"新起在目标屏"。
+     * 2/3 表示**复用了已有任务**，此时系统会忽略 `launchDisplayId`，
+     * 任务留在原来那块屏上 —— 这正是"游戏跑到主屏、整个物理屏被占满"
+     * 的形态，而它返回的是非负数。
+     */
+    private const val START_TASK_TO_FRONT = 2
+    private const val START_DELIVERED_TO_TOP = 3
+
     /** `android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN` */
     private const val WINDOWING_MODE_FULLSCREEN = 1
 
@@ -229,17 +240,38 @@ internal object DisplayAppLauncher {
             // ★ 必须检查返回码。
             //
             //   之前这里写死 `true` —— 只要反射没抛异常就当成功。但
-            //   `startActivityAsUser` 的返回值是 **start result 码**，负数是错误
-            //   （-97 = START_NOT_VISIBLE、-94 = START_CANCELED…）。把它当成功，
-            //   表现就是"启动指令已发出，但游戏根本没起来"，而日志里一片正常。
+            //   `startActivityAsUser` 的返回值是 **start result 码**：
             //
-            //   MaaFwApp 的做法是 `if (ret < 0) fallback to am command`，照抄。
+            //     < 0   失败（-97 START_NOT_VISIBLE、-94 START_CANCELED…）
+            //     = 0   START_SUCCESS，新任务起在指定屏上 ✓
+            //     = 2   START_TASK_TO_FRONT —— **复用了已有任务**
+            //     = 3   START_DELIVERED_TO_TOP —— **复用了已有任务**
+            //
+            //   2 和 3 是关键：复用已有任务时系统**忽略 launchDisplayId**，
+            //   任务留在原来那块屏上 —— 这正是用户反馈两次的"游戏跑到主屏、
+            //   整个物理屏被占满"的形态。而它返回的是非负数，会被当成功。
+            //
+            //   所以：只有 0 才算真正的"起在目标屏"。2/3 交给调用方复核
+            //   task 的实际 displayId，必要时 force-stop 重来。
             val code = (ret as? Number)?.toInt() ?: 0
-            if (code < 0) {
-                Log.w(TAG, "startActivityAsUser 返回错误码 $code，改用 am 兜底")
-                launchViaAm(intent, displayId)
-            } else {
-                true
+            when {
+                code < 0 -> {
+                    Log.w(TAG, "startActivityAsUser 返回错误码 $code，改用 am 兜底")
+                    launchViaAm(intent, displayId)
+                }
+
+                code == START_TASK_TO_FRONT || code == START_DELIVERED_TO_TOP -> {
+                    Log.w(
+                        TAG,
+                        "startActivityAsUser 返回 $code（复用已有任务）—— " +
+                            "launchDisplayId 会被忽略，任务可能仍在原屏"
+                    )
+                    // 不算成功：调用方会用 getTaskDisplayId 复核，
+                    // 不在目标屏就 force-stop 重来。
+                    false
+                }
+
+                else -> true
             }
         }.getOrElse {
             Log.e(TAG, "startActivityAsUser 反射调用失败", it)
@@ -273,9 +305,20 @@ internal object DisplayAppLauncher {
 
         val p = ProcessBuilder(*args).redirectErrorStream(true).start()
         val out = p.inputStream.bufferedReader().use { it.readText() }
-        p.waitFor()
+        val exit = p.waitFor()
         Log.i(TAG, "am 输出：${out.trim().take(300)}")
-        true
+
+        // ★ 不能无条件 true。
+        //
+        //   `am start` 失败时依然 exit 0，只在输出里打一行
+        //   `Error: Activity not started...`。之前直接 return true，
+        //   于是"启动失败"被当成"启动成功"，后面的轮询要白等一整轮。
+        val failed = exit != 0 ||
+            out.contains("Error:") ||
+            out.contains("Exception") ||
+            out.contains("Failure")
+        if (failed) Log.w(TAG, "am 命令未成功启动（exit=$exit）")
+        !failed
     }.getOrDefault(false)
 
     /**

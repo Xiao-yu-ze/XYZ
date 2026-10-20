@@ -105,22 +105,46 @@ object VirtualDisplayFlags {
     /** API 34+：这块屏自己持有焦点。 */
     const val OWN_FOCUS = 16384
 
-    /** API 34+：独立 display group（与 OWN_DISPLAY_GROUP 是两套语义，34 起用这个）。 */
+    /**
+     * API 34+：把屏加入**设备**显示组。
+     *
+     * ## 刻意不放进组合里
+     *
+     * 它与 [OWN_DISPLAY_GROUP] 是**互斥策略**（"自成一组" vs "并入设备组"），
+     * 同时置位时至少一位被忽略。而真机日志已经给出结论：
+     *
+     * ```
+     * I/DisplayManagerService: Display created with
+     *   VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP set, but no virtual device.
+     *   The display will not be added to a device display group.
+     * ```
+     *
+     * 也就是说：在没有虚拟设备的前提下，这一位**根本不起作用**，却会把
+     * 本来生效的 OWN_DISPLAY_GROUP 顶掉。屏于是落回默认显示组 ——
+     * 而"窗口落到主屏"正是用户反馈过两次的现象。
+     *
+     * 所以保留常量（备将来有虚拟设备时用），但不进 forSdk 的组合。
+     */
     const val DEVICE_DISPLAY_GROUP = 32768
 
     // ---------------------------------------------------------------- 组合
 
-    /** 所有版本都要的基础集 = 459。 */
+    /** 所有版本都要的基础集。 */
     const val BASE: Int = PUBLIC or PRESENTATION or OWN_CONTENT_ONLY or
         SUPPORTS_TOUCH or ROTATES_WITH_CONTENT or DESTROY_CONTENT_ON_REMOVAL or
         SHOULD_SHOW_SYSTEM_DECORATIONS
 
-    /** API 33 起追加 = 15360。 */
+    /** API 33 起追加：TRUSTED + 自成显示组 + 常亮 + 无触摸反馈。 */
     const val API33_ADDED: Int = TRUSTED or OWN_DISPLAY_GROUP or ALWAYS_UNLOCKED or
         TOUCH_FEEDBACK_DISABLED
 
-    /** API 34 起再追加 = 49152。 */
-    const val API34_ADDED: Int = OWN_FOCUS or DEVICE_DISPLAY_GROUP
+    /**
+     * API 34 起再追加：OWN_FOCUS。
+     *
+     * **不含** [DEVICE_DISPLAY_GROUP] —— 见那个常量的注释，它会顶掉
+     * OWN_DISPLAY_GROUP 且自身无效。
+     */
+    const val API34_ADDED: Int = OWN_FOCUS
 
     /**
      * 按系统版本算出该传的 flags。

@@ -218,6 +218,28 @@ class Pvz2UserService : IPvz2Service.Stub() {
     @Volatile
     private var virtualDisplaySurface: Surface? = null
 
+    /** 采集缓冲。会话期内复用，见 acquireFrameFd 的注释。 */
+    private var frameBuffer: java.nio.ByteBuffer? = null
+    private var frameBufferSize = 0
+
+    /** 写文件用的中转块。每帧新建 64KB 也没必要。 */
+    private val writeChunk = ByteArray(64 * 1024)
+
+    private fun ensureFrameBuffer(size: Int): java.nio.ByteBuffer? {
+        if (size <= 0) return null
+        val cur = frameBuffer
+        if (cur != null && frameBufferSize == size) return cur
+        frameBuffer = java.nio.ByteBuffer.allocateDirect(size)
+        frameBufferSize = size
+        return frameBuffer
+    }
+
+    /** 采集缓冲是堆外内存，必须显式断开引用让 Cleaner 回收。 */
+    private fun releaseFrameBuffer() {
+        frameBuffer = null
+        frameBufferSize = 0
+    }
+
     /** 采集尺寸。建屏时记下，取帧按它分配缓冲。 */
     private var captureWidth = 0
     private var captureHeight = 0
@@ -470,7 +492,17 @@ class Pvz2UserService : IPvz2Service.Stub() {
             //   目录 0777 是为了让 App 进程（不同 uid）能进来读。
             ensureDirReadable(dir)
 
-            val buffer = ByteBuffer.allocateDirect(size)
+            // ★ 缓冲复用，不要每帧 allocateDirect。
+            //
+            //   `allocateDirect(3.7MB)` 每帧一次，60fps 就是 **221 MB/s**
+            //   的堆外分配。DirectByteBuffer 只由 Cleaner 回收，ART 还得为
+            //   每次分配调 trackExternalAllocation —— 后果是 shell 进程持续
+            //   触发 GC、帧时间抖动，严重时 OOM: Direct buffer memory。
+            //
+            //   这块缓冲在会话期内复用，只在尺寸变化时重建，
+            //   由 releaseVirtualDisplay 负责释放。
+            val buffer = ensureFrameBuffer(size) ?: return@runCatching null
+            buffer.clear()
             if (!NativeCapture.acquireFrame(buffer, IntArray(2))) {
                 return@runCatching null
             }
@@ -487,7 +519,7 @@ class Pvz2UserService : IPvz2Service.Stub() {
             //   要么看到新的完整文件，不存在中间态。
             val tmp = File(dir, "frame.tmp")
             FileOutputStream(tmp).use { out ->
-                val chunk = ByteArray(64 * 1024)
+                val chunk = writeChunk
                 while (buffer.hasRemaining()) {
                     val n = minOf(chunk.size, buffer.remaining())
                     buffer.get(chunk, 0, n)
@@ -545,14 +577,30 @@ class Pvz2UserService : IPvz2Service.Stub() {
         virtualDisplaySurface = null
         virtualDisplayId = -1
 
-        if (display == null) return
-        // 顺序要紧：先释放屏，再释放 Surface。反过来的话屏还挂在一块已经没了的
-        // buffer 队列上，某些 ROM 会直接崩在 native 层。
-        runCatching { display.javaClass.getMethod("release").invoke(display) }
-            .onFailure { Log.w(TAG, "释放虚拟屏失败", it) }
+        // ★ 不能在这里 `if (display == null) return`。
+        //
+        //   之前就是这么写的，而建屏失败路径恰好满足 display == null：
+        //   createDisplayWithCapture 先 NativeCapture.setup() 成功（拿着
+        //   AImageReader + 3 个 GraphicBuffer + Surface），随后
+        //   createVirtualDisplay 抛异常 → catch 里调 releaseVirtualDisplay
+        //   → 因为 virtualDisplay 还是 null 就 return 了 → **采集端全泄漏**，
+        //   一直漏到 UserService 进程退出。
+        //
+        //   所以：屏和采集端是两回事，各自独立释放。
+        if (display != null) {
+            // 顺序要紧：先释放屏，再释放 Surface。反过来的话屏还挂在一块已经
+            // 没了的 buffer 队列上，某些 ROM 会直接崩在 native 层。
+            runCatching { display.javaClass.getMethod("release").invoke(display) }
+                .onFailure { Log.w(TAG, "释放虚拟屏失败", it) }
+        }
         runCatching { surface?.release() }
+
+        // 采集端（native AImageReader + window）无条件释放。
         runCatching { NativeCapture.release() }
-        Log.i(TAG, "虚拟屏已释放 displayId=$id")
+        // 堆外采集缓冲也一起放掉，否则停屏后还占着 3.7MB direct 内存。
+        runCatching { releaseFrameBuffer() }
+
+        if (display != null) Log.i(TAG, "虚拟屏已释放 displayId=$id")
     }
 
     /** 当前虚拟屏的 displayId，没有则 -1。调试用。 */

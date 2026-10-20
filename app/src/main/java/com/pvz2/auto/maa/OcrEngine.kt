@@ -17,7 +17,18 @@ data class OcrLine(
     val text: String,
     val confidence: Double,
     val centerX: Float,
-    val centerY: Float
+    val centerY: Float,
+    /**
+     * 文本框在**传入图像（即 ROI）内**的左上角与尺寸。
+     *
+     * 为什么要带出来：`target_offset` 的语义是"在命中框上叠加偏移"，
+     * 而 `Hit.box` 对 OCR 结果原本是空的 —— 空框上做偏移会算出屏幕外坐标
+     * （例如 `无尽挑战_选取神器` 的 offset [12,69,-58,-21] 会得到 cx=-17）。
+     */
+    val boxX: Float = 0f,
+    val boxY: Float = 0f,
+    val boxWidth: Float = 0f,
+    val boxHeight: Float = 0f,
 )
 
 /**
@@ -274,7 +285,11 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                         text = decoded.first,
                         confidence = decoded.second,
                         centerX = (box.x0 + box.width / 2f),
-                        centerY = (box.y0 + box.height / 2f)
+                        centerY = (box.y0 + box.height / 2f),
+                        boxX = box.x0.toFloat(),
+                        boxY = box.y0.toFloat(),
+                        boxWidth = box.width.toFloat(),
+                        boxHeight = box.height.toFloat()
                     )
                 }
             }

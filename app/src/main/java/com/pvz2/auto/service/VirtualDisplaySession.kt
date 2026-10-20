@@ -13,9 +13,13 @@ import com.pvz2.auto.shizuku.VirtualDisplayFlags
 import com.pvz2.auto.shizuku.VirtualDisplaySurface
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -241,19 +245,27 @@ class VirtualDisplaySession(
     }
 
     private fun readFrameFromService(service: IPvz2Service): Mat? {
+        // ★ pfd 必须在**所有**返回路径上关闭。
+        //
+        //   之前的写法是 `pfd.statSize <= 0` 和异常路径都直接 `return null`，
+        //   pfd 就漏了。屏上没内容（黑帧）时每 120ms 漏一个 fd，
+        //   长跑会耗尽每进程 1024 的文件描述符上限 —— 表现是采集突然全挂，
+        //   且不会有一条"fd 用尽"的日志。
+        //
+        //   用 use{} 包住：它保证 close，包括提前 return 和抛异常。
         val pfd = service.acquireFrameFd() ?: return null
         return try {
-            val length = pfd.statSize
-            if (length <= 0L) return null
-
-            val w = VD_WIDTH
-            val h = VD_HEIGHT
-            val need = w * h * 4
-            if (length.toInt() < need) return null
-            if (!ensureFrameBuffers(w, h)) return null
-
-            val bytes = frameBytes
             ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+                val length = pfd.statSize
+                if (length <= 0L) return null
+
+                val w = VD_WIDTH
+                val h = VD_HEIGHT
+                val need = w * h * 4
+                if (length.toInt() < need) return null
+                if (!ensureFrameBuffers(w, h)) return null
+
+                val bytes = frameBytes
                 var read = 0
                 while (read < need) {
                     val n = input.read(bytes, read, need - read)
@@ -261,13 +273,13 @@ class VirtualDisplaySession(
                     read += n
                 }
                 if (read < need) return null
-            }
 
-            val rgba = frameRgba ?: return null
-            val bgr = frameBgr ?: return null
-            rgba.put(0, 0, bytes, 0, need)
-            Imgproc.cvtColor(rgba, bgr, Imgproc.COLOR_RGBA2BGR)
-            bgr
+                val rgba = frameRgba ?: return null
+                val bgr = frameBgr ?: return null
+                rgba.put(0, 0, bytes, 0, need)
+                Imgproc.cvtColor(rgba, bgr, Imgproc.COLOR_RGBA2BGR)
+                bgr
+            }
         } catch (t: Throwable) {
             Log.w(TAG, "读帧失败", t)
             null
@@ -720,8 +732,28 @@ class VirtualDisplaySession(
      * 诊断信息应当**保留到下一次建屏**，而不是跟随运行状态重置。
      */
     fun stop() {
-        frameJob?.cancel()
+        // ★ 必须**等到帧循环真正退出**之后才能释放缓冲。
+        //
+        //   `cancel()` 是协作式的：帧循环可能正卡在不可取消的段里 ——
+        //   Binder 取帧（跨进程）+ 3.7MB 读 + cvtColor，一次 15~40ms。
+        //   cancel 下去它不会立刻停，还会把这一轮跑完，包括往
+        //   frameRgba / frameBgr 里写数据。
+        //
+        //   而 cleanup() 紧接着就把这两个 Mat release 掉了 —— 于是
+        //   cvtColor 作用在已释放的 native 内存上：轻则 CvException 丢帧，
+        //   重则 OpenCV 在已释放的 Mat 上 memcpy 到空指针。
+        //
+        //   这个窗口在 60fps 下**几乎每次停止都会命中**。
+        //   （上一轮我把缓冲从"每帧新分配"改成"复用"之后，这里就从浪费
+        //     变成了 use-after-free —— 是我的回归。）
+        val job = frameJob
         frameJob = null
+        if (job != null) {
+            runBlocking {
+                // 给个上限：万一 binder 调用卡死，也不能让 UI 永远转圈。
+                withTimeoutOrNull(STOP_JOIN_TIMEOUT_MS) { job.cancelAndJoin() }
+            }
+        }
         cleanup()
 
         val prev = _state.value
@@ -767,12 +799,31 @@ class VirtualDisplaySession(
      * 自己的流水存在内存里，不受别人刷屏影响。
      */
     private fun update(transform: (State) -> State) {
-        val next = transform(_state.value)
-        if (next.message != _state.value.message) {
-            appendHistory(next.message)
+        // ★ 用 update{}（CAS 重试）而不是「读 → 改 → 写」。
+        //
+        //   之前的写法是 `transform(_state.value)` 然后赋值。帧循环、
+        //   start()、launchOrMove()、stop() 跑在不同的 IO 线程上，两个
+        //   调用可能交错：
+        //      线程A 读 prev(running=true) → 加 fps
+        //      线程B 读 prev(running=true) → 置 running=false
+        //      线程A 回写 running=true     ← stop() 白做了
+        //   反过来 stop() 也可能把帧循环刚写的 fps 覆盖掉。
+        //
+        //   MutableStateFlow.update{} 内部是 compareAndSet 重试，能保证
+        //   每次变换都基于最新的值。
+        var messageChanged = false
+        var newMessage = ""
+        val withLog = _state.updateAndGet { prev ->
+            val next = transform(prev)
+            if (next.message != prev.message) {
+                messageChanged = true
+                newMessage = next.message
+            }
+            next.copy(history = eventLog.toList())
         }
-        val withLog = next.copy(history = eventLog.toList())
-        _state.value = withLog
+        // history 的记录放在 CAS 之后：appendHistory 会改 eventLog，
+        // 不能放在 updateAndGet 的 lambda 里（重试时会重复写入）。
+        if (messageChanged) appendHistory(newMessage)
         shared.value = withLog
     }
 
@@ -826,6 +877,16 @@ class VirtualDisplaySession(
         const val VD_HEIGHT = 720
         const val VD_DPI = 240
         const val POLL_INTERVAL_MS = 120L
+
+        /**
+         * 停止时等待帧循环退出的上限。
+         *
+         * 必须等 —— 帧循环可能正卡在不可取消的 Binder 取帧里，此时释放
+         * 复用缓冲就是 use-after-free。但也不能无限等：万一 binder 真的
+         * 卡死，UI 不能永远转圈。超过这个时间就放弃等待、直接释放
+         * （此时冒一次风险，好过整个应用无响应）。
+         */
+        const val STOP_JOIN_TIMEOUT_MS = 1500L
 
         /**
          * 界面状态刷新间隔。
