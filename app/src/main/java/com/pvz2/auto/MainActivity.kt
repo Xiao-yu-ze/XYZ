@@ -670,6 +670,8 @@ class MainActivity : AppCompatActivity() {
                             probes.forEach { appendLine(it.toString()) }
                             appendLine()
                             appendLine("可信 ${probes.count { it.trustworthy }} / ${probes.size}")
+                            val total = probes.sumOf { it.costMs }
+                            appendLine("识别总耗时 ${"%.2f".format(total)} ms（${probes.size} 个模板）")
                             appendLine()
                             appendLine("「孤立度」= 最高分 − 次高分（次高分已扣掉峰值邻域）。")
                             appendLine("  真命中会有明显高于周围的锐利峰值，孤立度通常 > 0.1；")

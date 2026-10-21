@@ -198,24 +198,7 @@ class Recognizer(private val context: Context) {
         try {
             Imgproc.matchTemplate(region, template, result, Imgproc.TM_CCOEFF_NORMED)
             val mm = Core.minMaxLoc(result)
-
-            // 把峰值邻域抹掉，再取一次最大值 —— 得到"次高分"。
-            //
-            // 邻域半径取模板的一半：同一物体在相邻位置也会给高分，
-            // 不抹掉的话 secondBest 只是峰值旁边的点，margin 恒接近 0，没有意义。
-            val rx = (template.width() / 2).coerceAtLeast(1)
-            val ry = (template.height() / 2).coerceAtLeast(1)
-            val left = (mm.maxLoc.x.toInt() - rx).coerceAtLeast(0)
-            val top = (mm.maxLoc.y.toInt() - ry).coerceAtLeast(0)
-            val right = (mm.maxLoc.x.toInt() + rx).coerceAtMost(result.cols() - 1)
-            val bottom = (mm.maxLoc.y.toInt() + ry).coerceAtMost(result.rows() - 1)
-            if (right > left && bottom > top) {
-                result.submat(
-                    org.opencv.core.Rect(left, top, right - left + 1, bottom - top + 1)
-                ).setTo(org.opencv.core.Scalar(-1.0))
-            }
-
-            val second = Core.minMaxLoc(result).maxVal
+            val second = secondPeak(result, mm.maxLoc, template.width(), template.height())
             return ScoreStats(mm.maxVal, second)
         } catch (t: Throwable) {
             Log.w(TAG, "scoreStats 失败 $path", t)
@@ -225,6 +208,35 @@ class Recognizer(private val context: Context) {
             region.release()
         }
     }
+
+    /**
+     * 抹掉峰值邻域后返回次高分。
+     *
+     * 邻域半径取模板的一半：同一物体在相邻位置也会给高分，不抹掉的话
+     * 次高分只是峰值旁边的点，孤立度恒接近 0，没有意义。
+     *
+     * ★ 会**就地修改** [result]。
+     */
+    private fun secondPeak(
+        result: Mat,
+        peak: org.opencv.core.Point,
+        templateWidth: Int,
+        templateHeight: Int
+    ): Double {
+        val rx = (templateWidth / 2).coerceAtLeast(1)
+        val ry = (templateHeight / 2).coerceAtLeast(1)
+        val left = (peak.x.toInt() - rx).coerceAtLeast(0)
+        val top = (peak.y.toInt() - ry).coerceAtLeast(0)
+        val right = (peak.x.toInt() + rx).coerceAtMost(result.cols() - 1)
+        val bottom = (peak.y.toInt() + ry).coerceAtMost(result.rows() - 1)
+        if (right > left && bottom > top) {
+            result.submat(org.opencv.core.Rect(left, top, right - left + 1, bottom - top + 1))
+                .setTo(org.opencv.core.Scalar(-1.0))
+        }
+        return Core.minMaxLoc(result).maxVal
+    }
+
+    
 
     private fun matchOne(
         frame: Mat,
@@ -263,6 +275,24 @@ class Recognizer(private val context: Context) {
 
             val mm = Core.minMaxLoc(result)
             if (mm.maxVal < recognition.threshold) return null
+
+            // ★ 这里**不做**峰值孤立度判定。
+            //
+            //   我一度加了"孤立度 = 最高分 − 次高分"的门槛，用来拦掉
+            //   "X 不存在却拿 0.710"这种假命中。实测确实有效，但代价是
+            //   每帧每个模板多一次全矩阵 clone + minMaxLoc（最坏 4.8 MB 拷贝）。
+            //   识别速度是第一优先级，不能这么换。
+            //
+            //   对照 MaaFramework 的 TemplateMatcher.cpp 后确认：它**不做**这件事。
+            //   它的做法是 matchTemplate → 单趟扫出所有 ≥0.5 的结果 →
+            //   NMS(IoU 0.2) 去重 → 按阈值过滤，防误判完全交给
+            //   **ROI 缩小搜索区** 和阈值。
+            //
+            //   而"高分是噪声堆出来的"这个现象本身也只在小模板全屏搜索时严重：
+            //   真实 pipeline 每个节点都有 roi（搜索区小两个数量级），
+            //   虚高不会发生。所以正确做法是把 roi 用起来，不是在热路径上加检查。
+            //
+            //   孤立度判定保留在 [scoreStats] 里，只给自检用 —— 诊断用不着快。
 
             // 这里有两套坐标系，务必分清：
             //   boxX/boxY/centerX/centerY —— **物理像素**（roi 和 maxLoc 都是物理的）
@@ -538,5 +568,7 @@ class Recognizer(private val context: Context) {
 
         /** MaaPVZ 的 ColorMatch method=40 表示 BGR2HSV。 */
         const val COLOR_METHOD_HSV = 40
+
+        
     }
 }

@@ -42,7 +42,11 @@ class RecognitionSelfTest(private val context: Context) {
         val hitX: Double,
         val hitY: Double,
         val boxDesc: String,
-        val threshold: Double
+        val threshold: Double,
+        /** 该模板**识别一次**的耗时（毫秒）。这是速度优化的唯一依据。 */
+        val costMs: Double,
+        /** 搜索区面积（像素）。全屏时等于整帧，是虚高和慢的共同来源。 */
+        val searchPixels: Int
     ) {
         /** 峰值孤立度。高 = 真命中，低 = 噪声。 */
         val margin: Double get() = best - secondBest
@@ -67,6 +71,7 @@ class RecognitionSelfTest(private val context: Context) {
             }
             return "$mark $name  分数 ${"%.3f".format(best)}（阈值 ${"%.2f".format(threshold)}）\n" +
                 "   次高 ${"%.3f".format(secondBest)}  孤立度 ${"%.3f".format(margin)} → $verdict\n" +
+                "   耗时 ${"%.2f".format(costMs)} ms  搜索区 ${searchPixels} px\n" +
                 "   命中 ($hitX, $hitY)  框 $boxDesc"
         }
     }
@@ -97,25 +102,37 @@ class RecognitionSelfTest(private val context: Context) {
 
             return templates.mapIndexed { i, path ->
                 val roi = rois.getOrNull(i)
+                // 搜索区面积。全屏时就是整帧 —— 这是"慢"和"分数虚高"的共同来源，
+                // 报出来才能判断该不该给这个节点加 roi。
+                val searchPixels = if (roi == null || roi.size < 4) {
+                    frame.width() * frame.height()
+                } else {
+                    roi[2] * roi[3]
+                }
+
+                val startedAt = System.nanoTime()
                 val stats = runCatching { recognizer.scoreStats(frame, path, roi) }
                     .onFailure { Log.w(TAG, "scoreStats $path 抛异常", it) }
                     .getOrNull()
+                // 再取一次命中位置（scoreStats 只给分数，位置要从 recognize 拿）。
+                val hit = if (stats == null) null else runCatching {
+                    recognizer.recognize(
+                        frame,
+                        com.pvz2.auto.maa.Recognition.Template(
+                            templates = listOf(path),
+                            roi = roi,
+                            threshold = 0.0
+                        )
+                    )
+                }.getOrNull()
+                val costMs = (System.nanoTime() - startedAt) / 1_000_000.0
 
                 if (stats == null) {
-                    Probe(path, -1.0, -1.0, -1.0, -1.0, "模板未加载", threshold)
+                    Probe(
+                        path, -1.0, -1.0, -1.0, -1.0, "模板未加载",
+                        threshold, costMs, searchPixels
+                    )
                 } else {
-                    // 再取一次命中位置（scoreStats 只给分数，位置要从 recognize 拿）。
-                    val hit = runCatching {
-                        recognizer.recognize(
-                            frame,
-                            com.pvz2.auto.maa.Recognition.Template(
-                                templates = listOf(path),
-                                roi = roi,
-                                threshold = 0.0
-                            )
-                        )
-                    }.getOrNull()
-
                     val b = hit?.box
                     Probe(
                         name = path,
@@ -127,7 +144,9 @@ class RecognitionSelfTest(private val context: Context) {
                             b == null || (b.width() == 0 && b.height() == 0) -> "（空）"
                             else -> "(${b.left},${b.top}) ${b.width()}×${b.height()}"
                         },
-                        threshold = threshold
+                        threshold = threshold,
+                        costMs = costMs,
+                        searchPixels = searchPixels
                     )
                 }
             }
