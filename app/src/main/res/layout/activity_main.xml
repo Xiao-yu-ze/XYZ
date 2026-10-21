@@ -1,324 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  主界面。
+  主界面：**预览固定，功能滑动**。
 
-  结构决策（不是"把按钮排一排"）：
+  ## 为什么是这个结构
 
-  · **四个权限项是序列，不是并列的四个按钮。** 提示里写着"顺序做完这四项"，
-    所以用带序号和完成状态的清单行 —— 序号在这里是**有信息量的**
-    （它标出顺序和进度），不是为了装饰。
-    这样把 4 个等权重的大按钮压成 4 行轻量文本，视觉噪音大幅下降。
+  用户的要求：每个功能单独一页，但每一页都要能看到虚拟屏，功能放在下面，
+  左右滑动切换，且切换不能影响预览。
 
-  · **整屏只有一个实心按钮**（启动自动化）。其它一律安静：
-    停止是文字按钮，降级/悬浮面板是描边按钮。
-    一眼就能看出"主路径在哪"。
+  所以布局是垂直两段：
+    上段 = 预览（不随翻页变化，始终可见、始终在收帧）
+    下段 = ViewPager2（三页：屏 / 脚本 / 诊断）
 
-  · **调试工具默认折叠。** 它不是主流程的一部分，
-    常驻展开只会把主路径挤到屏幕外面（之前就是这样，得滚动才找得到）。
-
-  · 状态用**一个卡片 + 状态点**承载，而不是散落的几行文字。
+  预览不能放进 ViewPager 里 —— 那样翻页时它会被销毁重建，
+  画面会黑一下，而且采集要重新开始。
 -->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/paper"
-    android:fillViewport="true">
+    android:orientation="vertical"
+    android:paddingHorizontal="16dp"
+    android:paddingTop="12dp">
 
-    <LinearLayout
+    <!-- ==================== 上段：预览（固定） ==================== -->
+
+    <TextView
+        style="@style/Text.Display"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/ui_title" />
+
+    <!-- 预览面板。16:9 自适应，圆角 + 描边。
+         描边用 foreground，因为 View.draw 的顺序是
+         背景 → 自身 → 子控件 → 前景，写在 background 里会被画面盖掉。 -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingHorizontal="20dp"
-        android:paddingTop="28dp"
-        android:paddingBottom="32dp">
+        android:layout_marginTop="8dp"
+        android:gravity="center_horizontal">
 
-        <!-- ==================== 标题 ==================== -->
-        <TextView
-            style="@style/Text.Display"
-            android:layout_width="match_parent"
-            android:text="@string/ui_title" />
-
-        <TextView
-            style="@style/Text.Subtitle"
-            android:text="@string/ui_subtitle" />
-
-        <!-- ==================== 导航 ====================
-             按功能拆页：主页只放"屏"，脚本运行、诊断各占一页。
-             这一行是唯一的入口，不放多余的说明文字 ——
-             说明留在各自的页面里，主页保持干净。 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:orientation="horizontal">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnNavScript"
-                style="@style/AppButton.Outline"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/nav_script" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnNavDiag"
-                style="@style/AppButton.Outline"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:layout_weight="1"
-                android:text="@string/nav_diag" />
-        </LinearLayout>
-
-        <!-- ==================== 状态卡 ==================== -->
-        <LinearLayout
-            style="@style/Card"
-            android:layout_marginTop="20dp"
-            android:orientation="vertical">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <View
-                    android:id="@+id/statusDot"
-                    android:layout_width="9dp"
-                    android:layout_height="9dp"
-                    android:background="@drawable/bg_dot_todo" />
-
-                <TextView
-                    android:id="@+id/tvShizukuState"
-                    style="@style/Text.Body"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_marginStart="9dp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/tvStatus"
-                style="@style/Text.Hint"
-                android:layout_marginTop="6dp"
-                android:layout_marginStart="18dp" />
-        </LinearLayout>
-
-        <!-- ==================== 主操作 ==================== -->
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnStartShizuku"
-            style="@style/AppButton.Primary"
-            android:layout_marginTop="20dp"
-            android:text="@string/btn_start_shizuku" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnStop"
-            style="@style/AppButton.Quiet"
-            android:layout_marginTop="2dp"
-            android:text="@string/btn_stop" />
-
-        <!-- ==================== 准备工作（清单） ==================== -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="26dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                style="@style/Text.Section"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_marginTop="0dp"
-                android:text="@string/section_permissions" />
-
-            <TextView
-                android:id="@+id/tvProgress"
-                style="@style/Text.RowAction"
-                android:textColor="@color/sun" />
-        </LinearLayout>
-
-        <TextView
-            style="@style/Text.Hint"
-            android:text="@string/hint_permissions" />
-
-        <!-- ① -->
-        <LinearLayout
-            android:id="@+id/rowStep1"
-            style="@style/StepRow"
-            android:layout_marginTop="6dp">
-
-            <TextView
-                android:id="@+id/stepNum1"
-                style="@style/StepNumber"
-                android:text="1" />
-
-            <TextView
-                android:id="@+id/stepLabel1"
-                style="@style/Text.Body"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_marginStart="12dp"
-                android:text="@string/btn_authorise_shizuku" />
-
-            <TextView
-                android:id="@+id/stepAction1"
-                style="@style/Text.RowAction"
-                android:textColor="@color/sun" />
-        </LinearLayout>
-
-        <View style="@style/StepDivider" />
-
-        <!-- ② 只有通知权限了：无障碍（降级方案的触控后端）已整体移除 -->
-        <LinearLayout
-            android:id="@+id/rowStep2"
-            style="@style/StepRow">
-
-            <TextView
-                android:id="@+id/stepNum2"
-                style="@style/StepNumber"
-                android:text="2" />
-
-            <TextView
-                android:id="@+id/stepLabel2"
-                style="@style/Text.Body"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_marginStart="12dp"
-                android:text="@string/btn_allow_notifications" />
-
-            <TextView
-                android:id="@+id/stepAction2"
-                style="@style/Text.RowAction"
-                android:textColor="@color/sun" />
-        </LinearLayout>
-
-        <!-- ==================== 虚拟屏（主功能区） ====================
-             这是产品的主路径：一块常驻的 720p 虚拟屏，游戏在里面跑，
-             本界面留在前台。放在"准备工作"之后、"调试工具"之前。 -->
-        <TextView
-            style="@style/Text.Section"
-            android:layout_marginTop="28dp"
-            android:text="@string/section_virtual_display" />
-
-        <TextView
-            style="@style/Text.Hint"
-            android:text="@string/hint_virtual_display" />
-
-        <!-- 渠道选择：不同渠道包名不同，选错了根本启动不了游戏。
-             默认会从已安装列表里自动识别，认不出来才需要手动选。 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                style="@style/Text.Body"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/label_channel" />
-
-            <Spinner
-                android:id="@+id/spChannel"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="8dp" />
-        </LinearLayout>
-
-        <EditText
-            android:id="@+id/etCustomPackage"
-            style="@style/Text.Body"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/hint_custom_package"
-            android:inputType="text"
-            android:singleLine="true"
-            android:visibility="gone" />
-
-        <TextView
-            android:id="@+id/tvChannelHint"
-            style="@style/Text.Hint"
-            android:text="" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:orientation="horizontal">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnVdStart"
-                style="@style/AppButton.Primary"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:text="@string/btn_vd_start" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnVdStop"
-                style="@style/AppButton.Outline"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_marginStart="8dp"
-                android:text="@string/btn_vd_stop" />
-        </LinearLayout>
-
-        <!-- ==================== 画面预览 ====================
-
-             这块区域是本屏的**主角**：用户真正在看的就是它。
-             所以它占据整行宽度、按 16:9 自适应，而不是固定 180dp 高。
-
-             之前的写法是 `layout_height="180dp"` + `fitCenter`：
-             平板上这一行有 950dp 宽、却只有 180dp 高（5.3:1），
-             16:9 的画面按高度适配后只剩 320dp 宽 —— 不到宽度的三分之一，
-             其余全是黑的。既丑，也看不清游戏状态。
-
-             现在由 AspectFrameLayout 让**面板自己**保持 16:9，
-             内层 ImageView match_parent + fitCenter。
-             只有一个变量是宽度，所以任何状态下高度都不跳动。
-
-             background 负责填充与圆角，foreground 负责描边 ——
-             两者必须分开，见 bg_preview_stroke.xml 里的说明。
-
-             clipToOutline 让画面被圆角裁切 —— 否则直角画面会把
-             面板的圆角顶破。
-
-             外面这层 LinearLayout 只做**居中**：AspectFrameLayout 触到
-             高度上限时会把宽度一起收窄（保持 16:9），收窄后就靠这层
-             gravity=center_horizontal 让它站在屏幕中间，而不是贴左。 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:gravity="center_horizontal"
-            android:orientation="vertical">
-
-        <!-- 宽度用 wrap_content 而不是 match_parent：
-             LinearLayout 的 gravity 只对**比父容器窄**的子 View 生效，
-             写 match_parent 时子 View 占满整行，居中无从谈起 ——
-             面板收窄后就会贴在左边。 -->
         <com.pvz2.auto.ui.AspectFrameLayout
             android:id="@+id/flPreview"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:background="@drawable/bg_preview"
             android:clipToOutline="true"
             android:foreground="@drawable/bg_preview_stroke">
 
-            <!-- ImageView 铺满整块面板。
-
-                 面板本身已经严格 16:9（触到高度上限时宽高一起收），
-                 画面也是 16:9，所以 fitCenter 在这里**不产生任何留边** ——
-                 帧率没上来、还没画面时才是纯色底。
-                 保留 fitCenter 只是为了画面与面板比例万一不一致时
-                 也不变形、不裁切。
-
-                 不要改用 adjustViewBounds：那与 fitCenter 是相反策略
-                 （前者"控件跟着图变"，后者"图跟着控件缩"），
-                 同时用会互相打断，且行为依赖 View 的测量顺序。 -->
             <ImageView
                 android:id="@+id/ivVdPreview"
                 android:layout_width="match_parent"
@@ -326,8 +54,6 @@
                 android:contentDescription="@string/vd_preview_desc"
                 android:scaleType="fitCenter" />
 
-            <!-- 空状态：没启动时这块是纯黑的，如果不解释一句，
-                 看起来就像"坏了"。用一句安静的提示把它讲清楚。 -->
             <TextView
                 android:id="@+id/tvPreviewEmpty"
                 style="@style/Text.Hint"
@@ -337,54 +63,87 @@
                 android:text="@string/vd_preview_empty"
                 android:textColor="@color/ink_faint" />
         </com.pvz2.auto.ui.AspectFrameLayout>
-        </LinearLayout>
+    </FrameLayout>
 
-        <!-- 预览下面的一行遥测：左边状态，右边帧率。
-             不做成卡片、不加边框 —— 它是画面的注释，不是独立模块。 -->
-        <LinearLayout
-            android:layout_width="match_parent"
+    <!-- 预览下面一行：左边状态，右边帧率。 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/tvVdState"
+            style="@style/Text.Body"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:baselineAligned="true"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/tvVdState"
-                style="@style/Text.Body"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/vd_state_idle" />
-
-            <TextView
-                android:id="@+id/tvVdFps"
-                style="@style/Text.Hint"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=""
-                android:visibility="gone" />
-        </LinearLayout>
+            android:layout_weight="1"
+            android:text="@string/vd_state_idle" />
 
         <TextView
-            android:id="@+id/tvVdDetail"
+            android:id="@+id/tvVdFps"
             style="@style/Text.Hint"
-            android:layout_marginTop="2dp"
-            android:text="" />
-
-        <!-- 出问题时最重要的一件事：把日志弄出来。
-             放在主功能区（不折叠），因为用户往往就是卡在这里需要求助。 -->
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnExportLog"
-            style="@style/AppButton.Outline"
-            android:layout_marginTop="12dp"
-            android:text="@string/btn_export_log" />
-
-        <TextView
-            android:id="@+id/tvLogHint"
-            style="@style/Text.Hint"
-            android:text="@string/hint_export_log" />
-
-
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:visibility="gone" />
     </LinearLayout>
-</ScrollView>
+
+    <TextView
+        android:id="@+id/tvVdDetail"
+        style="@style/Text.Hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="" />
+
+    <!-- 说明预览可点。没有这句，用户根本不会想到去点画面。 -->
+    <TextView
+        style="@style/Text.Hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/vd_preview_tap_hint" />
+
+    <!-- ==================== 下段：功能页（可滑动） ==================== -->
+
+    <ViewPager2
+        android:id="@+id/pager"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="10dp"
+        android:layout_weight="1" />
+
+    <!-- 页码点。三页不多，一行点足够，不占地方。 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:gravity="center_horizontal"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/dot0"
+            style="@style/Text.RowAction"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="6dp"
+            android:text="@string/page_dot_on" />
+
+        <TextView
+            android:id="@+id/dot1"
+            style="@style/Text.RowAction"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="6dp"
+            android:text="@string/page_dot_off" />
+
+        <TextView
+            android:id="@+id/dot2"
+            style="@style/Text.RowAction"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="6dp"
+            android:text="@string/page_dot_off" />
+    </LinearLayout>
+
+</LinearLayout>

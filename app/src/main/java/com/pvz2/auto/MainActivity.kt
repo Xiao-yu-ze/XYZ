@@ -6,6 +6,11 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.view.MotionEvent
 import com.pvz2.auto.core.PreviewTouchMapper
+import android.view.ViewGroup
+import androidx.recyclerview.widget.RecyclerView
+import androidx.viewpager2.widget.ViewPager2
+import com.pvz2.auto.ui.page.ScriptPage
+import com.pvz2.auto.ui.page.DiagPage
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -52,6 +57,11 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         const val TAG = "MainActivity"
 
+        /** 功能页下标。 */
+        const val PAGE_SCREEN = 0
+        const val PAGE_SCRIPT = 1
+        const val PAGE_DIAG = 2
+
         /** 虚拟屏尺寸。建屏时写死 1280×720（见 VirtualDisplaySession）。 */
         const val VD_WIDTH = 1280
         const val VD_HEIGHT = 720
@@ -69,8 +79,16 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private lateinit var shizukuStateView: TextView
-    private lateinit var statusView: TextView
+    /**
+     * 第 1 页（屏）的根视图。
+     *
+     * 页面在 ViewPager2 里会被创建和回收，所以不能像以前那样在 onCreate
+     * 里一次性 findViewById —— 控件属于某一页，必须从那一页的根上找。
+     */
+    private var screenRoot: View? = null
+
+    private var shizukuStateView: TextView? = null
+    private var statusView: TextView? = null
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -102,57 +120,11 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        shizukuStateView = findViewById(R.id.tvShizukuState)
-        statusView = findViewById(R.id.tvStatus)
-
-        // 两个准备步骤现在是清单行，不再各自是一个大按钮。
-        // 行整行可点，右侧文字显示状态。
-        // 悬浮窗与无障碍这两行都已去掉：
-        //  · 悬浮窗 —— 所有操作都在本界面做（虚拟屏下游戏跑副屏，不遮挡本界面）；
-        //  · 无障碍 —— 它是 MediaProjection 降级方案的触控后端，降级方案已整体移除。
-        findViewById<LinearLayout>(R.id.rowStep1).setOnClickListener { requestShizukuPermission() }
-        findViewById<LinearLayout>(R.id.rowStep2).setOnClickListener {
-            requestNotificationPermission()
-        }
-
-        findViewById<MaterialButton>(R.id.btnStartShizuku).setOnClickListener {
-            AutomationService.startShizuku(this)
-        }
-        findViewById<MaterialButton>(R.id.btnStop).setOnClickListener { AutomationService.stop(this) }
-
-        // 虚拟屏：主功能区的两个按钮
-        findViewById<MaterialButton>(R.id.btnVdStart).setOnClickListener {
-            val pkg = ChannelPrefs.resolvePackage(this)
-            if (pkg.isNullOrBlank()) {
-                // 没有可用包名时别静默失败 —— 直接告诉用户该做什么。
-                findViewById<TextView>(R.id.tvChannelHint).text =
-                    getString(R.string.channel_not_found)
-            } else {
-                AutomationService.vdStart(this, pkg)
-            }
-        }
-        findViewById<MaterialButton>(R.id.btnVdStop).setOnClickListener {
-            AutomationService.vdStop(this)
-        }
-
-        setupChannelPicker()
+        // 预览固定在顶部，功能页在下面用 ViewPager2 左右滑动切换。
+        // 预览**不能**放进 pager —— 那样翻页时会重建，画面黑一下、采集要重来。
+        setupPreviewTouch()
         observePreview()
-
-        // 导出日志：把关键日志存成文件并弹分享。
-        // 真机上没有电脑连着的时候，这是唯一能把现场发给别人的办法。
-        findViewById<MaterialButton>(R.id.btnExportLog).setOnClickListener {
-            exportLogs()
-        }
-
-        // 按功能拆页：诊断工具搬到独立页面（注入自检 / 识别自检），
-        // 脚本运行也有自己的一页。主页只留"屏"和导航 ——
-        // 预览本来就占掉大半屏，工具再堆进来两边都挤。
-        findViewById<MaterialButton>(R.id.btnNavScript).setOnClickListener {
-            startActivity(Intent(this, ScriptActivity::class.java))
-        }
-        findViewById<MaterialButton>(R.id.btnNavDiag).setOnClickListener {
-            startActivity(Intent(this, DiagnosticsActivity::class.java))
-        }
+        setupPager()
 
         // Shizuku can arrive or disappear while we are on screen, so track both edges.
         ShizukuBridge.addPermissionResultListener(shizukuPermissionListener)
@@ -160,11 +132,107 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch { BotState.status.collect { statusView.text = it } }
+                launch { BotState.status.collect { statusView?.text = it } }
                 // 虚拟屏状态：服务写、界面读。两者是独立组件，所以走进程级单例流。
                 launch { VirtualDisplaySession.sharedState.collect { renderVirtualDisplay(it) } }
             }
         }
+    }
+
+    // ------------------------------------------------------------ 分页
+
+    /**
+     * 三个功能页：屏 / 脚本 / 诊断。
+     *
+     * 预览在 pager **外面**（固定在顶部），所以翻页不影响画面和采集。
+     * 功能页做成 view 而不是 Activity 也是因为这个 ——
+     * 独立 Activity 一翻页预览就看不见了，而脚本运行时最需要看画面。
+     */
+    private fun setupPager() {
+        val pager = findViewById<ViewPager2>(R.id.pager)
+        pager.adapter = PageAdapter()
+        pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+            override fun onPageSelected(position: Int) = renderDots(position)
+        })
+        renderDots(0)
+    }
+
+    private fun renderDots(selected: Int) {
+        val ids = intArrayOf(R.id.dot0, R.id.dot1, R.id.dot2)
+        ids.forEachIndexed { i, id ->
+            findViewById<TextView>(id).apply {
+                text = getString(
+                    if (i == selected) R.string.page_dot_on else R.string.page_dot_off
+                )
+                setTextColor(
+                    ContextCompat.getColor(
+                        this@MainActivity,
+                        if (i == selected) R.color.ink else R.color.ink_faint
+                    )
+                )
+            }
+        }
+    }
+
+    private inner class PageAdapter : RecyclerView.Adapter<PageAdapter.Holder>() {
+        override fun getItemCount(): Int = 3
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+            val layout = when (viewType) {
+                PAGE_SCREEN -> R.layout.page_screen
+                PAGE_SCRIPT -> R.layout.activity_script
+                else -> R.layout.activity_diagnostics
+            }
+            return Holder(layoutInflater.inflate(layout, parent, false))
+        }
+
+        override fun onBindViewHolder(holder: Holder, position: Int) {
+            when (position) {
+                PAGE_SCREEN -> bindScreenPage(holder.itemView)
+                PAGE_SCRIPT -> ScriptPage(this@MainActivity, holder.itemView).bind()
+                else -> DiagPage(this@MainActivity, holder.itemView).bind()
+            }
+        }
+
+        inner class Holder(v: View) : RecyclerView.ViewHolder(v)
+    }
+
+    /**
+     * 第 1 页：屏。
+     *
+     * 这一页会被 ViewPager2 反复创建和回收，所以控件引用每次都以 [root] 为准。
+     */
+    private fun bindScreenPage(root: View) {
+        screenRoot = root
+        shizukuStateView = root.findViewById(R.id.tvShizukuState)
+        statusView = root.findViewById(R.id.tvStatus)
+
+        root.findViewById<MaterialButton>(R.id.btnStartShizuku).setOnClickListener {
+            AutomationService.startShizuku(this)
+        }
+        root.findViewById<MaterialButton>(R.id.btnStop).setOnClickListener {
+            AutomationService.stop(this)
+        }
+        root.findViewById<MaterialButton>(R.id.btnVdStart).setOnClickListener {
+            val pkg = ChannelPrefs.resolvePackage(this)
+            if (pkg.isNullOrBlank()) {
+                // 没有可用包名时别静默失败 —— 直接告诉用户该做什么。
+                root.findViewById<TextView>(R.id.tvChannelHint).text =
+                    getString(R.string.channel_not_found)
+            } else {
+                AutomationService.vdStart(this, pkg)
+            }
+        }
+        root.findViewById<MaterialButton>(R.id.btnVdStop).setOnClickListener {
+            AutomationService.vdStop(this)
+        }
+        // 导出日志：真机上没电脑连着时，这是唯一能把现场发给别人的办法。
+        root.findViewById<MaterialButton>(R.id.btnExportLog).setOnClickListener {
+            exportLogs()
+        }
+
+        setupChannelPicker(root)
+        refreshShizukuState()
     }
 
     /**
@@ -178,10 +246,10 @@ class MainActivity : AppCompatActivity() {
      * 为什么需要它：不同渠道的包名不同，选错就启动不了游戏，
      * 而之前代码里硬编码的是 OPPO 渠道的包名。
      */
-    private fun setupChannelPicker() {
-        val spinner = findViewById<Spinner>(R.id.spChannel)
-        val customInput = findViewById<EditText>(R.id.etCustomPackage)
-        val hint = findViewById<TextView>(R.id.tvChannelHint)
+    private fun setupChannelPicker(root: View) {
+        val spinner = root.findViewById<Spinner>(R.id.spChannel)
+        val customInput = root.findViewById<EditText>(R.id.etCustomPackage)
+        val hint = root.findViewById<TextView>(R.id.tvChannelHint)
 
         // 选项 = 全部渠道 + 末尾的「自定义包名…」
         val labels = Pvz2Channels.ALL.map { "${it.label}（${it.packageName}）" } +
@@ -569,7 +637,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshShizukuState() {
-        shizukuStateView.text = when {
+        shizukuStateView?.text = when {
             !ShizukuBridge.isBinderAlive() -> getString(R.string.shizuku_not_running)
 
             ShizukuBridge.hasPermission() -> getString(
@@ -579,62 +647,7 @@ class MainActivity : AppCompatActivity() {
 
             else -> getString(R.string.shizuku_no_permission)
         }
-        refreshStatusDot()
-        refreshSetupSteps()
-    }
 
-    /** 状态点颜色：红了=Shizuku 没跑，金=跑了但没授权，绿=可用。 */
-    private fun refreshStatusDot() {
-        findViewById<View>(R.id.statusDot).setBackgroundResource(
-            when {
-                !ShizukuBridge.isBinderAlive() -> R.drawable.bg_dot_bad
-                ShizukuBridge.hasPermission() -> R.drawable.bg_dot_ok
-                else -> R.drawable.bg_dot_todo
-            }
-        )
-    }
-
-    /**
-     * 刷新准备清单的完成状态。
-     *
-     * 两个步骤的完成判定互相独立，而且**随时可能被外部改变**
-     * （用户跳去系统设置授权再回来），所以放在 [onResume] 里也调一次。
-     *
-     * 只剩两步了：悬浮窗（改成界面内操作）和无障碍（降级方案移除）都已删掉。
-     */
-    private fun refreshSetupSteps() {
-        val done = booleanArrayOf(
-            ShizukuBridge.hasPermission(),
-            notificationsGranted()
-        )
-        // 每步"未完成"时右侧显示的动词
-        val todoText = intArrayOf(
-            R.string.step_todo_auth,
-            R.string.step_todo_auth
-        )
-        // 每步"已完成"时的措辞
-        val doneText = intArrayOf(
-            R.string.step_granted,
-            R.string.step_granted
-        )
-        val rowIds = intArrayOf(R.id.rowStep1, R.id.rowStep2)
-        val numIds = intArrayOf(R.id.stepNum1, R.id.stepNum2)
-        val actionIds = intArrayOf(R.id.stepAction1, R.id.stepAction2)
-
-        for (i in done.indices) {
-            val isDone = done[i]
-
-            findViewById<TextView>(numIds[i]).setBackgroundResource(
-                if (isDone) R.drawable.bg_step_number_done else R.drawable.bg_step_number
-            )
-            val action = findViewById<TextView>(actionIds[i])
-            action.setText(if (isDone) doneText[i] else todoText[i])
-            // 已完成的行整体压暗，让"还剩哪几步"在扫视时更跳出来。
-            findViewById<LinearLayout>(rowIds[i]).alpha = if (isDone) 0.55f else 1f
-        }
-
-        findViewById<TextView>(R.id.tvProgress)
-            .text = getString(R.string.step_progress, done.count { it }, done.size)
     }
 
     /**

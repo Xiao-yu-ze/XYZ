@@ -121,4 +121,9 @@
     <string name="diag_inject_title">注入自检</string>
     <string name="diag_recog_title">识别自检</string>
     <string name="vd_preview_tap_hint">直接点这块画面就能操作游戏（虚拟屏没有物理触摸，只能这样点）</string>
+    <!-- ===== 分页 ===== -->
+    <string name="page_dot_on">●</string>
+    <string name="page_dot_off">○</string>
+    <string name="page_screen_title">虚拟屏</string>
+    <string name="shizuku_unknown">Shizuku 状态未知</string>
 </resources>

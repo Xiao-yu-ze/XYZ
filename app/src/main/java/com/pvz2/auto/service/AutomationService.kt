@@ -211,8 +211,24 @@ class AutomationService : Service() {
                 val y = intent.getIntExtra(EXTRA_TAP_Y, -1)
                 if (x >= 0 && y >= 0) {
                     scope.launch {
-                        val target = injector ?: return@launch
+                        // ★ 这里**不能**写成 `injector ?: return@launch`。
+                        //
+                        //   注入器原本只在两条路径里创建：runShizukuLoop()（启动
+                        //   自动化）和 withBootstrap()。而"只建虚拟屏"走的是
+                        //   ACTION_VD_START，它不经过那两条 —— 于是 injector 一直是
+                        //   null，每次手动点击都在这里静默返回。
+                        //
+                        //   现象就是"点预览完全没反应"，而且没有任何日志能看出原因。
+                        //   现在按需创建，并把结果报到界面上。
+                        val target = ensureInjector()
+                        if (target == null) {
+                            BotState.setStatus("点击失败：Shizuku 未就绪")
+                            Log.w(TAG, "手动点击跳过：注入器不可用")
+                            return@launch
+                        }
+                        val displayId = vdSession.state.value.displayId
                         target.tap(x.toFloat(), y.toFloat())
+                        BotState.setStatus("已点击 ($x,$y) → display=$displayId")
                     }
                 }
             }
@@ -345,6 +361,45 @@ class AutomationService : Service() {
         val activeInjector = injector ?: return
         val activeMatcher = matcher ?: return
         Pvz2Bot(activeCapturer, activeInjector, activeMatcher, Pvz2Tasks.defaultActions()).run()
+    }
+
+    /**
+     * 确保注入器可用，没有就现造一个。
+     *
+     * ## 为什么需要"按需创建"
+     *
+     * 注入器原本只在两条路径里建：`runShizukuLoop()`（启动自动化）和
+     * `withBootstrap()`。而**只建虚拟屏**走的是 `ACTION_VD_START`，
+     * 不经过那两条 —— 于是 injector 永远是 null。
+     *
+     * 用户手动点预览时注入器是空的，`injector ?: return` 静默返回，
+     * 表现就是"点了完全没反应"，日志里也看不出原因。
+     *
+     * 现在第一次需要时把它建出来，之后复用。
+     */
+    private suspend fun ensureInjector(): TouchInjector? {
+        injector?.let { return it }
+
+        if (!ShizukuBridge.hasPermission()) {
+            Log.w(TAG, "ensureInjector: 没有 Shizuku 权限")
+            return null
+        }
+        // 已经连上就别再 bind —— 重复 bind 会重建连接，正在跑的采集会断。
+        if (shizukuClient.peek() == null) {
+            shizukuClient.bind()
+            val svc = shizukuClient.await()
+            if (svc == null) {
+                Log.w(TAG, "ensureInjector: UserService 连接超时")
+                return null
+            }
+        }
+
+        val created = ShizukuTouchInjector(shizukuClient) {
+            vdSession.state.value.displayId.takeIf { it > 0 } ?: 0
+        }
+        injector = created
+        Log.i(TAG, "ensureInjector: 注入器已就绪")
+        return created
     }
 
     /**
@@ -605,7 +660,7 @@ class AutomationService : Service() {
             ContextCompat.startForegroundService(context, i)
         }
 
-        /** 停止虚拟屏：释放 display、游戏回到主屏。 */
+    /** 停止虚拟屏：释放 display、游戏回到主屏。 */
         fun vdStop(context: Context) {
             ContextCompat.startForegroundService(context, intent(context, ACTION_VD_STOP))
         }

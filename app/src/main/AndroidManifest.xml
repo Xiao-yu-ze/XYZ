@@ -79,16 +79,8 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-            <activity
-            android:name=".ScriptActivity"
-            android:exported="false"
-            android:label="@string/nav_script" />
-
-            <activity
-            android:name=".DiagnosticsActivity"
-            android:exported="false"
-            android:label="@string/nav_diag" />
-
+    
+    
     </application>
 
 </manifest>

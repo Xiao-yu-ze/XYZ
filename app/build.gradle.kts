@@ -75,7 +75,9 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")            // ServiceCompat.startForeground (androidx-core >= 1.12)
+    implementation("androidx.core:core-ktx:1.13.1")
+    // 预览固定在顶部、功能页左右滑动切换。viewpager2 之前只是传递依赖，显式声明避免版本漂移。
+    implementation("androidx.viewpager2:viewpager2:1.1.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")  // repeatOnLifecycle
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
