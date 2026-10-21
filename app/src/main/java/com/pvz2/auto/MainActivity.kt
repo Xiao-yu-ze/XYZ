@@ -177,6 +177,18 @@ class MainActivity : AppCompatActivity() {
     private inner class PageAdapter : RecyclerView.Adapter<PageAdapter.Holder>() {
         override fun getItemCount(): Int = 3
 
+        /**
+         * ★ 必须重写，否则启动即崩。
+         *
+         * `RecyclerView.Adapter` 的默认实现**永远返回 0**。不重写的话
+         * ViewPager2 给三页都传 viewType=0，三页全 inflate 成 page_screen；
+         * 接着 onBindViewHolder 拿第 2/3 页的控件（scriptList、etTapX…）
+         * 去那个错误的布局上找 —— 全部返回 null，赋给非空属性直接 NPE。
+         *
+         * 页下标恰好就是视图类型，一一对应。
+         */
+        override fun getItemViewType(position: Int): Int = position
+
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
             val layout = when (viewType) {
                 PAGE_SCREEN -> R.layout.page_screen
@@ -187,10 +199,17 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onBindViewHolder(holder: Holder, position: Int) {
-            when (position) {
-                PAGE_SCREEN -> bindScreenPage(holder.itemView)
-                PAGE_SCRIPT -> ScriptPage(this@MainActivity, holder.itemView).bind()
-                else -> DiagPage(this@MainActivity, holder.itemView).bind()
+            // 单页绑定失败不该让整个应用起不来。
+            // 一个页面的控件名写错了，用户还能用其它两页，也能把日志导出来；
+            // 直接崩掉的话什么线索都拿不到。
+            runCatching {
+                when (position) {
+                    PAGE_SCREEN -> bindScreenPage(holder.itemView)
+                    PAGE_SCRIPT -> ScriptPage(this@MainActivity, holder.itemView).bind()
+                    else -> DiagPage(this@MainActivity, holder.itemView).bind()
+                }
+            }.onFailure {
+                Log.e(TAG, "第 $position 页绑定失败", it)
             }
         }
 
