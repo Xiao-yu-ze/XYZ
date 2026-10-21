@@ -149,12 +149,14 @@
                 android:layout_height="wrap_content"
                 android:text="@string/label_game_fps" />
 
-            <Spinner
-                android:id="@+id/spGameFps"
+            <TextView
+                android:id="@+id/tvGameFps"
+                style="@style/Text.Body"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
-                android:layout_weight="1" />
+                android:layout_weight="1"
+                android:text="@string/label_game_fps_fixed" />
         </LinearLayout>
 
         <TextView

@@ -140,6 +140,7 @@
     <string name="picker_template">截模板</string>
     <string name="picker_cancel">取消</string>
     <!-- ===== 游戏帧率 ===== -->
-    <string name="label_game_fps">帧率（采集 + 游戏）</string>
-    <string name="hint_game_fps">这一个设置同时决定游戏帧率和采集帧率。游戏跑多快由虚拟屏刷新率决定，采集按同值截流。改完要「停止并释放」再重新启动才生效。</string>
+    <string name="label_game_fps">帧率</string>
+    <string name="hint_game_fps">固定 30fps，同时决定游戏和采集。更高的帧率会让系统服务无响应导致平板重启，在取帧改成事件驱动之前不开放。</string>
+    <string name="label_game_fps_fixed">30 fps（固定）</string>
 </resources>

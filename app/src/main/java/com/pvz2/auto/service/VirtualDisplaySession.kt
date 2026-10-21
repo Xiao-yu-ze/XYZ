@@ -136,7 +136,7 @@ class VirtualDisplaySession(
             return false
         }
         // 采集节流跟随「帧率」设置：与虚拟屏刷新率同源，避免两处数字打架。
-        val wantFps = GameFps.prefs(callerContext)
+        val wantFps = GameFps.FIXED_FPS
         captureIntervalMs = if (wantFps > 0) 1000L / wantFps else 0L
         Log.i(TAG, "采集节流 " + (if (captureIntervalMs > 0) "每 " + captureIntervalMs + "ms" else "不节流"))
 
@@ -157,7 +157,7 @@ class VirtualDisplaySession(
             //   真机 dumpsys 里 `mRequestedRefreshRate=0.0` 才暴露出来。
             //   最可能的原因是**上一版 APK 留下的旧 UserService 进程还在**，
             //   它没有这个方法，调用直接抛异常。
-            val wantFps = GameFps.prefs(callerContext)
+            val wantFps = GameFps.FIXED_FPS
             val wantRate = if (wantFps <= 0) 0f else wantFps.toFloat()
             try {
                 service.setPendingRefreshRate(wantRate)

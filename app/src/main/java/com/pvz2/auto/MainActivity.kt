@@ -288,32 +288,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupChannelPicker(root)
-        setupGameFps(root)
         refreshShizukuState()
-    }
-
-    /**
-     * 游戏帧率上限选择器。
-     *
-     * 游戏在虚拟屏里读 `Display.getRefreshRate()` 决定渲染节奏，
-     * 所以这项实际是「虚拟屏刷新率」，改完必须重新建屏才生效 ——
-     * 建屏之后再改，屏不会自己变。
-     */
-    private fun setupGameFps(root: View) {
-        val spinner = root.findViewById<Spinner>(R.id.spGameFps)
-        spinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            GameFps.OPTIONS.map { GameFps.label(it) }
-        )
-        spinner.setSelection(GameFps.OPTIONS.indexOf(GameFps.prefs(this)).coerceAtLeast(0))
-        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                GameFps.save(this@MainActivity, GameFps.OPTIONS[pos])
-            }
-
-            override fun onNothingSelected(p: AdapterView<*>?) = Unit
-        }
     }
 
     /**
