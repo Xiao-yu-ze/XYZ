@@ -133,4 +133,10 @@
     <string name="editor_summary_filtered">匹配 %1$d / %2$d 个节点</string>
     <string name="chevron_collapsed">▸</string>
     <string name="chevron_expanded">▾</string>
+    <!-- ===== 取点工具 ===== -->
+    <string name="picker_intro">不用知道坐标。点下面任一按钮，然后直接在画面上指：</string>
+    <string name="picker_point">取点</string>
+    <string name="picker_rect">框区域</string>
+    <string name="picker_template">截模板</string>
+    <string name="picker_cancel">取消</string>
 </resources>

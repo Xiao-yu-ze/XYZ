@@ -54,6 +54,20 @@
                 android:contentDescription="@string/vd_preview_desc"
                 android:scaleType="fitCenter" />
 
+            <!-- 取点模式的横幅。必须在画面**之上**，否则用户不知道该点哪里，
+                 会以为界面卡住了。 -->
+            <TextView
+                android:id="@+id/tvPickerHint"
+                style="@style/Text.Body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top"
+                android:background="#CC16241C"
+                android:gravity="center"
+                android:paddingVertical="8dp"
+                android:textColor="#FFFFFF"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/tvPreviewEmpty"
                 style="@style/Text.Hint"

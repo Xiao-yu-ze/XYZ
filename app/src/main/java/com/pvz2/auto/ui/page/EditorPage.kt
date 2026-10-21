@@ -14,6 +14,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.pvz2.auto.core.PreviewPicker
+import com.pvz2.auto.zjs.ZArea
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.button.MaterialButton
 import com.pvz2.auto.R
 import com.pvz2.auto.maa.NodeDef
 import com.pvz2.auto.maa.NodeDescriber
@@ -57,6 +62,7 @@ class EditorPage(
     private var currentDir: String = ""
 
     fun bind() {
+        setupPickers()
         rvNodes.layoutManager = LinearLayoutManager(host)
         rvNodes.adapter = adapter
         // 卡片自带下边距，去掉 RecyclerView 的默认动画能少一次闪烁。
@@ -69,6 +75,70 @@ class EditorPage(
         })
 
         loadScripts()
+    }
+
+    /**
+     * 取点 / 框区域 / 截模板。
+     *
+     * 用户在预览画面上指，结果换算成百分比写回脚本 ——
+     * 和 自动精灵 一致的交互（"请在脚本运行区域中完成选择"）。
+     *
+     * 坐标存百分比而不是像素，换分辨率不失效。
+     */
+    private fun setupPickers() {
+        val tvResult = root.findViewById<TextView>(R.id.tvPickResult)
+
+        fun arm(mode: PreviewPicker.Mode) {
+            PreviewPicker.arm(mode)
+            tvResult.text = PreviewPicker.hintText(mode)
+        }
+
+        root.findViewById<MaterialButton>(R.id.btnPickPoint).setOnClickListener {
+            arm(PreviewPicker.Mode.POINT)
+        }
+        root.findViewById<MaterialButton>(R.id.btnPickRect).setOnClickListener {
+            arm(PreviewPicker.Mode.RECT)
+        }
+        root.findViewById<MaterialButton>(R.id.btnPickTemplate).setOnClickListener {
+            arm(PreviewPicker.Mode.TEMPLATE)
+        }
+
+        host.lifecycleScope.launch {
+            host.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                PreviewPicker.result.collect { r ->
+                    tvResult.text = describePick(r)
+                }
+            }
+        }
+    }
+
+    /** 把取到的结果翻译成"脚本里会写成什么"。 */
+    private fun describePick(r: PreviewPicker.Result): String {
+        val area = ZArea.fromPxRect(r.x, r.y, r.w, r.h, r.screenWidth, r.screenHeight)
+        return when (r.mode) {
+            PreviewPicker.Mode.POINT -> {
+                val pct = ZArea.fromPxRect(r.x, r.y, 0, 0, r.screenWidth, r.screenHeight)
+                buildString {
+                    appendLine("取到坐标 (${r.x}, ${r.y})，存入脚本：")
+                    appendLine("  x = ${pct.left.raw}")
+                    appendLine("  y = ${pct.top.raw}")
+                    append("（百分比，换分辨率不会失效）")
+                }
+            }
+
+            PreviewPicker.Mode.RECT -> buildString {
+                appendLine("框到区域 ($(r.x), $(r.y)) ${r.w}×${r.h}，存入脚本：")
+                appendLine("  limitArea = \"$area\"")
+                append("（左 上 右 下，百分比）")
+            }
+
+            PreviewPicker.Mode.TEMPLATE -> buildString {
+                val crop = r.crop
+                appendLine("截到模板 ${crop?.width ?: 0}×${crop?.height ?: 0}，位置 ($(r.x), $(r.y))")
+                appendLine("  imageData: PNG base64 内嵌进脚本")
+                append("  limitArea = \"$area\"")
+            }
+        }
     }
 
     private fun loadScripts() {

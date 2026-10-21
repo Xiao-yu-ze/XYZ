@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.view.MotionEvent
+import com.pvz2.auto.core.PreviewPicker
 import com.pvz2.auto.core.PreviewTouchMapper
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
@@ -150,6 +151,19 @@ class MainActivity : AppCompatActivity() {
                 launch { BotState.status.collect { statusView?.text = it } }
                 // 虚拟屏状态：服务写、界面读。两者是独立组件，所以走进程级单例流。
                 launch { VirtualDisplaySession.sharedState.collect { renderVirtualDisplay(it) } }
+                // 取点模式：画面顶部显示"请在画面上点一下"。
+                // 没有这个提示，用户不知道已经进入取点状态，会以为界面没反应。
+                launch {
+                    PreviewPicker.mode.collect { mode ->
+                        val banner = findViewById<TextView>(R.id.tvPickerHint)
+                        if (mode == null) {
+                            banner.visibility = View.GONE
+                        } else {
+                            banner.text = PreviewPicker.hintText(mode)
+                            banner.visibility = View.VISIBLE
+                        }
+                    }
+                }
             }
         }
     }
@@ -511,6 +525,44 @@ class MainActivity : AppCompatActivity() {
                 MotionEvent.ACTION_UP -> {
                     val elapsed = (SystemClock.uptimeMillis() - downAt).toInt()
 
+                    // ★ 取点模式优先：不能让取点顺手把游戏点一下。
+                    //
+                    //   自动精灵 也是这个模型 —— 武装一个模式后，用户的触摸
+                    //   属于"选位置"，不属于"操作游戏"，两者必须互斥。
+                    PreviewPicker.mode.value?.let { mode ->
+                        val st = VirtualDisplaySession.sharedState.value
+                        val iw = st.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
+                        val ih = st.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+                        val a = PreviewTouchMapper.map(downX, downY, view.width, view.height, iw, ih)
+                        val b = PreviewTouchMapper.map(event.x, event.y, view.width, view.height, iw, ih)
+                        if (a != null && b != null) {
+                            val left = minOf(a.x, b.x)
+                            val top = minOf(a.y, b.y)
+                            val right = maxOf(a.x, b.x)
+                            val bottom = maxOf(a.y, b.y)
+                            val isPoint = mode == PreviewPicker.Mode.POINT
+
+                            PreviewPicker.deliver(
+                                PreviewPicker.Result(
+                                    mode = mode,
+                                    x = if (isPoint) b.x else left,
+                                    y = if (isPoint) b.y else top,
+                                    w = if (isPoint) 0 else (right - left),
+                                    h = if (isPoint) 0 else (bottom - top),
+                                    crop = if (mode == PreviewPicker.Mode.TEMPLATE) {
+                                        cropTemplate(left, top, right - left, bottom - top)
+                                    } else null,
+                                    screenWidth = iw,
+                                    screenHeight = ih
+                                )
+                            )
+                        } else {
+                            // 落在留边上，当作取消
+                            PreviewPicker.cancel()
+                        }
+                        return@setOnTouchListener true
+                    }
+
                     val state = VirtualDisplaySession.sharedState.value
                     val imageWidth = state.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
                     val imageHeight = state.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
@@ -551,6 +603,26 @@ class MainActivity : AppCompatActivity() {
                 else -> false
             }
         }
+    }
+
+    /**
+     * 从当前预览帧裁一块出来当模板。
+     *
+     * 直接裁**采集到的原始帧**，而不是截屏控件 —— 控件上的图已经被缩放/留边，
+     * 裁出来会带黑边和缩放失真，匹配时会明显掉分。
+     *
+     * 裁失败返回 null（帧还没到的时候），调用方会当成"没取到图"处理。
+     */
+    private fun cropTemplate(x: Int, y: Int, w: Int, h: Int): android.graphics.Bitmap? {
+        if (w <= 0 || h <= 0) return null
+        val frame = VirtualDisplaySession.previewFlow.value ?: return null
+        val left = x.coerceIn(0, frame.width - 1)
+        val top = y.coerceIn(0, frame.height - 1)
+        val width = w.coerceAtMost(frame.width - left)
+        val height = h.coerceAtMost(frame.height - top)
+        if (width <= 0 || height <= 0) return null
+        return runCatching { android.graphics.Bitmap.createBitmap(frame, left, top, width, height) }
+            .getOrNull()
     }
 
     /** 手指位移超过这个距离才算滑动（dp 转 px）。 */
