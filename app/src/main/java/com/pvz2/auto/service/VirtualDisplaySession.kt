@@ -1125,7 +1125,22 @@ class VirtualDisplaySession(
         const val MIN_FPS_SPAN_MS = 300L
 
         /** 预览刷新间隔。60fps 全转 Bitmap 太重，10fps 看着已经够流畅。 */
-        const val PREVIEW_INTERVAL_MS = 100L
+        /**
+         * 预览画面的最小更新间隔，毫秒。
+         *
+         * ## 这个值曾经让"看着卡"和"读数很高"同时成立
+         *
+         * 采集是 120fps，但预览每 100ms 才更新一次 —— 于是状态行写着 120 fps，
+         * 屏幕上那幅图每秒只换 10 次，看着当然卡。
+         *
+         * **读数抓的是采集，眼睛看的是预览**，两个是独立的。
+         * 原来写 100 是因为"全量转 Bitmap 很贵，怕拖死主线程"；
+         * 但实测把转换缩到 1/9 像素后采集帧率一点没变，说明转换的真实成本
+         * 远没有当初估的那么高，100ms 属于过度保守。
+         *
+         * 33ms ≈ 30fps，肉眼已经连续；同时给采集留出余量。
+         */
+        const val PREVIEW_INTERVAL_MS = 33L
 
         /** 预览缩小倍数。1/3 时像素量只剩 1/9，视觉上几乎无差别。 */
         const val PREVIEW_DOWNSCALE = 3
