@@ -106,7 +106,10 @@
 
     <!-- ==================== 下段：功能页（可滑动） ==================== -->
 
-    <ViewPager2
+    <!-- ★ 必须写完整包名。LayoutInflater 对没有包名的标签会套上 `android.view.`
+         前缀，于是去找 android.view.ViewPager2 —— 那个类不存在，
+         启动时直接 ClassNotFoundException 闪退。 -->
+    <androidx.viewpager2.widget.ViewPager2
         android:id="@+id/pager"
         android:layout_width="match_parent"
         android:layout_height="0dp"

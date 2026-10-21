@@ -416,8 +416,18 @@ class MainActivity : AppCompatActivity() {
         }
         updatePreviewEmptyState()
 
-        findViewById<MaterialButton>(R.id.btnVdStart).isEnabled = !state.running
-        findViewById<MaterialButton>(R.id.btnVdStop).isEnabled = state.running
+        // 建屏/停屏按钮在**第 1 页**里，不在 Activity 的布局上。
+        //
+        // 之前这里是 Activity 级的 findViewById，但那两个按钮随分页改造
+        // 搬进了 page_screen.xml —— Activity 上找不到，返回 null，
+        // 直接 NPE 闪退（真机日志 MainActivity.kt:419）。
+        //
+        // 必须从 screenRoot 找，而且要容忍"那一页还没被创建"的情况：
+        // ViewPager2 只保证当前页存在，翻走之后可能被回收。
+        screenRoot?.let { root ->
+            root.findViewById<MaterialButton>(R.id.btnVdStart)?.isEnabled = !state.running
+            root.findViewById<MaterialButton>(R.id.btnVdStop)?.isEnabled = state.running
+        }
     }
 
     /**
@@ -521,8 +531,10 @@ class MainActivity : AppCompatActivity() {
      *  ② 系统侧与虚拟屏相关的日志 —— 看权限/显示服务说了什么。
      */
     private fun exportLogs() {
-        val hint = findViewById<TextView>(R.id.tvLogHint)
-        hint.text = getString(R.string.log_export_ok, "正在抓取…")
+        // tvLogHint 在第 1 页里，必须从 screenRoot 找 —— Activity 级
+        // findViewById 会返回 null，直接 NPE（真机日志 MainActivity.kt:534）。
+        screenRoot?.findViewById<TextView>(R.id.tvLogHint)?.text =
+            getString(R.string.log_export_ok, "正在抓取…")
 
         lifecycleScope.launch {
             // 抓日志用的连接。用完必须 unbind —— 之前每次导出都新建一个 client
@@ -604,10 +616,12 @@ class MainActivity : AppCompatActivity() {
             }
 
             if (file == null) {
-                hint.text = getString(R.string.log_export_fail, "写文件失败")
+                screenRoot?.findViewById<TextView>(R.id.tvLogHint)?.text =
+                    getString(R.string.log_export_fail, "写文件失败")
                 return@launch
             }
-            hint.text = getString(R.string.log_export_ok, file.name)
+            screenRoot?.findViewById<TextView>(R.id.tvLogHint)?.text =
+                getString(R.string.log_export_ok, file.name)
             shareFile(file)
         }
     }
@@ -624,7 +638,7 @@ class MainActivity : AppCompatActivity() {
             }
             startActivity(Intent.createChooser(intent, getString(R.string.log_share_title)))
         }.onFailure {
-            findViewById<TextView>(R.id.tvLogHint).text =
+            screenRoot?.findViewById<TextView>(R.id.tvLogHint)?.text =
                 getString(R.string.log_export_fail, it.message ?: "分享失败")
         }
     }
