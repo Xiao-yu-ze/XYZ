@@ -141,7 +141,7 @@ object VdProbeMain {
                 // 连续重点几次：任务刚被搬过来，窗口要过一会儿才可触摸。
                 var ourOk = false
                 for (attempt in 1..TAP_RETRIES_COUNT) {
-                    ourOk = DisplayInputInjector.tap(displayId, WIDTH / 2, HEIGHT * 44 / 100, holdMs = 80)
+                    ourOk = false // 注入已改走 shell 的 input -d，这里不再重复测
                     println("A) 第 $attempt 次自建注入 -> $ourOk")
                     if (ourOk) break
                     Thread.sleep(TAP_RETRY_INTERVAL_MS)

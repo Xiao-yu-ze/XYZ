@@ -76,28 +76,46 @@ class Pvz2UserService : IPvz2Service.Stub() {
     /**
      * 在指定 display 上点一下。
      *
-     * 实现放在 [DisplayInputInjector] 里，与诊断工具 [VdProbeMain] 共用同一份逻辑 ——
-     * 诊断工具如果和线上走的不是同一条代码路径，它验出来的结论就不算数。
+     * ## 为什么是 shell 命令而不是 injectInputEvent
+     *
+     * 真机自检的四路对比（四路同时打，结果才可判读）：
+     *
+     *   A  injectInputEvent + display 65 : ✗ 被拒
+     *   B  injectInputEvent + display 0  : ✗ 被拒   ← 连主屏都拒
+     *   C  input -d 65 tap               : ✓ 接受
+     *   D  input tap                     : ✓ 接受
+     *   shell 的 INJECT_EVENTS            : granted=true
+     *
+     * 权限有、副屏对，**连 display 0 都注入失败** —— 问题在
+     * `injectInputEvent` 那条反射路径本身，不在屏或权限。
+     * 而 `input` 是系统自己的客户端，走官方路径，已验证可用。
+     *
+     * 代价是每次点击 fork 一个进程（约 5~15ms）。相比"零 fork 但永远失败"，
+     * 这个交换是明确划算的。
      */
-    override fun tapOnDisplay(displayId: Int, x: Int, y: Int, holdMs: Int): Boolean =
-        DisplayInputInjector.tap(displayId, x, y, holdMs)
+    override fun tapOnDisplay(displayId: Int, x: Int, y: Int, holdMs: Int): Boolean {
+        val out = runCatching {
+            runShell("input -d $displayId tap $x $y")
+        }.getOrElse {
+            Log.e(TAG, "input tap 执行失败 display=$displayId ($x,$y)", it)
+            return false
+        }
+        // `input` 失败时往 stderr 写东西（已合并进 stdout），退出码仍是 0 ——
+        // 只能看输出内容。空输出 = 成功。
+        if (out.isNotBlank()) {
+            Log.w(TAG, "input tap 输出 display=$displayId ($x,$y)：${out.trim().take(200)}")
+            return false
+        }
+        return true
+    }
 
     /**
      * 在指定 display 上滑动。
      *
-     * ## 为什么不再用 `input -d <id> swipe`
+     * 与点击走同一条 `input -d` 路径 —— 自检已确认它有 `-d` 且能落到副屏上。
      *
-     * 原来走的是 shell 命令，理由是"`input` 本身支持 `-d`，手写 MOVE 序列麻烦"。
-     * 但那条路有两个问题：
-     *
-     *  1. **成败无从判断**。`input` 失败时往 stderr 写东西、退出码仍是 0，
-     *     所以这里只能无条件 `return true` —— 滑动静默失败，上层完全不知道。
-     *  2. **和点击不是同一条路径**。点击走 `injectInputEvent`（已验证可用），
-     *     滑动走 shell。两条路各自有各自的坑，排查时得同时怀疑两套逻辑。
-     *
-     * 现在统一到 [DisplayInputInjector]，用与点击完全相同的注入通道，
-     * 只是中间插入若干 MOVE 事件。这样"点击能到虚拟屏、滑动也能到"是
-     * 同一个前提，不会出现一半通一半不通。
+     * `input` 失败时往 stderr 写东西、退出码仍是 0，所以判据是**输出为空**。
+     * 之前这里是无条件 `return true`，滑动静默失败而上层毫无察觉。
      */
     override fun swipeOnDisplay(
         displayId: Int,
@@ -106,7 +124,7 @@ class Pvz2UserService : IPvz2Service.Stub() {
         x2: Int,
         y2: Int,
         durationMs: Int
-    ): Boolean = DisplayInputInjector.swipe(displayId, x1, y1, x2, y2, durationMs)
+    ): Boolean = InputInjector.swipe(displayId, x1, y1, x2, y2, durationMs)
 
     override fun exec(command: String): String =
         runCatching { runShell(command) }.getOrElse { "ERROR: ${it.message}" }

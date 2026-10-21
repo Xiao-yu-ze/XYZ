@@ -644,38 +644,33 @@ class MainActivity : AppCompatActivity() {
 
                     val a = runCatching { service.tapOnDisplay(displayId, x, y, 80) }
                         .getOrDefault(false)
-                    report.appendLine("A inject+display=$displayId : ${mark(a)}")
+                    report.appendLine("A 直注 InputInjector → $displayId : ${mark(a)}")
 
                     val b = runCatching { service.tapOnDisplay(0, x, y, 80) }
                         .getOrDefault(false)
-                    report.appendLine("B inject+display=0        : ${mark(b)}")
+                    report.appendLine("B 直注 → display 0（对照）        : ${mark(b)}")
 
                     val cOut = runCatching {
                         service.exec("input -d $displayId tap $x $y")
                     }.getOrDefault("")
                     // `input` 失败只往 stderr 写、退出码仍是 0，只能看输出。
                     val c = cOut.isBlank()
-                    report.appendLine("C shell input -d $displayId   : ${mark(c)}")
+                    report.appendLine("C shell input -d $displayId（对照）: ${mark(c)}")
                     if (!c) report.appendLine("   └ $cOut")
 
                     val dOut = runCatching { service.exec("input tap $x $y") }.getOrDefault("")
                     val d = dOut.isBlank()
-                    report.appendLine("D shell input (display 0) : ${mark(d)}")
+                    report.appendLine("D shell input（display 0）        : ${mark(d)}")
                     if (!d) report.appendLine("   └ $dOut")
 
                     report.appendLine()
                     report.appendLine("判读：")
                     report.appendLine(
                         when {
-                            a && c -> "✓ 两条主路径都通。若游戏无反应，问题在识别/坐标。"
-                            !a && c -> "C 通、A 不通 → 我们的 injectInputEvent 实现有问题，\n" +
-                                "  应改用 shell 的 input -d 路径。"
-                            a && !c -> "A 通、C 不通 → shell 的 input 不支持 -d，\n" +
-                                "  继续用 injectInputEvent。"
-                            !b && !d -> "连 display 0 都失败 → 是权限层问题（INJECT_EVENTS），\n" +
-                                "  不是副屏路由问题。"
-                            else -> "两条都不通，但 display 0 能通 → 副屏路由被拒。\n" +
-                                "  需要看 InputDispatcher 的 drop 原因。"
+                            a -> "✓ A 通 —— 直注已能被系统接受，可以用它做自动化的动作层。"
+                            !a && c -> "A 不通但 C 通 → 直注实现仍有问题，继续用 shell。"
+                            !a && !c -> "两条都不通，看下面的窗口分布和权限。"
+                            else -> "状态异常。"
                         }
                     )
 
