@@ -129,12 +129,12 @@ Java_com_pvz2_auto_shizuku_NativeCapture_nativeSetup(
     // usage 是关键：
     //   CPU_READ_OFTEN      —— 我们要把像素读回 Java 做模板匹配
     //   GPU_SAMPLED_IMAGE   —— 让系统允许 GPU 往这块 buffer 上合成（显示端的基本要求）
-    // maxImages=3：够跟上 30fps，又不会让延迟拖长。
+    // maxImages=5：与 MaaFwApp 一致（它的 bridge_capture.cpp 用 5）。
     media_status_t status = AImageReader_newWithUsage(
             width, height, AIMAGE_FORMAT_RGBA_8888,
             AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN |
                 AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
-            3, &capturer->reader);
+            5, &capturer->reader);
     if (status != AMEDIA_OK || capturer->reader == nullptr) {
         LOGE("AImageReader_newWithUsage 失败: %d", status);
         delete capturer;
