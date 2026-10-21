@@ -153,20 +153,24 @@ data class ZArea(
     companion object {
 
         /**
-         * 从像素矩形反推百分比区域 —— **框选 ROI 之后写回用的就是它**。
+         * 从像素矩形构造区域 —— **框选 ROI 之后写回用的就是它**。
          *
-         * 存百分比而不是像素，理由同 [ZValue]：换分辨率不失效。
+         * ## 为什么用像素而不是百分比
+         *
+         * 自动精灵 存百分比是因为它要跑在用户各种分辨率的手机上。
+         * 我们**只有一块虚拟屏，固定 1280×720**，所以像素既精确又简单 ——
+         * 百分比反而会引入取整误差（"30.16%" 反算回 386.05 再取整）。
+         *
+         * 外部脚本里出现的 `%` 仍然能解析（[ZValue.parse]），只是我们自己
+         * 写出去的永远是整数像素。
          */
         fun fromPxRect(x: Int, y: Int, w: Int, h: Int, screenWidth: Int, screenHeight: Int): ZArea {
-            fun pct(v: Int, base: Int): ZValue {
-                val p = if (base <= 0) 0.0 else v.toDouble() * 100.0 / base
-                return ZValue.Percent("%.2f%%".format(p), p)
-            }
+            fun px(v: Int): ZValue = ZValue.Px(v.toString(), v.toDouble())
             return ZArea(
-                left = pct(x, screenWidth),
-                top = pct(y, screenHeight),
-                right = pct(x + w, screenWidth),
-                bottom = pct(y + h, screenHeight)
+                left = px(x),
+                top = px(y),
+                right = px(x + w),
+                bottom = px(y + h)
             )
         }
 

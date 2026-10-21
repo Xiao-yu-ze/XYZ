@@ -116,19 +116,16 @@ class EditorPage(
     private fun describePick(r: PreviewPicker.Result): String {
         val area = ZArea.fromPxRect(r.x, r.y, r.w, r.h, r.screenWidth, r.screenHeight)
         return when (r.mode) {
-            PreviewPicker.Mode.POINT -> {
-                val pct = ZArea.fromPxRect(r.x, r.y, 0, 0, r.screenWidth, r.screenHeight)
-                buildString {
-                    appendLine("取到坐标 (${r.x}, ${r.y})，存入脚本：")
-                    appendLine("  x = ${pct.left.raw}")
-                    appendLine("  y = ${pct.top.raw}")
-                    append("（百分比，换分辨率不会失效）")
-                }
+            PreviewPicker.Mode.POINT -> buildString {
+                appendLine("取到坐标 (${r.x}, ${r.y})，存入脚本：")
+                appendLine("  x = ${r.x}")
+                appendLine("  y = ${r.y}")
+                append("（虚拟屏固定 1280×720，直接用像素）")
             }
 
             PreviewPicker.Mode.RECT -> buildString {
                 appendLine("框到区域 ($(r.x), $(r.y)) ${r.w}×${r.h}，存入脚本：")
-                appendLine("  limitArea = \"$area\"")
+                appendLine("  limitArea = \"$area\"   （左 上 右 下，像素）")
                 append("（左 上 右 下，百分比）")
             }
 
@@ -136,7 +133,7 @@ class EditorPage(
                 val crop = r.crop
                 appendLine("截到模板 ${crop?.width ?: 0}×${crop?.height ?: 0}，位置 ($(r.x), $(r.y))")
                 appendLine("  imageData: PNG base64 内嵌进脚本")
-                append("  limitArea = \"$area\"")
+                append("  limitArea = \"$area\"   （像素）")
             }
         }
     }

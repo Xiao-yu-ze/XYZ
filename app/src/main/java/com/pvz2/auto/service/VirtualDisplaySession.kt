@@ -232,6 +232,14 @@ class VirtualDisplaySession(
         val need = w * h * 4
         if (need <= 0) return false
 
+        // ★ OpenCV 必须先加载，否则下面的 Mat() 会抛 UnsatisfiedLinkError。
+        //
+        //   `initLocal()` 原本只在"启动自动化"和"识别自检"里调过，而采集帧
+        //   是第三条路径。于是只建虚拟屏、没启动自动化时，每帧都在这里失败，
+        //   现象是游戏在跑、声音都有，但预览永远黑屏 ——
+        //   异常被吞成 W 级"读帧失败"，界面上看不出任何原因。
+        if (!com.pvz2.auto.core.OpenCv.ensureLoaded()) return false
+
         if (frameBytes.size != need) frameBytes = ByteArray(need)
 
         val rgba = frameRgba

@@ -101,23 +101,24 @@ class ZValueTest {
     }
 
     @Test
-    fun `框选出来的像素矩形能反推成百分比`() {
-        // 这是"用户在预览上框一块"之后写回字段用的路径
+    fun `框选出来的矩形存成整数像素`() {
+        // 虚拟屏固定 1280×720，像素是精确的；百分比反而会有取整误差
         val area = ZArea.fromPxRect(x = 320, y = 180, w = 640, h = 360, screenWidth = 1280, screenHeight = 720)
-        assertEquals("25.00%", area.left.raw)
-        assertEquals("25.00%", area.top.raw)
-        assertEquals("75.00%", area.right.raw)
-        assertEquals("75.00%", area.bottom.raw)
+        assertEquals("320", area.left.raw)
+        assertEquals("180", area.top.raw)
+        assertEquals("960", area.right.raw)
+        assertEquals("540", area.bottom.raw)
         // 落盘格式：左 上 右 下，空格分隔
-        assertEquals("25.00% 25.00% 75.00% 75.00%", area.toString())
+        assertEquals("320 180 960 540", area.toString())
     }
 
     @Test
-    fun `框选反推再换算回像素应当与原始矩形一致`() {
-        // 往返一致性：框选 → 存百分比 → 运行时换算，不能漂
-        val area = ZArea.fromPxRect(412, 980 % 720, 86, 32, 1280, 720)
+    fun `框选往返不漂`() {
+        // 往返一致性：框选 → 落盘 → 运行时换算，必须一模一样
+        val area = ZArea.fromPxRect(412, 260, 86, 32, 1280, 720)
         val r = area.toPxRect(1280, 720, density)
         assertEquals(412, r[0])
+        assertEquals(260, r[1])
         assertEquals(86, r[2])
         assertEquals(32, r[3])
     }
