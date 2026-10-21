@@ -12,6 +12,7 @@ import androidx.viewpager2.widget.ViewPager2
 import com.pvz2.auto.ui.page.ScriptPage
 import com.pvz2.auto.ui.page.DiagPage
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.widget.LinearLayout
@@ -65,6 +66,18 @@ class MainActivity : AppCompatActivity() {
         /** 虚拟屏尺寸。建屏时写死 1280×720（见 VirtualDisplaySession）。 */
         const val VD_WIDTH = 1280
         const val VD_HEIGHT = 720
+
+        /**
+         * 手指位移超过这个值才算滑动，否则算点击（dp）。
+         *
+         * 手指点击时落点总会抖几像素。阈值太小会把每次点击都判成滑动，
+         * 于是游戏里永远点不中；太大则短距离拖动失效。
+         */
+        const val SWIPE_THRESHOLD_DP = 12
+
+        /** 滑动时长上下限。太快在低帧率下会被识别成"瞬移"，列表不会跟着滚。 */
+        const val MIN_SWIPE_MS = 150
+        const val MAX_SWIPE_MS = 1200
 
         /**
          * 识别自检用的模板。
@@ -460,30 +473,81 @@ class MainActivity : AppCompatActivity() {
     private fun setupPreviewTouch() {
         val preview = findViewById<ImageView>(R.id.ivVdPreview)
         preview.isClickable = true
+
+        // 手势判定：按下记起点，抬起时按位移决定是点击还是滑动。
+        //
+        // ## 为什么不能只有点击
+        //
+        // 游戏里翻世界列表、拖动植物、关卡片都要滑动。只支持点击的话，
+        // 用户在预览上怎么拖都没用 —— 而那正是最自然的操作直觉。
+        //
+        // ## 阈值怎么定的
+        //
+        // 用手指在预览上点，实际落点总会抖几像素。阈值太小会把每次点击
+        // 都判成滑动（于是游戏里永远点不中）；太大则短距离拖动失效。
+        // 按 dp 而不是 px：不同密度屏幕上同样的手指位移应该得到同样的判定。
+        var downX = 0f
+        var downY = 0f
+        var downAt = 0L
+
         preview.setOnTouchListener { view, event ->
-            if (event.actionMasked != MotionEvent.ACTION_UP) return@setOnTouchListener true
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.x
+                    downY = event.y
+                    downAt = SystemClock.uptimeMillis()
+                    true
+                }
 
-            // 画面尺寸以会话为准，而不是写死 720p ——
-            // 换分辨率时换算才不会偏。
-            val state = VirtualDisplaySession.sharedState.value
-            val imageWidth = state.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
-            val imageHeight = state.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+                MotionEvent.ACTION_UP -> {
+                    val elapsed = (SystemClock.uptimeMillis() - downAt).toInt()
 
-            val point = PreviewTouchMapper.map(
-                viewX = event.x,
-                viewY = event.y,
-                viewWidth = view.width,
-                viewHeight = view.height,
-                imageWidth = imageWidth,
-                imageHeight = imageHeight
-            )
-            // 点在留边上：那里没有画面，不注入 —— 否则会误触屏幕边缘的按钮。
-            if (point != null) {
-                AutomationService.manualTap(this, point.x, point.y)
+                    val state = VirtualDisplaySession.sharedState.value
+                    val imageWidth = state.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
+                    val imageHeight = state.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+
+                    fun mapPoint(vx: Float, vy: Float) = PreviewTouchMapper.map(
+                        viewX = vx, viewY = vy,
+                        viewWidth = view.width, viewHeight = view.height,
+                        imageWidth = imageWidth, imageHeight = imageHeight
+                    )
+
+                    val start = mapPoint(downX, downY)
+                    val end = mapPoint(event.x, event.y)
+                    // 起点或终点落在留边上：那里没有画面，什么都不做 ——
+                    // 否则会误触屏幕边缘的按钮。
+                    if (start == null || end == null) return@setOnTouchListener true
+
+                    val dx = (end.x - start.x).toDouble()
+                    val dy = (end.y - start.y).toDouble()
+                    val distance = kotlin.math.hypot(dx, dy)
+
+                    if (distance < swipeThresholdPx()) {
+                        AutomationService.manualTap(this, end.x, end.y)
+                    } else {
+                        // 时长下限保护：太快的手势在低帧率下会被识别成"瞬移"，
+                        // 游戏里的列表不会跟着滚。
+                        AutomationService.manualSwipe(
+                            this,
+                            start.x, start.y, end.x, end.y,
+                            elapsed.coerceIn(MIN_SWIPE_MS, MAX_SWIPE_MS)
+                        )
+                    }
+                    true
+                }
+
+                // MOVE 必须消费掉，否则系统不会继续给我们后续事件。
+                MotionEvent.ACTION_MOVE -> true
+
+                else -> false
             }
-            true
         }
     }
+
+    /** 手指位移超过这个距离才算滑动（dp 转 px）。 */
+    private fun swipeThresholdPx(): Double =
+        SWIPE_THRESHOLD_DP * resources.displayMetrics.density.toDouble()
+
     private fun observePreview() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {

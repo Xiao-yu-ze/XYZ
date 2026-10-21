@@ -233,6 +233,30 @@ class AutomationService : Service() {
                 }
             }
 
+            // 手动滑动：用户在预览画面上拖动，换算后注入到虚拟屏。
+            // 游戏里翻列表、拖植物都靠它 —— 只有点击的话，用户在预览上怎么拖都没用。
+            ACTION_MANUAL_SWIPE -> {
+                val x1 = intent.getIntExtra(EXTRA_SWIPE_X1, -1)
+                val y1 = intent.getIntExtra(EXTRA_SWIPE_Y1, -1)
+                val x2 = intent.getIntExtra(EXTRA_SWIPE_X2, -1)
+                val y2 = intent.getIntExtra(EXTRA_SWIPE_Y2, -1)
+                val ms = intent.getIntExtra(EXTRA_SWIPE_MS, 300)
+                if (x1 >= 0 && y1 >= 0 && x2 >= 0 && y2 >= 0) {
+                    scope.launch {
+                        val target = ensureInjector()
+                        if (target == null) {
+                            BotState.setStatus("滑动失败：Shizuku 未就绪")
+                            return@launch
+                        }
+                        target.swipe(
+                            x1.toFloat(), y1.toFloat(), x2.toFloat(), y2.toFloat(),
+                            ms.toLong()
+                        )
+                        BotState.setStatus("已滑动 ($x1,$y1)→($x2,$y2)")
+                    }
+                }
+            }
+
             // 抓帧 / 探针 / 建屏探针 / 验证链（干跑、实跑）五个诊断入口已删除。
             // 它们都是排查早期问题的临时工具，问题解决后就没有用途了：
             // 抓帧和建屏探针的功能被 ACTION_VD_START 覆盖，
@@ -620,6 +644,12 @@ class AutomationService : Service() {
     private const val ACTION_MANUAL_TAP = "com.pvz2.auto.MANUAL_TAP"
     private const val EXTRA_TAP_X = "tap_x"
     private const val EXTRA_TAP_Y = "tap_y"
+    private const val ACTION_MANUAL_SWIPE = "com.pvz2.auto.MANUAL_SWIPE"
+    private const val EXTRA_SWIPE_X1 = "swipe_x1"
+    private const val EXTRA_SWIPE_Y1 = "swipe_y1"
+    private const val EXTRA_SWIPE_X2 = "swipe_x2"
+    private const val EXTRA_SWIPE_Y2 = "swipe_y2"
+    private const val EXTRA_SWIPE_MS = "swipe_ms"
         private const val EXTRA_TARGET_PACKAGE = "target_package"
 
         // 这里**不再**有默认包名。
@@ -694,6 +724,26 @@ class AutomationService : Service() {
             val i = intent(context, ACTION_MANUAL_TAP)
             i.putExtra(EXTRA_TAP_X, x)
             i.putExtra(EXTRA_TAP_Y, y)
+            context.startService(i)
+        }
+
+        /**
+         * 手动滑动虚拟屏。坐标同样是**虚拟屏坐标**，由 `PreviewTouchMapper` 换算好。
+         *
+         * 游戏里翻世界列表、拖动植物都靠它 —— 只有点击的话，
+         * 用户在预览上怎么拖都没用。
+         */
+        fun manualSwipe(
+            context: Context,
+            x1: Int, y1: Int, x2: Int, y2: Int,
+            durationMs: Int
+        ) {
+            val i = intent(context, ACTION_MANUAL_SWIPE)
+            i.putExtra(EXTRA_SWIPE_X1, x1)
+            i.putExtra(EXTRA_SWIPE_Y1, y1)
+            i.putExtra(EXTRA_SWIPE_X2, x2)
+            i.putExtra(EXTRA_SWIPE_Y2, y2)
+            i.putExtra(EXTRA_SWIPE_MS, durationMs)
             context.startService(i)
         }
 
