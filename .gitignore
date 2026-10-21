@@ -31,7 +31,12 @@ _hosts-backup.txt
 app/src/main/assets/coords.json
 app/src/main/assets/ocr/
 app/src/main/assets/jobs/
-app/src/main/assets/pipeline/
+# pipeline/ 下的 自动精灵 脚本由 tools/sync-maapvz-assets.ps1 同步，不入库；
+# 但**我们自己写的**示例脚本要入库，否则换台机器就没了。
+# 注意：不能直接排除目录再用 ! 反选 —— git 不会进入被排除的目录。
+# 所以先排除目录下的所有内容，再把要保留的子目录拉回来。
+app/src/main/assets/pipeline/*
+!app/src/main/assets/pipeline/ActionTest/
 
 # --- resource/image/ subfolders (mirrored at the assets root) ---
 app/src/main/assets/Activity/
