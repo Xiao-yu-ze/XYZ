@@ -120,4 +120,5 @@
     <string name="diag_subtitle">两个自检，各管一件事。出问题时先跑这里，确认到底是哪一环坏了。</string>
     <string name="diag_inject_title">注入自检</string>
     <string name="diag_recog_title">识别自检</string>
+    <string name="vd_preview_tap_hint">直接点这块画面就能操作游戏（虚拟屏没有物理触摸，只能这样点）</string>
 </resources>

@@ -44,6 +44,21 @@ class NodeGraph(
     private val dryRun: Boolean = false
 ) {
 
+    /**
+     * 停止原因。
+     *
+     * ## 为什么需要它
+     *
+     * 图执行有多个"静默 return"的位置：节点不存在、next 为空、
+     * 动作失败且无 on_error、识别超时。这些在日志里各有一条，
+     * 但调用方只看得到"run() 返回了"，于是统统报成"流程结束" ——
+     * 脚本第二步就挂了，界面却说正常跑完。
+     *
+     * 现在每个出口都写上具体原因，调用方用它决定报什么。
+     */
+    var stopReason: String? = null
+        private set
+
     /** 每个节点在本轮任务里被命中的次数，用于 max_hit。 */
     private val hitCounts = HashMap<String, Long>()
 
@@ -65,13 +80,15 @@ class NodeGraph(
         while (currentCoroutineContext().isActive) {
             val node = nodes[current]
             if (node == null) {
-                Log.w(TAG, "节点不存在：$current，终止")
+                stopReason = "节点不存在：$current"
+                Log.w(TAG, stopReason!!)
                 return
             }
 
             val next = resolveNext(node)
             if (next.isEmpty()) {
-                Log.i(TAG, "节点 [$current] 的 next 为空，流程结束")
+                stopReason = "节点 [$current] 没有可用的下一步（next 里引用的节点都不存在）"
+                Log.w(TAG, stopReason!!)
                 return
             }
 
@@ -81,7 +98,8 @@ class NodeGraph(
             if (hit == null) {
                 // 超时：走 on_error；没有 on_error 就结束。
                 if (node.onError.isEmpty()) {
-                    Log.w(TAG, "节点 [$current] 识别超时且无 on_error，结束")
+                    stopReason = "节点 [$current] 识别超时（${node.timeout}ms）且无 on_error"
+                    Log.w(TAG, stopReason!!)
                     return
                 }
                 Log.i(TAG, "节点 [$current] 超时，转 on_error")
@@ -90,7 +108,15 @@ class NodeGraph(
             }
 
             if (!execute(hit, node)) {
-                if (node.onError.isEmpty()) return
+                if (node.onError.isEmpty()) {
+                    // stopReason 可能已经被 execute() 写过（例如缺少自定义动作），
+                    // 那就保留更具体的那句；否则补一句通用的。
+                    if (stopReason == null) {
+                        stopReason = "节点 [$current] 动作执行失败且无 on_error"
+                        Log.w(TAG, stopReason!!)
+                    }
+                    return
+                }
                 current = node.onError.first()
                 continue
             }
@@ -222,7 +248,14 @@ class NodeGraph(
                 val handler = customActions[action.name]
                 if (handler == null) {
                     // 自定义动作没注册就静默跳过会让流程空转，必须显式报错。
-                    Log.e(TAG, "未注册的自定义动作：${action.name}")
+                    //
+                    // 这不是理论问题：`Endless_ref` 实际用了 8 个自定义动作
+                    // （JobSetLoad / BatchSwipe / SelectPlants …），而入口节点的
+                    // next 第一个就是 JobSetLoad。它没有 recognition → 按 DirectHit
+                    // 必然命中 → 走到这里 → 返回 false → on_error 为空 → 整个
+                    // run() 返回。界面上看到的是"流程结束"，实际上第二步就断了。
+                    stopReason = "缺少自定义动作「${action.name}」（节点 [${node.name}]）"
+                    Log.e(TAG, stopReason!!)
                     false
                 } else {
                     handler.execute(

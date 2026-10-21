@@ -56,6 +56,12 @@ class PipelineRunner(
             ScriptRunState.finish("找不到可执行的入口节点")
             return
         }
+        // 手填的入口必须真的存在。不校验的话，打错一个字也会跑到底然后
+        // 报"流程结束"，看起来像正常跑完了。
+        if (start !in nodes) {
+            ScriptRunState.finish("入口节点不存在：$start")
+            return
+        }
 
         Log.i(TAG, "载入 ${nodes.size} 个节点，入口 [$start]，dryRun=$dryRun")
         ScriptRunState.begin(scriptDir, start)
@@ -70,7 +76,7 @@ class PipelineRunner(
         )
         try {
             graph.run(start)
-            ScriptRunState.finish("流程结束")
+            ScriptRunState.finish(graph.stopReason ?: "流程结束")
         } catch (c: kotlinx.coroutines.CancellationException) {
             // ★ 必须单独接住并重新抛出。
             //
@@ -121,31 +127,71 @@ class PipelineRunner(
             }
         }
 
-        /** 载入一个脚本目录下所有 JSON 并合并。后者覆盖前者（文件名排序）。 */
+        /**
+         * 载入一个脚本目录下**所有** JSON（含子目录）并合并。
+         *
+         * ## 为什么要递归
+         *
+         * 自动精灵的脚本按功能分子目录存放：主链在顶层，局内战斗、选植物等
+         * 各自一个子目录。只读顶层会丢掉整整一大半节点 ——
+         * `Endless_ref` 顶层 66 个、全量 101 个，少的 35 个全在子目录里。
+         *
+         * 丢节点的后果很隐蔽：[resolveNext] 会把引用不到的节点静默过滤掉，
+         * 于是走到那条分支时 next 变成空、流程"正常结束"。
+         * 用户看到的是"跑完了"，实际上链在中间断了。
+         *
+         * 合并顺序 = 路径字典序，**后者覆盖前者**（与 MaaFramework 一致，
+         * 也是 MaaPVZ 给文件加 `01_` `02_` 数字前缀的原因）。
+         */
         fun loadNodes(context: Context, scriptDir: String): Map<String, NodeDef> {
             val base = "$ASSETS_ROOT/$scriptDir"
-            val files = runCatching {
-                context.assets.list(base).orEmpty()
-                    .filter { it.endsWith(".json", ignoreCase = true) }
-                    .sorted()
-            }.getOrDefault(emptyList())
-
-            if (files.isEmpty()) {
+            val paths = listJsonPaths(context, base)
+            if (paths.isEmpty()) {
                 Log.e(TAG, "assets/$base 下没有 pipeline JSON")
                 return emptyMap()
             }
 
-            val texts = ArrayList<String>(files.size)
-            for (name in files) {
+            val texts = ArrayList<String>(paths.size)
+            for (rel in paths) {
                 val text = runCatching {
                     // 必须显式 UTF-8，见 CoordTable 的说明。
-                    context.assets.open("$base/$name")
+                    context.assets.open(rel)
                         .bufferedReader(Charsets.UTF_8)
                         .use { it.readText() }
                 }.getOrNull() ?: continue
                 texts.add(text)
             }
+            Log.i(TAG, "$scriptDir: 载入 ${texts.size} 个 JSON")
             return PipelineParser.parseAll(texts)
+        }
+
+        /**
+         * 递归列出 assets 目录下所有 `.json` 的相对路径，按路径排序。
+         *
+         * AssetManager 的 `list()` 只返回一层，判断子目录的办法是
+         * "对它再 list 一次，结果非空即目录"。空目录不会被返回，
+         * 所以不会无限递归。
+         */
+        private fun listJsonPaths(context: Context, dir: String): List<String> {
+            val out = ArrayList<String>()
+            fun walk(current: String) {
+                val children = runCatching { context.assets.list(current).orEmpty() }
+                    .getOrDefault(emptyArray())
+                for (name in children) {
+                    val child = "$current/$name"
+                    if (name.endsWith(".json", ignoreCase = true)) {
+                        out.add(child)
+                    } else {
+                        // 有子项才是目录；无子项说明是文件（已在上面的分支处理）
+                        // 或空目录，两种情况都不需要再走。
+                        val grandChildren = runCatching { context.assets.list(child) }
+                            .getOrDefault(emptyArray())
+                        if (!grandChildren.isNullOrEmpty()) walk(child)
+                    }
+                }
+            }
+            walk(dir)
+            return out.sorted()
         }
 
         /**

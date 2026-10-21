@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.view.MotionEvent
+import com.pvz2.auto.core.PreviewTouchMapper
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -340,6 +342,51 @@ class MainActivity : AppCompatActivity() {
      * 把帧送到界面** —— `ivVdPreview` 从布局定义至今一次都没被赋过值。
      * 采集到的像素全留在内存里烂掉，用户看到的就是一块永远空白的区域。
      */
+    /**
+     * 让预览画面可以点 —— 点哪就往虚拟屏的哪注入一次点击。
+     *
+     * ## 为什么必须有这个
+     *
+     * 虚拟屏**没有物理触摸面板**。用户在别处怎么点都碰不到它，
+     * 所以"把游戏点到某个界面"这件事，本来只能靠脚本自己走。
+     * 但脚本还在调试，它又需要游戏先在某个界面才能验证 —— 死循环。
+     *
+     * 这条路径把这个环打开了：手指点预览，坐标换算后注入虚拟屏，
+     * 于是可以手动把游戏点登录、翻菜单、进关卡。
+     *
+     * ## 为什么在 ACTION_UP 才注入
+     *
+     * DOWN 就注入的话，用户手指还在屏幕上滑动时就已经点下去了，
+     * 想取消都来不及。UP 才注入等于"按下-抬起"才算一次点击，
+     * 和真实触摸的语义一致。
+     */
+    private fun setupPreviewTouch() {
+        val preview = findViewById<ImageView>(R.id.ivVdPreview)
+        preview.isClickable = true
+        preview.setOnTouchListener { view, event ->
+            if (event.actionMasked != MotionEvent.ACTION_UP) return@setOnTouchListener true
+
+            // 画面尺寸以会话为准，而不是写死 720p ——
+            // 换分辨率时换算才不会偏。
+            val state = VirtualDisplaySession.sharedState.value
+            val imageWidth = state.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
+            val imageHeight = state.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+
+            val point = PreviewTouchMapper.map(
+                viewX = event.x,
+                viewY = event.y,
+                viewWidth = view.width,
+                viewHeight = view.height,
+                imageWidth = imageWidth,
+                imageHeight = imageHeight
+            )
+            // 点在留边上：那里没有画面，不注入 —— 否则会误触屏幕边缘的按钮。
+            if (point != null) {
+                AutomationService.manualTap(this, point.x, point.y)
+            }
+            true
+        }
+    }
     private fun observePreview() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {

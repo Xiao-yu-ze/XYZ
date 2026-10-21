@@ -42,6 +42,7 @@ import com.pvz2.auto.task.Pvz2Tasks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -173,8 +174,21 @@ class AutomationService : Service() {
                 if (dir.isNullOrBlank()) {
                     ScriptRunState.finish("没有指定脚本")
                 } else {
-                    scriptJob?.cancel()
-                    scriptJob = scope.launch { runScript(dir, entry, dry) }
+                    // ★ 必须等旧任务**真正结束**再起新的。
+                    //
+                    //   只 cancel() 不够：cancel 只是发出信号，旧协程可能还在
+                    //   runScript 的 bind()+await()（最长 5 秒）或 loadNodes 里。
+                    //   那段时间 ScriptRunState.running 仍是 false，界面上的
+                    //   「运行」按钮还能点 —— 用户连点两下就有两个 job 共用同一个
+                    //   采集器和注入器：并发抓帧，非干跑时两边同时在点游戏。
+                    //
+                    //   cancelAndJoin 保证串行。previous 在挂起前就捕获了，
+                    //   不受下面重新赋值的影响。
+                    val previous = scriptJob
+                    scriptJob = scope.launch {
+                        previous?.cancelAndJoin()
+                        runScript(dir, entry, dry)
+                    }
                 }
             }
 
@@ -183,6 +197,24 @@ class AutomationService : Service() {
                 scriptJob?.cancel()
                 scriptJob = null
                 ScriptRunState.finish("已停止")
+            }
+
+            // ★ 手动点击：用户在预览画面上点一下就注入到虚拟屏。
+            //
+            //   虚拟屏没有物理触摸面板，用户没法用手指点它。没有这条路径，
+            //   用户连"把游戏点到能验证的界面"都做不到 —— 脚本永远跑不到该跑的地方。
+            //
+            //   用 startService 而不是 startForegroundService：这是一次性动作，
+            //   而且要求尽可能快（用户期望点下去就有反应）。
+            ACTION_MANUAL_TAP -> {
+                val x = intent.getIntExtra(EXTRA_TAP_X, -1)
+                val y = intent.getIntExtra(EXTRA_TAP_Y, -1)
+                if (x >= 0 && y >= 0) {
+                    scope.launch {
+                        val target = injector ?: return@launch
+                        target.tap(x.toFloat(), y.toFloat())
+                    }
+                }
             }
 
             // 抓帧 / 探针 / 建屏探针 / 验证链（干跑、实跑）五个诊断入口已删除。
@@ -201,6 +233,14 @@ class AutomationService : Service() {
 
     override fun onDestroy() {
         loopJob?.cancel()
+        loopJob = null
+        // ★ 脚本任务必须在**释放注入器之前**取消。
+        //
+        //   顺序反了的话：injector?.release() 已经执行，而 scriptJob 还在
+        //   IO 线程上跑 NodeGraph，下一轮照样会调 injector.tap() ——
+        //   对着已经释放的对象调用，典型的 use-after-release。
+        scriptJob?.cancel()
+        scriptJob = null
         loopJob = null
         // ⚠️ 这里**不能**主动 vdSession.stop()。
         //
@@ -522,6 +562,9 @@ class AutomationService : Service() {
     private const val EXTRA_SCRIPT_DIR = "script_dir"
     private const val EXTRA_SCRIPT_ENTRY = "script_entry"
     private const val EXTRA_SCRIPT_DRY_RUN = "script_dry_run"
+    private const val ACTION_MANUAL_TAP = "com.pvz2.auto.MANUAL_TAP"
+    private const val EXTRA_TAP_X = "tap_x"
+    private const val EXTRA_TAP_Y = "tap_y"
         private const val EXTRA_TARGET_PACKAGE = "target_package"
 
         // 这里**不再**有默认包名。
@@ -585,6 +628,18 @@ class AutomationService : Service() {
         /** 停止脚本。 */
         fun scriptStop(context: Context) {
             ContextCompat.startForegroundService(context, intent(context, ACTION_SCRIPT_STOP))
+        }
+
+        /**
+         * 手动点击虚拟屏。用户在预览画面上点哪，就往哪注入。
+         *
+         * @param x 虚拟屏坐标（不是物理屏坐标），由 `PreviewTouchMapper` 换算好
+         */
+        fun manualTap(context: Context, x: Int, y: Int) {
+            val i = intent(context, ACTION_MANUAL_TAP)
+            i.putExtra(EXTRA_TAP_X, x)
+            i.putExtra(EXTRA_TAP_Y, y)
+            context.startService(i)
         }
 
         /** `stopService` is always permitted, unlike starting a service from the background. */

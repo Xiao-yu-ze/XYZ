@@ -109,6 +109,10 @@ class ScriptActivity : AppCompatActivity() {
             setPadding(0, dp(10), 0, dp(10))
             isClickable = true
             isFocusable = true
+            // 用 tag 存目录名做精确匹配，不要拿渲染出来的文本去 startsWith ——
+            // 目录名有前缀关系时（A 和 AB）会两行同时高亮，
+            // 而且文案格式一改就失配。
+            tag = info.dir
             setOnClickListener { selectScript(info) }
         }
         return row
@@ -120,7 +124,7 @@ class ScriptActivity : AppCompatActivity() {
         // 选中态用颜色表达，不引入额外的选中背景资源。
         for (i in 0 until scriptList.childCount) {
             val child = scriptList.getChildAt(i) as? TextView ?: continue
-            val selected = child.text.toString().startsWith(info.dir)
+            val selected = child.tag == info.dir
             child.setTextColor(
                 ContextCompat.getColor(
                     this,
