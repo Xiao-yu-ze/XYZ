@@ -63,21 +63,29 @@ object ScriptRunState {
 
     /** 开始一次运行。 */
     fun begin(scriptName: String, entry: String) {
-        shared.value = State(
-            running = true,
-            scriptName = scriptName,
-            entry = entry,
-            message = "已开始"
-        )
+        shared.updateAndGet {
+            State(
+                running = true,
+                scriptName = scriptName,
+                entry = entry,
+                message = "已开始"
+            )
+        }
     }
 
-    /** 结束（正常或被停止）。 */
+    /**
+     * 结束（正常或被停止）。
+     *
+     * 用 `updateAndGet` 而不是直接赋值：脚本线程可能正在 [update]（报轮次），
+     * 直接赋值会把那次更新整块覆盖掉 —— 表现为界面短暂显示旧的轮次数字。
+     * 所有写入都走同一个原子操作就不会有这种交错。
+     */
     fun finish(message: String) {
         shared.updateAndGet { it.copy(running = false, message = message) }
     }
 
     /** 清空回未运行态。 */
     fun reset() {
-        shared.value = State()
+        shared.updateAndGet { State() }
     }
 }

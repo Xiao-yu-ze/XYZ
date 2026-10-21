@@ -71,6 +71,15 @@ class PipelineRunner(
         try {
             graph.run(start)
             ScriptRunState.finish("流程结束")
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            // ★ 必须单独接住并重新抛出。
+            //
+            //   CancellationException 也是 Throwable 的子类，被下面那个
+            //   catch (Throwable) 吞掉的话，用户点"停止"会看到
+            //   "出错：Job was cancelled" —— 明明是他自己停的，却报成故障。
+            //   而且吞掉它会破坏结构化并发：父作用域收不到取消信号。
+            ScriptRunState.finish("已停止")
+            throw c
         } catch (t: Throwable) {
             Log.e(TAG, "脚本运行出错", t)
             ScriptRunState.finish("出错：${t.message}")
