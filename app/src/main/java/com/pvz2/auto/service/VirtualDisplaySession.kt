@@ -135,6 +135,11 @@ class VirtualDisplaySession(
             update { it.copy(running = false, message = "Shizuku 服务不可用（无法建屏）") }
             return false
         }
+        // 采集节流跟随「帧率」设置：与虚拟屏刷新率同源，避免两处数字打架。
+        val wantFps = GameFps.prefs(callerContext)
+        captureIntervalMs = if (wantFps > 0) 1000L / wantFps else 0L
+        Log.i(TAG, "采集节流 " + (if (captureIntervalMs > 0) "每 " + captureIntervalMs + "ms" else "不节流"))
+
         // ★ 存进字段，否则 cleanup() 里的释放是死代码。
         //
         //   之前 service 只是个局部变量，`shellService` 从头到尾没被赋过值，
@@ -338,6 +343,17 @@ class VirtualDisplaySession(
      */
     private var sharedFrame: java.nio.ByteBuffer? = null
     private var sharedFile: java.io.RandomAccessFile? = null
+
+    /**
+     * 采集节流间隔，毫秒。0 = 不节流。
+     *
+     * 由「帧率」设置决定，与虚拟屏刷新率用**同一个值** ——
+     * 用户选的是一件事（快慢），不该让他在两个地方调不同数字。
+     * 设置成 60 时，虚拟屏报 60Hz（游戏跟着跑 60），采集也按 60 截流；
+     * 无上限时两边都不限。
+     */
+    @Volatile
+    private var captureIntervalMs = 0L
 
     /** 头长度，与 Pvz2UserService.FRAME_HEADER_BYTES 必须一致。 */
     private val frameHeaderBytes = 16
@@ -816,7 +832,7 @@ class VirtualDisplaySession(
                 // 处理 13ms 时就是 16ms = 60fps，处理 20ms 时才是 50fps。
                 // 节流只在"这一轮比目标还快"时才补睡。
                 val elapsed = android.os.SystemClock.uptimeMillis() - frameStartedAt
-                val remain = MIN_FRAME_INTERVAL_MS - elapsed
+                val remain = captureIntervalMs - elapsed
                 if (remain > 0) delay(remain)
             }
         }
