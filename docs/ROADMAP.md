@@ -33,7 +33,16 @@
 
 ## 二、阶段划分
 
-### 阶段 0：把引擎接上（最高优先级）
+### 阶段 0：把引擎接上（最高优先级）—— ✅ 已完成（commit 52875e4 / 3d11e8d）
+
+已完成：
+- `ScriptActivity` 选脚本 → `AutomationService.scriptRun` → `PipelineRunner.run(dir, entry)`
+- `ScriptRunState`（进程级 StateFlow）暴露：正在等哪个节点、第几轮、上轮耗时、各节点命中次数
+- 入口推断照 自动精灵 的方式（选不被任何节点引用的），结果显示在可编辑输入框里
+- UI 按功能拆页：Main（预览+导航）/ `ScriptActivity` / `DiagnosticsActivity`
+- 修掉 `CancellationException` 被 `catch (Throwable)` 吞掉导致"点停止报出错"
+
+下一步：真机验证。
 
 **为什么最先做**：现在没有任何脚本能跑。做完之前，后面所有优化都没有验证载体。
 
