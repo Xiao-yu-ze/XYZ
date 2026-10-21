@@ -59,6 +59,9 @@ class NodeGraph(
     var stopReason: String? = null
         private set
 
+    /** 节点显式要求结束（`StopTask`）。与"出错"区分开。 */
+    private var stopRequested = false
+
     /** 每个节点在本轮任务里被命中的次数，用于 max_hit。 */
     private val hitCounts = HashMap<String, Long>()
 
@@ -119,6 +122,12 @@ class NodeGraph(
                 }
                 current = node.onError.first()
                 continue
+            }
+
+            if (stopRequested) {
+                stopReason = "流程结束"
+                Log.i(TAG, "StopTask：流程正常结束")
+                return
             }
 
             current = hit.name
@@ -271,8 +280,14 @@ class NodeGraph(
             }
 
             is Action.StopTask -> {
+                // ★ 返回 true 并置结束标志，不是 false。
+                //
+                //   返回 false 会被上层当成"动作失败" → 走 on_error → 没有 on_error
+                //   就报"动作执行失败"。而 StopTask 明明是**流程正常收尾**，
+                //   报成故障会让用户以为脚本出错。
                 Log.i(TAG, "节点 [${node.name}] 请求停止任务")
-                false
+                stopRequested = true
+                true
             }
         }
 
