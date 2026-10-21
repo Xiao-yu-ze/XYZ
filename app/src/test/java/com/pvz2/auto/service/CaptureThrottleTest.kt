@@ -67,9 +67,17 @@ class CaptureThrottleTest {
     }
 
     @Test
-    fun `目标 60fps 时周期是 16ms`() {
-        val interval = 1000L / Fps.MAX_FPS
-        assertEquals(16L, interval)
+    fun `采集端不再自己设帧率上限`() {
+        // ★ 这一条是**有意改的**，不是修 bug。
+        //
+        //   以前 MIN_FRAME_INTERVAL_MS = 1000 / MAX_FPS = 16ms，采集端自己
+        //   给自己设了 60fps 上限。但虚拟屏出帧多快是系统说了算，采集端再补睡
+        //   一次只会白等；更糟的是它让"设了 120 却只有 60"这种问题查不出来 ——
+        //   两边都在截断，不知道是谁。
+        //
+        //   现在帧率由虚拟屏刷新率决定（用户可选 30/60/120/无上限），
+        //   采集端不节流：出多少帧取多少帧。
+        assertEquals(0L, VirtualDisplaySession.MIN_FRAME_INTERVAL_MS)
     }
 
     @Test

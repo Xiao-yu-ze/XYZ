@@ -389,6 +389,35 @@ class Pvz2UserService : IPvz2Service.Stub() {
         dpi: Int,
         surface: Surface?,
         flags: Int
+    ): Int = doCreate(name, width, height, dpi, surface, flags, 0f)
+
+    /**
+     * 带刷新率建屏。
+     *
+     * 游戏在虚拟屏里的帧率**由虚拟屏刷新率决定** —— App 读
+     * `Display.getRefreshRate()` 来决定渲染节奏。所以"把游戏限制到 30/60/120 帧"
+     * 在这块屏上就等于"把虚拟屏刷新率设成 30/60/120"。
+     *
+     * @param refreshRate <= 0 表示用系统默认。
+     */
+    override fun createVirtualDisplayWithRate(
+        name: String,
+        width: Int,
+        height: Int,
+        dpi: Int,
+        surface: Surface?,
+        flags: Int,
+        refreshRate: Float
+    ): Int = doCreate(name, width, height, dpi, surface, flags, refreshRate)
+
+    private fun doCreate(
+        name: String,
+        width: Int,
+        height: Int,
+        dpi: Int,
+        surface: Surface?,
+        flags: Int,
+        refreshRate: Float
     ): Int {
         // ★ 只放屏，**不能**放采集端。
         //
@@ -434,7 +463,8 @@ class Pvz2UserService : IPvz2Service.Stub() {
                 height = height,
                 dpi = dpi,
                 surface = surface,
-                flags = flags
+                flags = flags,
+                refreshRate = refreshRate
             )
 
             virtualDisplay = created.virtualDisplay
@@ -512,7 +542,16 @@ class Pvz2UserService : IPvz2Service.Stub() {
         // 记下尺寸：取帧时按它分配缓冲，不再反查 native（反查会吃掉一帧）。
         captureWidth = width
         captureHeight = height
-        return createVirtualDisplay(name, width, height, dpi, surface, flags)
+        return doCreate(name, width, height, dpi, surface, flags, pendingRefreshRate)
+    }
+
+    /** 下一次建屏用的刷新率；<= 0 = 系统默认。 */
+    @Volatile
+    private var pendingRefreshRate = 0f
+
+    override fun setPendingRefreshRate(refreshRate: Float) {
+        pendingRefreshRate = refreshRate
+        Log.i(TAG, "下次建屏刷新率设为 ${if (refreshRate <= 0f) "系统默认" else "${refreshRate}Hz"}")
     }
 
     /**

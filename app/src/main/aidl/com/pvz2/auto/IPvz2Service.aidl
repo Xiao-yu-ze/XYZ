@@ -173,5 +173,32 @@ interface IPvz2Service {
      * The AIDL value must be 16777114 (Shizuku-API README, "Stop the User Service").
      * Use it for cleanup and finally System.exit(0), otherwise the process stays alive.
      */
+    /**
+     * 建虚拟屏，并**指定刷新率**。
+     *
+     * ## 为什么需要单独的入口
+     *
+     * 游戏在虚拟屏里的帧率**由虚拟屏的刷新率决定** —— App 读
+     * `Display.getRefreshRate()` 来决定自己的渲染节奏。老的
+     * `createVirtualDisplay(name,w,h,dpi,surface,flags)` 不带这个参数，
+     * 系统就用默认值（通常 60Hz），于是游戏永远上不去 120。
+     *
+     * 带刷新率建屏要用 `VirtualDisplayConfig` + 三参数的
+     * `createVirtualDisplay(config, surface, callback)`（API 33+）。
+     *
+     * @param refreshRate 目标刷新率；<= 0 表示用系统默认。
+     * @return displayId；-1 失败。
+     */
+    int createVirtualDisplayWithRate(String name, int width, int height, int dpi, in Surface surface, int flags, float refreshRate) = 20;
+
+    /**
+     * 设置下一次建屏要用的刷新率。
+     *
+     * 单独一个 setter 而不是给 createDisplayWithCapture 加参数，
+     * 是为了不动已经在用的方法签名（那会牵动 AIDL 版本校验）。
+     * <= 0 表示用系统默认。
+     */
+    void setPendingRefreshRate(float refreshRate) = 21;
+
     void destroy() = 16777114;
 }

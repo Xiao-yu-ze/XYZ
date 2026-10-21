@@ -60,11 +60,14 @@
             android:layout_height="wrap_content"
             android:text="" />
 
+        <!-- 用 Outline 而不是 Quiet：Quiet 是纯文字按钮、没有背景，
+             在这一页上看起来不像能点的东西。 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnStop"
-            style="@style/AppButton.Quiet"
-            android:layout_width="wrap_content"
+            style="@style/AppButton.Outline"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
             android:text="@string/btn_stop" />
 
         <!-- 渠道选择：默认自动识别，认不出来才手动选。 -->
@@ -129,6 +132,36 @@
                 android:layout_weight="1"
                 android:text="@string/btn_vd_stop" />
         </LinearLayout>
+
+        <!-- 游戏帧率上限。
+             游戏在虚拟屏里读 Display.getRefreshRate() 决定渲染节奏，
+             所以这项实际是设虚拟屏刷新率。改完要重新建屏才生效。 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                style="@style/Text.Body"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/label_game_fps" />
+
+            <Spinner
+                android:id="@+id/spGameFps"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1" />
+        </LinearLayout>
+
+        <TextView
+            style="@style/Text.Hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/hint_game_fps" />
 
         <!-- 出问题时最重要的一件事：把日志弄出来。 -->
         <com.google.android.material.button.MaterialButton

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.view.MotionEvent
+import com.pvz2.auto.core.GameFps
 import com.pvz2.auto.core.PreviewPicker
 import com.pvz2.auto.core.PreviewTouchMapper
 import android.view.ViewGroup
@@ -287,12 +288,36 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupChannelPicker(root)
+        setupGameFps(root)
         refreshShizukuState()
     }
 
     /**
-     * 渠道选择器。
+     * 游戏帧率上限选择器。
      *
+     * 游戏在虚拟屏里读 `Display.getRefreshRate()` 决定渲染节奏，
+     * 所以这项实际是「虚拟屏刷新率」，改完必须重新建屏才生效 ——
+     * 建屏之后再改，屏不会自己变。
+     */
+    private fun setupGameFps(root: View) {
+        val spinner = root.findViewById<Spinner>(R.id.spGameFps)
+        spinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            GameFps.OPTIONS.map { GameFps.label(it) }
+        )
+        spinner.setSelection(GameFps.OPTIONS.indexOf(GameFps.prefs(this)).coerceAtLeast(0))
+        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                GameFps.save(this@MainActivity, GameFps.OPTIONS[pos])
+            }
+
+            override fun onNothingSelected(p: AdapterView<*>?) = Unit
+        }
+    }
+
+    /**
+     * 渠道选择器。     *
      * 三条行为：
      *  ① 进界面时**自动识别**设备上已装的渠道（包名匹配），认出来就选上；
      *  ② 用户手动换渠道 → 记住；

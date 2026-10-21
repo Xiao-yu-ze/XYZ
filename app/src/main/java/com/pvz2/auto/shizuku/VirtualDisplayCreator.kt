@@ -61,7 +61,8 @@ internal object VirtualDisplayCreator {
         height: Int,
         dpi: Int,
         surface: Surface,
-        flags: Int
+        flags: Int,
+        refreshRate: Float = 0f
     ): Created {
         val displayManagerClass = Class.forName("android.hardware.display.DisplayManager")
         // ★ 关键：用 FakeContext 造一个**新的 DisplayManager 实例**，再调它的**实例方法**。
@@ -74,6 +75,27 @@ internal object VirtualDisplayCreator {
             .getDeclaredConstructor(Context::class.java)
             .apply { isAccessible = true }
             .newInstance(FakeContext.get())
+
+        // ★ 带刷新率建屏：先走 VirtualDisplayConfig 这条路。
+        //
+        //   游戏在虚拟屏里的帧率由虚拟屏刷新率决定（App 读 Display.getRefreshRate()
+        //   来决定渲染节奏）。老的六参 createVirtualDisplay 不带刷新率，系统用默认
+        //   （通常 60Hz），游戏就永远上不去 120。
+        //
+        //   只在 refreshRate > 0 且系统够新时尝试；失败就回落到老路径 ——
+        //   宁可刷新率不对，也不能因为这条新路走不通就建不了屏。
+        if (refreshRate > 0f && android.os.Build.VERSION.SDK_INT >= 33) {
+            val viaConfig = runCatching {
+                createWithConfig(displayManager, displayManagerClass, name, width, height, dpi, surface, flags, refreshRate)
+            }.onFailure {
+                val root = generateSequence(it) { e -> e.cause }.last()
+                Log.w(TAG, "带刷新率建屏失败，回落到默认刷新率：${root.javaClass.name}: ${root.message}")
+            }.getOrNull()
+            if (viaConfig != null) {
+                Log.i(TAG, "createVirtualDisplay(VirtualDisplayConfig) 成功，刷新率 ${refreshRate}Hz")
+                return finishCreate(viaConfig)
+            }
+        }
 
         val createMethod = displayManagerClass
             .getDeclaredMethod(
@@ -120,7 +142,75 @@ internal object VirtualDisplayCreator {
             error("createVirtualDisplay 所有 flags 候选都失败（多半是权限被拒）：$lastError")
         }
 
-        // 返回类型是 @hide 的 VirtualDisplay，所以按 Any 接住，再反射取它内部的 Display。
+        return finishCreate(created)
+    }
+
+    /**
+     * 用 `VirtualDisplayConfig` 建屏，带上目标刷新率。
+     *
+     * 全程反射：`VirtualDisplayConfig` 及其 Builder 都是 @hide。
+     * 三参数的 `createVirtualDisplay(config, surface, callback)` 是 API 33+。
+     */
+    private fun createWithConfig(
+        displayManager: Any,
+        displayManagerClass: Class<*>,
+        name: String,
+        width: Int,
+        height: Int,
+        dpi: Int,
+        surface: Surface,
+        flags: Int,
+        refreshRate: Float
+    ): Any? {
+        val builderClass = Class.forName("android.hardware.display.VirtualDisplayConfig\$Builder")
+        val builder = builderClass
+            .getConstructor(
+                String::class.java,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType
+            )
+            .newInstance(name, width, height, dpi)
+
+        builderClass.getMethod("setFlags", Int::class.javaPrimitiveType).invoke(builder, flags)
+        builderClass.getMethod("setRequestedRefreshRate", Float::class.javaPrimitiveType)
+            .invoke(builder, refreshRate)
+
+        val config = builderClass.getMethod("build").invoke(builder)
+
+        val configClass = Class.forName("android.hardware.display.VirtualDisplayConfig")
+        val callbackClass = Class.forName("android.hardware.display.VirtualDisplay\$Callback")
+        val createMethod = displayManagerClass.getDeclaredMethod(
+            "createVirtualDisplay",
+            configClass,
+            Surface::class.java,
+            callbackClass
+        ).apply { isAccessible = true }
+
+        // flags 仍然逐个降级试，理由同老路径。
+        var lastError: Throwable? = null
+        for (candidate in flagCandidates(flags)) {
+            try {
+                builderClass.getMethod("setFlags", Int::class.javaPrimitiveType)
+                    .invoke(builder, candidate)
+                val cfg = builderClass.getMethod("build").invoke(builder)
+                val vd = createMethod.invoke(displayManager, cfg, surface, null)
+                if (vd != null) return vd
+            } catch (t: Throwable) {
+                lastError = t
+            }
+        }
+        throw lastError ?: IllegalStateException("VirtualDisplayConfig 建屏失败")
+    }
+
+    /**
+     * 把反射拿到的 VirtualDisplay 转成 [Created]，并做两步后置处理。
+     *
+     * 抽出来是因为现在有**两条**建屏路径（带刷新率 / 不带），
+     * 后置步骤必须完全一致 —— 尤其是 IME 策略那一步，漏了的话
+     * 屏建出来了但输入进不去。
+     */
+    private fun finishCreate(created: Any): Created {
         val display = created.javaClass
             .getMethod("getDisplay")
             .apply { isAccessible = true }

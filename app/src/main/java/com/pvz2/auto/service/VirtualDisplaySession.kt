@@ -1,5 +1,7 @@
 package com.pvz2.auto.service
 
+import com.pvz2.auto.core.GameFps
+
 import android.os.ParcelFileDescriptor
 import org.opencv.core.CvType
 import org.opencv.imgproc.Imgproc
@@ -143,6 +145,21 @@ class VirtualDisplaySession(
         shellService = service
 
         val displayId = runCatching {
+            // 建屏前把刷新率告诉特权侧 —— 游戏的帧率跟着虚拟屏刷新率走。
+            // ★ 不能 runCatching 静默吞掉。
+            //
+            //   之前这里包了 runCatching，结果"设了刷新率但没生效"完全看不出来 ——
+            //   真机 dumpsys 里 `mRequestedRefreshRate=0.0` 才暴露出来。
+            //   最可能的原因是**上一版 APK 留下的旧 UserService 进程还在**，
+            //   它没有这个方法，调用直接抛异常。
+            val wantFps = GameFps.prefs(callerContext)
+            val wantRate = if (wantFps <= 0) 0f else wantFps.toFloat()
+            try {
+                service.setPendingRefreshRate(wantRate)
+                Log.i(TAG, "请求虚拟屏刷新率 ${if (wantRate <= 0f) "系统默认" else "${wantRate}Hz"}")
+            } catch (t: Throwable) {
+                Log.e(TAG, "设置刷新率失败（多半是旧 UserService 进程没有这个方法）", t)
+            }
             service.createDisplayWithCapture(
                 VD_NAME, VD_WIDTH, VD_HEIGHT, VD_DPI,
                 VirtualDisplayFlags.forSdk(Build.VERSION.SDK_INT)
@@ -961,7 +978,20 @@ class VirtualDisplaySession(
         const val MAX_FPS = 60
 
         /** 两帧之间的最小间隔，用来把采集压在 30fps 以内。 */
-        const val MIN_FRAME_INTERVAL_MS = 1000L / MAX_FPS
+        /**
+         * 采集节流下限，毫秒。
+         *
+         * ## 为什么现在是 0
+         *
+         * 以前是 `1000 / 60 = 16ms`，也就是采集端自己给自己设了个 60fps 上限。
+         * 但虚拟屏出帧有多快是**系统决定**的，采集端再补一次睡只会白等 ——
+         * 而且这个上限会让人误以为"游戏只能跑 60fps"，掩盖真正的瓶颈。
+         *
+         * 现在不节流：`AImageReader` 出多少帧就取多少帧。
+         * 游戏帧率该由**虚拟屏的刷新率**决定（这是用户可以选的设置），
+         * 而不是被采集端偷偷截断。
+         */
+        const val MIN_FRAME_INTERVAL_MS = 0L
 
         /** 窗口数据少于这个时长时不做折算，避免刚启动时报出假的低帧率。 */
         const val MIN_FPS_SPAN_MS = 300L
