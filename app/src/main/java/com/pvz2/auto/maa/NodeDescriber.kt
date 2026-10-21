@@ -41,6 +41,7 @@ object NodeDescriber {
             }
 
             is Recognition.Ocr -> {
+                node.orderBy?.let { rows += Row("  选取顺序", it) }
                 if (r.expected.isNotEmpty()) {
                     rows += Row("  期望文本", r.expected.joinToString("\n"))
                 }
@@ -94,6 +95,8 @@ object NodeDescriber {
         // ---- 时序 ----
         rows += Row("超时", "${node.timeout} ms")
         rows += Row("识别间隔", "${node.rateLimit} ms")
+        if (node.repeatDelay > 0) rows += Row("重试间隔", "${node.repeatDelay} ms")
+        if (node.postWaitFreezes > 0) rows += Row("等画面稳定", "${node.postWaitFreezes} ms")
         if (node.preDelay != 200L) rows += Row("动作前等待", "${node.preDelay} ms")
         if (node.postDelay != 200L) rows += Row("动作后等待", "${node.postDelay} ms")
 

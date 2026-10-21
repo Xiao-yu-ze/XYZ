@@ -41,7 +41,6 @@ class ScriptPage(
 ) {
 
     private val scriptList: LinearLayout = root.findViewById(R.id.scriptList)
-    private val etEntry: EditText = root.findViewById(R.id.etEntry)
     private val swDryRun: SwitchMaterial = root.findViewById(R.id.swDryRun)
     private val tvMessage: TextView = root.findViewById(R.id.tvScriptMessage)
     private val tvProgress: TextView = root.findViewById(R.id.tvScriptProgress)
@@ -82,28 +81,45 @@ class ScriptPage(
         }
     }
 
+    /**
+     * 一行脚本。
+     *
+     * ★ 必须是卡片，不能是裸 TextView。
+     *   裸文本的底色和页面一样，用户看不出"这是能点的条目"，
+     *   更看不出哪一行被选中 —— 选中态只能靠文字颜色深浅区分，太弱。
+     */
     private fun buildRow(info: PipelineRunner.ScriptInfo): View = TextView(host).apply {
         text = host.getString(R.string.script_row, info.dir, info.nodeCount)
         setTextAppearance(R.style.Text_Body)
-        setPadding(0, dp(10), 0, dp(10))
+        val padH = dp(14)
+        val padV = dp(12)
+        setPadding(padH, padV, padH, padV)
+        background = ContextCompat.getDrawable(host, R.drawable.bg_node_card)
         isClickable = true
         isFocusable = true
         // 用 tag 存目录名做精确匹配，不要拿渲染文本去 startsWith：
         // 目录名有前缀关系时（A 与 AB）会两行同时高亮，文案一改也会失配。
         tag = info.dir
         setOnClickListener { selectScript(info) }
+        // 行之间留空隙，否则两张卡会连成一片
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(8) }
     }
 
     private fun selectScript(info: PipelineRunner.ScriptInfo) {
         selectedDir = info.dir
-        etEntry.setText(info.entry)
+
         for (i in 0 until scriptList.childCount) {
             val child = scriptList.getChildAt(i) as? TextView ?: continue
+            val selected = child.tag == info.dir
+            child.background = ContextCompat.getDrawable(
+                host,
+                if (selected) R.drawable.bg_row_selected else R.drawable.bg_node_card
+            )
             child.setTextColor(
-                ContextCompat.getColor(
-                    host,
-                    if (child.tag == info.dir) R.color.ink else R.color.ink_muted
-                )
+                ContextCompat.getColor(host, if (selected) R.color.ink else R.color.ink_muted)
             )
         }
     }
@@ -115,8 +131,10 @@ class ScriptPage(
             tvMessage.setTextColor(ContextCompat.getColor(host, R.color.state_bad))
             return
         }
-        val entry = etEntry.text.toString().trim().takeIf { it.isNotEmpty() }
-        AutomationService.scriptRun(host, dir, entry, swDryRun.isChecked)
+        // 入口节点由 PipelineRunner 自动推断（选不被任何节点 next 引用的那个），
+        // 并且会显示在状态行里。之前这里让用户手填，但绝大多数人并不知道
+        // 节点名，填错还会被当成"跑完了"—— 输入框撤掉。
+        AutomationService.scriptRun(host, dir, null, swDryRun.isChecked)
     }
 
     /** 订阅进程级运行状态。服务可能重启、界面可能重建，状态不能挂在页面实例上。 */

@@ -19,39 +19,40 @@
         android:layout_height="wrap_content"
         android:text="@string/editor_title" />
 
-    <!-- 脚本选择 + 节点过滤 -->
+    <!-- 脚本选择 + 节点过滤。
+         放在卡片里，否则 Spinner 和输入框会直接浮在页面底色上 ——
+         和节点卡片不是同一套视觉语言，看起来像两截拼起来的。 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:layout_marginTop="8dp"
+        android:background="@drawable/bg_node_card"
+        android:orientation="vertical"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="10dp">
 
         <Spinner
             android:id="@+id/spEditorScript"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1" />
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
 
         <EditText
             android:id="@+id/etNodeFilter"
             style="@style/Text.Body"
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
+            android:layout_marginTop="2dp"
             android:hint="@string/editor_filter_hint"
             android:inputType="text"
             android:singleLine="true" />
-    </LinearLayout>
 
-    <TextView
-        android:id="@+id/tvEditorSummary"
-        style="@style/Text.Hint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="" />
+        <TextView
+            android:id="@+id/tvEditorSummary"
+            style="@style/Text.Hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="" />
+    </LinearLayout>
 
     <!-- 节点列表。用 RecyclerView 而不是往 LinearLayout 里塞上百个 view ——
          真实脚本 101 个节点，一次性 inflate 会明显卡顿。 -->

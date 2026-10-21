@@ -35,7 +35,7 @@
             android:layout_height="wrap_content"
             android:text="@string/script_subtitle" />
 
-        <!-- 脚本列表。目前只有一个，将来多了会自动列出来。 -->
+        <!-- 脚本列表。点一行选中，选中的那行会高亮。 -->
         <LinearLayout
             android:id="@+id/scriptList"
             android:layout_width="match_parent"
@@ -43,22 +43,7 @@
             android:layout_marginTop="16dp"
             android:orientation="vertical" />
 
-        <TextView
-            style="@style/Text.Hint"
-            android:layout_marginTop="18dp"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/script_entry_label" />
-
-        <EditText
-            android:id="@+id/etEntry"
-            style="@style/Text.Body"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:hint="@string/script_entry_hint"
-            android:inputType="text"
-            android:singleLine="true" />
+        
 
         <LinearLayout
             android:layout_width="match_parent"

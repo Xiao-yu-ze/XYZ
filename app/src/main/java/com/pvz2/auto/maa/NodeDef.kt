@@ -44,8 +44,65 @@ data class NodeDef(
     /** 该节点最多被命中多少次。官方默认 UINT_MAX。 */
     val maxHit: Long = 4_294_967_295L,
     /** 状态栏提示文字，原样透出到 UI。 */
-    val focus: String? = null
+    val focus: String? = null,
+
+    /**
+     * 动作之后等画面**稳定**多久才算数，毫秒。0 = 不等。
+     *
+     * ## 为什么需要它（自动精灵协议里的 `post_wait_freezes`）
+     *
+     * `post_delay` 是死等固定时长：写 200 就睡 200。但动作引起的画面变化
+     * 多久结束并不固定 —— 一次滑动可能 150ms 就停了，也可能因为惯性滚 800ms。
+     * 死等要么白等，要么在画面还在动的时候就去做下一次识别，于是识别到
+     * 中间态、点错位置。
+     *
+     * 这个字段的语义是"等到连续 [postWaitFreezes] 毫秒没有变化为止"，
+     * 也就是自适应等待。真实脚本里滑动类节点用它（3 处）。
+     */
+    val postWaitFreezes: Long = 0L,
+
+    /**
+     * 识别未命中后，本轮重试前额外等待的毫秒数。0 = 立即重试。
+     *
+     * 协议里的 `repeat_delay`。与 [rateLimit] 的区别：
+     * `rate_limit` 是每轮识别的**最低耗时下限**（补睡到这个时长），
+     * `repeat_delay` 是**失败之后**的额外间隔，用于低频轮询的节点
+     * （比如"等一个很久才出现的东西"，没必要每 16ms 全屏找一遍）。
+     */
+    val repeatDelay: Long = 0L,
+
+    /**
+     * 同一个识别在 ROI 里命中多个目标时，选哪个。协议里的 `order_by`。
+     *
+     * 取值（不区分大小写）：`Horizontal` / `Vertical` / `Score` / `Area` / `Random`。
+     * null = 用识别器自己给的最优（模板取最高分，OCR 取第一行）。
+     *
+     * 真实场景：一个 ROI 里同时有「返回」和「确定」两个按钮，
+     * 按 Vertical 取最上面那个，才不会点到下面的。
+     */
+    val orderBy: String? = null
 )
+
+/**
+ * 节点之间的边。
+ *
+ * 自动精灵用 `[JumpBack]名字` 表示一条**回边**：那个节点命中并执行完之后，
+ * 要回到父节点重新判断，而不是继续往下走。
+ *
+ * 抽成单独对象是因为解析和执行两处都要认这个前缀 ——
+ * 写在两个地方一定会漂移（一处修了另一处忘）。
+ */
+object NodeEdges {
+
+    const val JUMP_BACK_PREFIX = "[JumpBack]"
+
+    /** 去掉前缀；没有前缀原样返回。 */
+    fun strip(name: String): String =
+        if (name.startsWith(JUMP_BACK_PREFIX)) name.removePrefix(JUMP_BACK_PREFIX) else name
+
+    /** 这条边是不是回边。 */
+    fun isJumpBack(name: String): Boolean = name.startsWith(JUMP_BACK_PREFIX)
+}
 
 /** 节点动作。 */
 sealed interface Action {
@@ -188,7 +245,13 @@ object PipelineParser {
             postDelay = obj.optLong("post_delay", 200L),
             enabled = obj.optBoolean("enabled", true),
             maxHit = obj.optLong("max_hit", 4_294_967_295L),
-            focus = if (obj.isNull("focus")) null else obj.optString("focus").takeIf { it.isNotEmpty() }
+            focus = if (obj.isNull("focus")) null else obj.optString("focus").takeIf { it.isNotEmpty() },
+            // post_wait_freezes 在协议里可以是数字（毫秒），也可以是对象
+            // （带 time/threshold）。这里只取数字形式，对象形式按 0 处理 ——
+            // 真实脚本里 3 处全是数字。
+            postWaitFreezes = obj.optLong("post_wait_freezes", 0L),
+            repeatDelay = obj.optLong("repeat_delay", 0L),
+            orderBy = obj.optString("order_by").takeIf { it.isNotEmpty() }
         )
     }
 
@@ -327,18 +390,28 @@ object PipelineParser {
     }
 
     /**
-     * 剥掉 `[JumpBack]` / `[Anchor]xxx` 前缀。
+     * 剥掉 `[Anchor]xxx` 之类的前缀，**但保留 `[JumpBack]`**。
      *
-     * 这两种语义都不实现（无尽挑战没用到），但名称必须还原成真实节点名，
-     * 否则查表会失败。行为上退化成普通后继 —— 对当前流程是等价的。
+     * ## 为什么 `[JumpBack]` 必须保留
+     *
+     * 这里原本把所有 `[...]` 前缀一律删掉，注释写着"这两种语义都不实现，
+     * 退化成普通后继对当前流程是等价的"。**这句话是错的**：
+     *
+     * `[JumpBack]X` 的语义是"X 命中并执行完后回到父节点重新判断"，
+     * 而普通后继是"X 执行完后前进到 X 的 next"。两者走的分支完全不同 ——
+     * 退化成普通边之后，兜底节点跑完会继续往下走，跳过父节点原本在等的画面，
+     * 于是链在错误的界面上继续跑。而且**日志里一点痕迹都没有**。
+     *
+     * 前缀在解析阶段丢掉，运行期就再也拿不回来，所以只能在这里保留，
+     * 由 [NodeEdges] 统一判定。
      */
     private fun stripPrefix(raw: String): String {
-        var name = raw.trim()
-        if (name.startsWith("[")) {
-            val close = name.indexOf(']')
-            if (close > 0) name = name.substring(close + 1).trim()
-        }
-        return name
+        val name = raw.trim()
+        if (!name.startsWith("[")) return name
+        // 回边前缀是语义的一部分，原样保留。
+        if (name.startsWith(NodeEdges.JUMP_BACK_PREFIX)) return name
+        val close = name.indexOf(']')
+        return if (close > 0) name.substring(close + 1).trim() else name
     }
 }
 

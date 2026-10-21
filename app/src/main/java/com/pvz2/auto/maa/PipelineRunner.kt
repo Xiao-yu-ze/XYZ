@@ -207,8 +207,14 @@ class PipelineRunner(
             if (nodes.isEmpty()) return null
             val referenced = HashSet<String>()
             for (node in nodes.values) {
-                referenced += node.next
-                referenced += node.onError
+                // ★ 必须去掉 [JumpBack] 前缀再记。
+                //
+                //   直接记原始字符串的话，`[JumpBack]X` 不等于 `X`，
+                //   于是 X 看上去"没人引用"，会被误判成入口节点。
+                //   真实脚本里两处回边指向的都是普通节点，一旦被选成入口，
+                //   整个流程会从中间开始跑。
+                node.next.forEach { referenced += NodeEdges.strip(it) }
+                node.onError.forEach { referenced += NodeEdges.strip(it) }
             }
             val roots = nodes.keys.filter { it !in referenced }.sorted()
             if (roots.isEmpty()) return nodes.keys.sorted().firstOrNull()

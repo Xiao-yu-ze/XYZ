@@ -10,6 +10,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import org.opencv.core.Core
 import org.opencv.core.Mat
 import kotlin.math.roundToInt
 
@@ -130,7 +131,20 @@ class NodeGraph(
                 return
             }
 
+            if (lastWasJumpBack) {
+                // 回边上的兜底节点执行完了，**回到父节点重新判断**，不往前走。
+                //
+                // 推进 current 的话会跳过父节点原本要等的画面，
+                // 表现是"兜底跑完直接往下走了"，链在错误的界面上继续 ——
+                // 而回边的整个意义就是"修正完接着等原来那个"。
+                Log.i(TAG, "JumpBack [${hit.name}] 已处理，回到父节点 [${node.name}] 重新判断")
+                continue
+            }
+
             current = hit.name
+            // post_wait_freezes：等画面稳定再往下走（自适应等待，见函数说明）。
+            // 必须在 post_delay 之前 —— 先等稳，再补一个固定的动作后间隔。
+            if (hit.postWaitFreezes > 0) waitForFreeze(hit.postWaitFreezes)
             if (currentCoroutineContext().isActive) delay(hit.postDelay)
         }
     }
@@ -157,12 +171,13 @@ class NodeGraph(
             if (current != null) {
                 // 用普通 for 而不是内联 lambda，避免依赖实验性的
                 // "break/continue in inline lambdas" 特性。
-                for (name in next) {
+                for (raw in next) {
+                    val name = stripJumpBack(raw)
                     val candidate = nodes[name] ?: continue
                     if (!isEligible(candidate)) continue
 
                     val hit = try {
-                        recognizer.recognize(current, candidate.recognition)
+                        recognizer.recognize(current, candidate.recognition, candidate.orderBy)
                     } catch (t: Throwable) {
                         Log.w(TAG, "识别 [$name] 出错", t)
                         null
@@ -170,6 +185,8 @@ class NodeGraph(
                     if (hit != null) {
                         lastHit = hit
                         reportHit(candidate.name)
+                        // 记录边类型：回边执行完要回到父节点，普通边才是前进。
+                        lastWasJumpBack = NodeEdges.isJumpBack(raw)
                         return candidate
                     }
                 }
@@ -186,10 +203,69 @@ class NodeGraph(
             val need = parent.rateLimit - elapsed
             lastSleep = need.coerceAtLeast(0L)
             if (lastSleep > 0) delay(lastSleep)
+            // repeat_delay：本节点重试前的额外间隔。
+            // 用于低频轮询的节点（等一个很久才出现的东西），
+            // 没必要每 16ms 全屏找一遍。真实脚本里出现的值是 0，即不额外等。
+            if (parent.repeatDelay > 0) delay(parent.repeatDelay)
 
             if (System.currentTimeMillis() > deadline) return null
         }
         return null
+    }
+
+    /**
+     * 等画面**稳定**下来：连续 [freezeMs] 毫秒没有明显变化就返回。
+     *
+     * ## 为什么不用固定的 post_delay
+     *
+     * 动作引起的画面变化时长不固定：一次滑动可能 150ms 就停了，
+     * 也可能因为惯性滚 800ms。死等固定值要么白等，要么在画面还在动的
+     * 时候就去做下一次识别 —— 后者会识别到中间态，然后点错位置。
+     *
+     * ## 怎么判断"没变化"
+     *
+     * 用 OpenCV 的无穷范数（两帧逐像素最大绝对差）。它一次遍历就能算完，
+     * 而且不额外分配整帧内存 —— 全屏 1280×720 也只要 1ms 量级。
+     * 阈值不能是 0：视频解码和采集本身就有极小的抖动，永远等不到完全相等。
+     */
+    private suspend fun waitForFreeze(freezeMs: Long) {
+        if (freezeMs <= 0) return
+        val deadline = System.currentTimeMillis() + FREEZE_MAX_WAIT_MS
+        var previous: Mat? = null
+        var stableSince = 0L
+
+        try {
+            while (currentCoroutineContext().isActive) {
+                if (!refreshFrame()) {
+                    delay(RETRY_ON_CAPTURE_FAILURE)
+                    if (System.currentTimeMillis() > deadline) return
+                    continue
+                }
+                val current = frame ?: return
+
+                val prev = previous
+                if (prev != null && prev.rows() == current.rows() && prev.cols() == current.cols()) {
+                    val diff = runCatching { Core.norm(current, prev, Core.NORM_INF) }
+                        .getOrDefault(Double.MAX_VALUE)
+                    if (diff <= FREEZE_DIFF_THRESHOLD) {
+                        if (stableSince == 0L) stableSince = System.currentTimeMillis()
+                        if (System.currentTimeMillis() - stableSince >= freezeMs) return
+                    } else {
+                        // 又动了，重新计时
+                        stableSince = 0L
+                    }
+                }
+
+                // 必须克隆：frame 归 graph 所有，下一次 refreshFrame 会 release 它。
+                prev?.release()
+                previous = current.clone()
+
+                if (System.currentTimeMillis() > deadline) return
+                delay(FREEZE_POLL_MS)
+            }
+        } finally {
+            previous?.release()
+        }
     }
 
     /** 最近一次识别结果，供动作解析点击目标。 */
@@ -311,12 +387,41 @@ class NodeGraph(
      *
      * 官方语义：`enabled=false` 或超过 `max_hit` 的节点若出现在 next 里，
      * 会被直接跳过（既不是错误，也不终止流程）。
+     *
+     * ★ 必须认识 `[JumpBack]` 前缀。
+     *
+     *   自动精灵用 `[JumpBack]名字` 表示一条**回边**：这个节点命中后，
+     *   执行完要回到父节点重新判断，而不是往下走。典型用法是状态兜底 ——
+     *   "我其实不在战斗界面，先去修正，再回来继续等"。
+     *
+     *   不认识前缀的话，`nodes["[JumpBack]X"]` 查不到，整条边被静默过滤掉，
+     *   兜底逻辑失效且日志毫无痕迹。真实脚本里有 2 处这种边。
+     *
+     *   这里保留原始字符串（含前缀），因为调用方需要知道这是不是回边。
      */
     private fun resolveNext(node: NodeDef): List<String> =
-        node.next.filter { name ->
+        node.next.filter { raw ->
+            val name = stripJumpBack(raw)
             val candidate = nodes[name]
-            candidate != null && isEligible(candidate)
+            if (candidate == null) {
+                // ★ 必须显式报出来。
+                //
+                //   之前这里只是 candidate != null 的过滤，断链被静默丢掉，
+                //   运行时表现是"走到这个节点就正常结束了" —— 看起来像跑完，
+                //   实际链在中间断了。素材里就有 3 处这种引用（来自没同步进来的
+                //   脚本），不报的话永远查不到。
+                Log.w(TAG, "节点 [${node.name}] 引用了不存在的 [$name]，这条边被跳过")
+                false
+            } else {
+                isEligible(candidate)
+            }
         }
+
+    /** 去掉 `[JumpBack]` 前缀。 */
+    private fun stripJumpBack(name: String): String = NodeEdges.strip(name)
+
+    /** 当前这次命中是不是通过回边到达的。由 [waitForHit] 设置。 */
+    private var lastWasJumpBack = false
 
     /** 抓一帧。失败返回 false，调用方稍后重试。 */
     private fun refreshFrame(): Boolean {
@@ -378,6 +483,20 @@ class NodeGraph(
     private companion object {
         const val TAG = "NodeGraph"
         const val RETRY_ON_CAPTURE_FAILURE = 100L
+
+
+        /**
+         * 判定"画面变了"的阈值（两帧逐像素最大绝对差）。
+         *
+         * 不能是 0：采集和解码本身有极小抖动，要求完全相等会永远等不到稳定。
+         */
+        const val FREEZE_DIFF_THRESHOLD = 2.0
+
+        /** 等稳定时的采帧间隔。比 rate_limit 粗，因为这里是在等而不是在找。 */
+        const val FREEZE_POLL_MS = 30L
+
+        /** 等稳定的最长时长兜底 —— 画面一直动（比如游戏在放动画）时不能卡死。 */
+        const val FREEZE_MAX_WAIT_MS = 3_000L
     }
 }
 

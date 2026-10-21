@@ -71,19 +71,29 @@ class Recognizer(private val context: Context) {
     }
 
     /** 识别一帧。命中返回 [Hit]，未命中或无适配器时返回 null。 */
-    fun recognize(frame: Mat, recognition: Recognition): Hit? {
+    /**
+     * @param orderBy 一个 ROI 里命中多个目标时选哪个（协议里的 `order_by`）。
+     *   `Vertical` 取最上、`Horizontal` 取最左、`Score` 取分最高、
+     *   `Area` 取最大、`Random` 随机；null = 识别器的默认最优。
+     */
+    fun recognize(frame: Mat, recognition: Recognition, orderBy: String? = null): Hit? {
         val current = adapter ?: return null
-        return recognize(frame, recognition, current)
+        return recognize(frame, recognition, current, orderBy)
     }
 
-    private fun recognize(frame: Mat, recognition: Recognition, current: ScreenAdapter): Hit? {
+    private fun recognize(
+        frame: Mat,
+        recognition: Recognition,
+        current: ScreenAdapter,
+        orderBy: String? = null
+    ): Hit? {
         if (frame.empty()) return null
         return when (recognition) {
             is Recognition.Template -> matchTemplate(frame, recognition, current)
-            is Recognition.Ocr -> matchOcr(frame, recognition, current)
+            is Recognition.Ocr -> matchOcr(frame, recognition, current, orderBy)
             is Recognition.Color -> matchColor(frame, recognition, current)
             is Recognition.AnyOf -> recognition.items
-                .firstNotNullOfOrNull { recognize(frame, it, current) }
+                .firstNotNullOfOrNull { recognize(frame, it, current, orderBy) }
             Recognition.DirectHit -> Hit(1.0, 0.0, 0.0)
         }
     }
@@ -424,7 +434,37 @@ class Recognizer(private val context: Context) {
 
     // ---------------------------------------------------------------- OCR
 
-    private fun matchOcr(frame: Mat, recognition: Recognition.Ocr, current: ScreenAdapter): Hit? {
+    /**
+     * 按 `order_by` 从多个候选里挑一个。
+     *
+     * 取值大小写不敏感，与协议一致：
+     *  · `Vertical`   最上面（y 最小）
+     *  · `Horizontal` 最左边（x 最小）
+     *  · `Area`       面积最大
+     *  · `Score`      相似度最高
+     *  · `Random`     随机一个
+     *
+     * 未知取值或 null 时退回第一项 —— 那是识别器原本给的顺序，
+     * 而不是静默变成某种排序，否则写错一个字母就会点错目标却看不出原因。
+     */
+    private fun orderResults(lines: List<OcrLine>, orderBy: String?): OcrLine {
+        if (lines.size == 1 || orderBy.isNullOrBlank()) return lines.first()
+        return when (orderBy.lowercase()) {
+            "vertical" -> lines.minByOrNull { it.centerY } ?: lines.first()
+            "horizontal" -> lines.minByOrNull { it.centerX } ?: lines.first()
+            "area" -> lines.maxByOrNull { it.boxWidth * it.boxHeight } ?: lines.first()
+            "score" -> lines.maxByOrNull { it.confidence } ?: lines.first()
+            "random" -> lines.random()
+            else -> lines.first()
+        }
+    }
+
+    private fun matchOcr(
+        frame: Mat,
+        recognition: Recognition.Ocr,
+        current: ScreenAdapter,
+        orderBy: String? = null
+    ): Hit? {
         val engine = ocr ?: return null
         val roi = roiToPhysical(recognition.roi, current, frame) ?: return null
         val region = frame.submat(roi)
@@ -435,16 +475,25 @@ class Recognizer(private val context: Context) {
             // expected 里每项都是正则；为空表示"任意文字"（MaaPVZ 用它做
             // "这个区域里有没有字"的判断，例如无尽_切换编队序号）。
             val wanted = recognition.expected
-            val matched = if (wanted.isEmpty()) {
-                lines.first()
+            val candidates = if (wanted.isEmpty()) {
+                lines
             } else {
-                lines.firstOrNull { line ->
+                lines.filter { line ->
                     wanted.any { pattern ->
                         runCatching { Regex(pattern).containsMatchIn(line.text) }
                             .getOrDefault(false)
                     }
                 }
-            } ?: return null
+            }
+            if (candidates.isEmpty()) return null
+
+            // ★ order_by：一个 ROI 里可能同时命中多个目标，协议规定由节点指定取哪个。
+            //
+            //   真实例子：`无尽挑战_结束或循环_返回` 的 ROI 里同时有「返回」和「确定」，
+            //   节点写 `order_by: Vertical` —— 取最上面那个，才不会点到下面的。
+            //   不排序的话这里取的是 OCR 输出顺序的第一个，那取决于检测网络的
+            //   行顺序，不是"最上"，点错按钮就是从这里来的。
+            val matched = orderResults(candidates, orderBy)
 
             // OCR 返回的是 ROI 内坐标，换算回逻辑坐标。
             //
