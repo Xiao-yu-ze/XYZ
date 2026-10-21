@@ -665,20 +665,40 @@ class MainActivity : AppCompatActivity() {
                         "没有任何结果 —— 帧为空或模板全部没加载上。"
                     } else {
                         buildString {
-                            appendLine("画面 ${bitmap.width}×${bitmap.height}  全屏搜索（最坏情况）")
+                            appendLine("画面 ${bitmap.width}×${bitmap.height}，每个模板测两种搜索区")
+                            appendLine("─────────────────────────────")
+                            // 按模板分组，全屏与 ROI 并排，方便直接对比。
+                            probes.chunked(2).forEach { pair ->
+                                val full = pair.getOrNull(0)
+                                val roi = pair.getOrNull(1)
+                                if (full != null) {
+                                    appendLine(full.name.substringAfterLast('/'))
+                                    appendLine(full.toString())
+                                }
+                                if (roi != null) {
+                                    appendLine(roi.toString())
+                                    if (full != null && roi.costMs > 0) {
+                                        val ratio = full.costMs / roi.costMs
+                                        appendLine(
+                                            "     → ROI 快了 ${"%.1f".format(ratio)} 倍" +
+                                                "（${"%.1f".format(full.costMs)} → ${"%.1f".format(roi.costMs)} ms）"
+                                        )
+                                    }
+                                }
+                                appendLine()
+                            }
+                            appendLine("─────────────────────────────")
+                            val fullTotal = probes.filterIndexed { i, _ -> i % 2 == 0 }.sumOf { it.costMs }
+                            val roiTotal = probes.filterIndexed { i, _ -> i % 2 == 1 }.sumOf { it.costMs }
+                            appendLine("全屏总耗时 ${"%.1f".format(fullTotal)} ms / ${probes.size / 2} 个模板")
+                            appendLine("带 ROI 总耗时 ${"%.1f".format(roiTotal)} ms / ${probes.size / 2} 个模板")
                             appendLine()
-                            probes.forEach { appendLine(it.toString()) }
+                            appendLine("代价 ≈ 搜索区面积 × 模板面积。全屏 921600 px 是 71 万个候选位置，")
+                            appendLine("每个位置算一次模板面积大小的乘加 —— 这就是慢的唯一原因。")
+                            appendLine("真实 pipeline 每个节点都有 roi，搜索区小一个数量级，耗时跟着降。")
                             appendLine()
-                            appendLine("可信 ${probes.count { it.trustworthy }} / ${probes.size}")
-                            val total = probes.sumOf { it.costMs }
-                            appendLine("识别总耗时 ${"%.2f".format(total)} ms（${probes.size} 个模板）")
-                            appendLine()
-                            appendLine("「孤立度」= 最高分 − 次高分（次高分已扣掉峰值邻域）。")
-                            appendLine("  真命中会有明显高于周围的锐利峰值，孤立度通常 > 0.1；")
-                            appendLine("  画面里没有的东西只会在大量相近值里挑出个最大值，")
-                            appendLine("  孤立度会很小（< 0.05）—— 那 0.6~0.7 的分数是虚高，不是命中。")
-                            appendLine()
-                            appendLine("生产里每个节点都带 roi，搜索区小两个数量级，不会有这个虚高。")
+                            appendLine("注意 ROI 那一行的分数只有在目标确实落在 ROI 内时才可比；")
+                            appendLine("中央一半的 ROI 里没有的东西，分数自然低。")
                         }
                     }
                 } catch (t: Throwable) {

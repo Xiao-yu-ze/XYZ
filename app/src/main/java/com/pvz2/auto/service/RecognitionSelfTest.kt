@@ -2,93 +2,81 @@ package com.pvz2.auto.service
 
 import android.content.Context
 import android.util.Log
+import com.pvz2.auto.maa.Recognition
 import com.pvz2.auto.maa.Recognizer
 import org.opencv.core.Mat
 
 /**
- * 识别自检：拿虚拟屏的实时帧跑模板匹配，报出**分数、命中位置、峰值孤立度**。
+ * 识别自检：测**真实耗时**、看分数、看命中位置，并对比"全屏 vs 带 ROI"。
  *
- * ## 为什么不能只看最高分
+ * ## 为什么必须报"搜索区面积"
  *
- * `matchTemplate` 在搜索区每个位置都算一个分数再取最大值。全屏搜索时
- * 那是约 **120 万个**位置（(1280−42+1)×(720−44+1)）——
- * 从 120 万个样本里取 max，**即使模板根本不在画面里，最大值也会明显偏高**。
- * 这是极值统计的必然结果，不是 bug。
+ * `matchTemplate` 的代价 ≈ **搜索区面积 × 模板面积**。
+ * 1280×720 全屏（921600 px）搜一个 185×73 的模板，是
+ * `(1280−185+1) × (720−73+1) ≈ 71 万个位置`，每个位置算 13505 次乘加，
+ * 合计约 **96 亿次运算** —— 手机上就是一百多毫秒。
  *
- * 真机实测印证：画面上不存在的"叉叉"模板，全屏搜索拿到 0.674；
- * 真实存在并确实命中的"开始游戏"是 0.974。两者只差 0.3，
- * 单靠阈值 0.7 几乎没有区分度。
+ * 而真实 pipeline 每个节点都带 `roi`，搜索区可能只有 640×360（23 万 px），
+ * 位置数少 4 倍，耗时跟着少几倍。
  *
- * ## 判据：峰值孤不孤立
+ * ## 为什么每个模板跑两次
  *
- * 所以除了最高分，还要看**次高分**（扣掉峰值邻域后的最大值）：
+ * 一次全屏、一次限定 ROI。**这不是为了凑数据，是为了量出 roi 的收益**：
+ * 同一张图、同一个模板，只有搜索区不同，耗时差多少一目了然。
+ * 有了这个数字才知道"给节点加 roi"值多少，而不用靠猜。
  *
- *   孤立度 = 最高分 − 次高分
- *
- *  · 孤立度高（> 0.1）→ 有一个明显高于周围的锐利峰值 = 真命中
- *  · 孤立度低（< 0.05）→ "到处都是差不多高的分" = 噪声里的最大值
- *
- * 真实 pipeline 里每个节点都有 `roi`，搜索区只有几百像素宽，
- * 候选位置少两个数量级，虚高问题本来就不存在。
- * 自检默认全屏，是**最坏情况**，用来暴露问题而不是代表生产表现。
+ * 之前这里也跑两次，但那是因为代码写重了（`scoreStats` + `recognize`
+ * 各一次），报出来是真实值的两倍 —— 那是测量假象，方向都会被带偏。
+ * 现在两次是**主动的对照实验**，分别计时，各自有效。
  */
 class RecognitionSelfTest(private val context: Context) {
 
-    /** 单个模板的一次检测结果。 */
+    /** 单个模板在**一种搜索区**下的结果。 */
     data class Probe(
         val name: String,
-        val best: Double,
-        val secondBest: Double,
+        val roiDesc: String,
+        val score: Double,
         val hitX: Double,
         val hitY: Double,
         val boxDesc: String,
         val threshold: Double,
-        /** 该模板**识别一次**的耗时（毫秒）。这是速度优化的唯一依据。 */
+        /** 完整识别一次的耗时（毫秒）。 */
         val costMs: Double,
-        /** 搜索区面积（像素）。全屏时等于整帧，是虚高和慢的共同来源。 */
-        val searchPixels: Int
+        /** 搜索区面积（像素）。全屏 = 整帧。 */
+        val searchPixels: Int,
+        /** 模板面积（像素）。代价 ≈ 搜索区面积 × 模板面积。 */
+        val templatePixels: Int
     ) {
-        /** 峰值孤立度。高 = 真命中，低 = 噪声。 */
-        val margin: Double get() = best - secondBest
+        val workUnits: Long
+            get() = searchPixels.toLong() * templatePixels.toLong()
 
-        val scorePassed: Boolean get() = best >= threshold
-        val isolated: Boolean get() = margin >= MARGIN_THRESHOLD
-
-        /** 两个条件都满足才算可信。 */
-        val trustworthy: Boolean get() = scorePassed && isolated
+        val passed: Boolean get() = score >= threshold
 
         override fun toString(): String {
-            if (best < 0) return "✗ $name  模板未加载（路径错）"
-            val mark = when {
-                trustworthy -> "✓"
-                scorePassed -> "⚠"
-                else -> "✗"
-            }
-            val verdict = when {
-                trustworthy -> "可信"
-                scorePassed -> "分数够但峰值不孤立 —— 很可能是噪声里的最大值"
-                else -> "未达阈值"
-            }
-            return "$mark $name  分数 ${"%.3f".format(best)}（阈值 ${"%.2f".format(threshold)}）\n" +
-                "   次高 ${"%.3f".format(secondBest)}  孤立度 ${"%.3f".format(margin)} → $verdict\n" +
-                "   耗时 ${"%.2f".format(costMs)} ms  搜索区 ${searchPixels} px\n" +
-                "   命中 ($hitX, $hitY)  框 $boxDesc"
+            if (score < 0) return "  ✗ $roiDesc  模板未加载（路径错）"
+            val mark = if (passed) "✓" else "✗"
+            return "$mark $roiDesc  分数 ${"%.3f".format(score)}  耗时 ${"%.2f".format(costMs)} ms\n" +
+                "     搜索区 $searchPixels px × 模板 $templatePixels px" +
+                " = ${workUnits / 1_000_000} M 次运算\n" +
+                "     命中 ($hitX, $hitY)  框 $boxDesc"
         }
     }
 
     /**
-     * 用 [frame] 跑一批模板。
+     * 跑一批模板，每个模板测「全屏」与「限定 ROI」两种搜索区。
      *
-     * @param templates 模板在 assets 里的相对路径，例如 `Start_game/开始游戏.png`
-     * @param rois 与 templates 一一对应的 720p 逻辑 ROI（`[x,y,w,h]`）；
-     *   传 null 表示该模板全屏搜索。**全屏是最坏情况**，生产里应当都给 ROI。
      * @param frame 虚拟屏帧（CV_8UC4，RGBA）。**调用方负责 release**。
+     * @param probeRoi 对照实验用的 ROI（720p 逻辑 `[x,y,w,h]`）。
+     *   默认取屏幕中央一半面积 —— 那是一个现实里很常见的 ROI 大小。
      */
     fun run(
         frame: Mat,
         templates: List<String>,
-        rois: List<IntArray?> = emptyList(),
-        threshold: Double = 0.7
+        threshold: Double = 0.7,
+        probeRoi: IntArray = intArrayOf(
+            frame.width() / 4, frame.height() / 4,
+            frame.width() / 2, frame.height() / 2
+        )
     ): List<Probe> {
         if (frame.empty()) return emptyList()
 
@@ -100,71 +88,76 @@ class RecognitionSelfTest(private val context: Context) {
                 return emptyList()
             }
 
-            return templates.mapIndexed { i, path ->
-                val roi = rois.getOrNull(i)
-                // 搜索区面积。全屏时就是整帧 —— 这是"慢"和"分数虚高"的共同来源，
-                // 报出来才能判断该不该给这个节点加 roi。
-                val searchPixels = if (roi == null || roi.size < 4) {
-                    frame.width() * frame.height()
-                } else {
-                    roi[2] * roi[3]
-                }
-
-                val startedAt = System.nanoTime()
-                val stats = runCatching { recognizer.scoreStats(frame, path, roi) }
-                    .onFailure { Log.w(TAG, "scoreStats $path 抛异常", it) }
-                    .getOrNull()
-                // 再取一次命中位置（scoreStats 只给分数，位置要从 recognize 拿）。
-                val hit = if (stats == null) null else runCatching {
-                    recognizer.recognize(
-                        frame,
-                        com.pvz2.auto.maa.Recognition.Template(
-                            templates = listOf(path),
-                            roi = roi,
-                            threshold = 0.0
-                        )
-                    )
-                }.getOrNull()
-                val costMs = (System.nanoTime() - startedAt) / 1_000_000.0
-
-                if (stats == null) {
-                    Probe(
-                        path, -1.0, -1.0, -1.0, -1.0, "模板未加载",
-                        threshold, costMs, searchPixels
-                    )
-                } else {
-                    val b = hit?.box
-                    Probe(
-                        name = path,
-                        best = stats.best,
-                        secondBest = stats.secondBest,
-                        hitX = hit?.centerX ?: -1.0,
-                        hitY = hit?.centerY ?: -1.0,
-                        boxDesc = when {
-                            b == null || (b.width() == 0 && b.height() == 0) -> "（空）"
-                            else -> "(${b.left},${b.top}) ${b.width()}×${b.height()}"
-                        },
-                        threshold = threshold,
-                        costMs = costMs,
-                        searchPixels = searchPixels
-                    )
-                }
+            // 预热：首次要从 assets 解 PNG 再 resize，是一次性开销。
+            // 不预热的话它会算进第一个模板，看起来像那个模板特别慢。
+            templates.firstOrNull()?.let { first ->
+                runCatching { recognizeOnce(recognizer, frame, first, null) }
             }
+
+            val full = intArrayOf(0, 0, frame.width(), frame.height())
+            val probes = ArrayList<Probe>(templates.size * 2)
+
+            for (path in templates) {
+                probes += measure(recognizer, frame, path, null, "全屏", threshold, full)
+                probes += measure(recognizer, frame, path, probeRoi, "ROI", threshold, probeRoi)
+            }
+            return probes
         } finally {
             recognizer.release()
         }
     }
 
+    private fun measure(
+        recognizer: Recognizer,
+        frame: Mat,
+        path: String,
+        roi: IntArray?,
+        label: String,
+        threshold: Double,
+        searchRect: IntArray
+    ): Probe {
+        val searchPixels = searchRect[2] * searchRect[3]
+        val start = System.nanoTime()
+        val hit = recognizeOnce(recognizer, frame, path, roi)
+        val costMs = (System.nanoTime() - start) / 1_000_000.0
+
+        return if (hit == null) {
+            Probe(path, label, -1.0, -1.0, -1.0, "模板未加载", threshold, costMs, searchPixels, 0)
+        } else {
+            val b = hit.box
+            val tw = b.width().coerceAtLeast(0)
+            val th = b.height().coerceAtLeast(0)
+            Probe(
+                name = path,
+                roiDesc = label,
+                score = hit.score,
+                hitX = hit.centerX,
+                hitY = hit.centerY,
+                boxDesc = if (tw == 0 || th == 0) "（空）" else "(${b.left},${b.top}) ${tw}×${th}",
+                threshold = threshold,
+                costMs = costMs,
+                searchPixels = searchPixels,
+                templatePixels = tw * th
+            )
+        }
+    }
+
+    /** 单次识别。阈值 0 → 一定返回结果，能拿到原始分数。 */
+    private fun recognizeOnce(
+        recognizer: Recognizer,
+        frame: Mat,
+        path: String,
+        roi: IntArray?
+    ) = runCatching {
+        recognizer.recognize(
+            frame,
+            Recognition.Template(templates = listOf(path), roi = roi, threshold = 0.0)
+        )
+    }.onFailure { Log.w(TAG, "识别 $path 抛异常", it) }
+        .getOrNull()
+
+
     private companion object {
         const val TAG = "RecognitionSelfTest"
-
-        /**
-         * 孤立度下限。
-         *
-         * 0.05 是从"同一物体在相邻位置也给高分"这个事实反推的：
-         * 峰值邻域已经被抹掉，剩下的次高分如果还只低 0.05 以内，
-         * 说明整片搜索区都差不多，那个"最高分"没有意义。
-         */
-        const val MARGIN_THRESHOLD = 0.05
     }
 }
