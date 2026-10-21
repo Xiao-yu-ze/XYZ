@@ -24,8 +24,30 @@ object GameFps {
     private const val PREFS = "game_fps"
     private const val KEY = "limit"
 
-    /** 可选值。0 = 无上限（用系统默认刷新率）。 */
-    val OPTIONS = listOf(30, 60, 120, 0)
+    /**
+     * 可选值。0 = 无上限（用系统默认刷新率）。
+     *
+     * ## 120 被移除，因为它是**真机验证过的重启触发点**
+     *
+     * 真机上选 120 有概率导致平板重启，dropbox 里的原因很明确：
+     *
+     * ```
+     * System Restart Reason: wd_restart          ← Watchdog 超时
+     * System Restart Reason: uncaught_restart    ← 系统服务未捕获异常
+     * ```
+     *
+     * 不是内核 panic，而是**我们把 system_server 拖死了**。设 120Hz 后虚拟屏以
+     * 120fps 生产帧，而当前消费路径每帧要付一次同步 Binder（120 次/秒）
+     * 和 4 次 3.7MB 拷贝（约 1.8 GB/s 内存带宽），服务端进程、App 进程、
+     * Binder 线程池全被占满，system_server 抢不到 CPU，Watchdog 判死重启。
+     *
+     * 60Hz 时负载减半，勉强扛住 —— 所以这不是"120 这个数字不吉利"，
+     * 是架构在 120 下过载。
+     *
+     * **放回 120 的前提**：把取帧改成事件驱动（native 回调里直接写共享缓冲，
+     * 零 Binder、零轮询），让每帧成本降到 1 次 memcpy。在那之前不要加回来。
+     */
+    val OPTIONS = listOf(30, 60, 0)
 
     fun prefs(context: Context): Int {
         val v = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY, 0)
