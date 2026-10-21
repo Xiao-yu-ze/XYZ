@@ -58,4 +58,6 @@
     <!-- ==================== 分隔 ==================== -->
     <color name="divider">#E6EBE3</color>
 
+    <!-- 参数名比参数值弱一档，一眼分得清"标签"和"内容"。 -->
+    <color name="param_label">#7C8A80</color>
 </resources>

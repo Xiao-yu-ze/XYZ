@@ -126,4 +126,11 @@
     <string name="page_dot_off">○</string>
     <string name="page_screen_title">虚拟屏</string>
     <string name="shizuku_unknown">Shizuku 状态未知</string>
+    <!-- ===== 节点编辑页 ===== -->
+    <string name="editor_title">节点</string>
+    <string name="editor_filter_hint">筛选节点名</string>
+    <string name="editor_summary_all">共 %1$d 个节点，点一下展开看参数</string>
+    <string name="editor_summary_filtered">匹配 %1$d / %2$d 个节点</string>
+    <string name="chevron_collapsed">▸</string>
+    <string name="chevron_expanded">▾</string>
 </resources>

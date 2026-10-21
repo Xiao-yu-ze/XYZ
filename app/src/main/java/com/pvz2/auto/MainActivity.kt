@@ -9,6 +9,7 @@ import com.pvz2.auto.core.PreviewTouchMapper
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
+import com.pvz2.auto.ui.page.EditorPage
 import com.pvz2.auto.ui.page.ScriptPage
 import com.pvz2.auto.ui.page.DiagPage
 import android.os.Bundle
@@ -61,7 +62,8 @@ class MainActivity : AppCompatActivity() {
         /** 功能页下标。 */
         const val PAGE_SCREEN = 0
         const val PAGE_SCRIPT = 1
-        const val PAGE_DIAG = 2
+        const val PAGE_EDITOR = 2
+        const val PAGE_DIAG = 3
 
         /** 虚拟屏尺寸。建屏时写死 1280×720（见 VirtualDisplaySession）。 */
         const val VD_WIDTH = 1280
@@ -171,7 +173,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderDots(selected: Int) {
-        val ids = intArrayOf(R.id.dot0, R.id.dot1, R.id.dot2)
+        val ids = intArrayOf(R.id.dot0, R.id.dot1, R.id.dot2, R.id.dot3)
         ids.forEachIndexed { i, id ->
             findViewById<TextView>(id).apply {
                 text = getString(
@@ -188,7 +190,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private inner class PageAdapter : RecyclerView.Adapter<PageAdapter.Holder>() {
-        override fun getItemCount(): Int = 3
+        override fun getItemCount(): Int = 4
 
         /**
          * ★ 必须重写，否则启动即崩。
@@ -206,6 +208,7 @@ class MainActivity : AppCompatActivity() {
             val layout = when (viewType) {
                 PAGE_SCREEN -> R.layout.page_screen
                 PAGE_SCRIPT -> R.layout.activity_script
+                PAGE_EDITOR -> R.layout.page_editor
                 else -> R.layout.activity_diagnostics
             }
             return Holder(layoutInflater.inflate(layout, parent, false))
@@ -213,13 +216,19 @@ class MainActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: Holder, position: Int) {
             // 单页绑定失败不该让整个应用起不来。
-            // 一个页面的控件名写错了，用户还能用其它两页，也能把日志导出来；
+            // 一个页面的控件名写错了，用户还能用其它几页，也能把日志导出来；
             // 直接崩掉的话什么线索都拿不到。
+            //
+            // ★ 这里的分支必须和 onCreateViewHolder 用同一组常量。
+            //   之前加了第 3 页（编辑）却没同步改这里，位置 2 走到 else
+            //   绑成了 DiagPage，而去拿 page_editor 布局里的控件 ——
+            //   findViewById 返回 null，构造就抛 NPE，那一页从此空白。
             runCatching {
                 when (position) {
                     PAGE_SCREEN -> bindScreenPage(holder.itemView)
                     PAGE_SCRIPT -> ScriptPage(this@MainActivity, holder.itemView).bind()
-                    else -> DiagPage(this@MainActivity, holder.itemView).bind()
+                    PAGE_EDITOR -> EditorPage(this@MainActivity, holder.itemView).bind()
+                    PAGE_DIAG -> DiagPage(this@MainActivity, holder.itemView).bind()
                 }
             }.onFailure {
                 Log.e(TAG, "第 $position 页绑定失败", it)
