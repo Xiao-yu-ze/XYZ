@@ -70,6 +70,10 @@
 
     <!-- ==================== 主界面 · 调试工具 ==================== -->
 
+    <string name="btn_recog_test">识别自检（看分数）</string>
+    <string name="recog_no_frame">还没有画面。先建虚拟屏、让游戏出画面，再做识别自检。</string>
+    <string name="recog_running">正在识别…</string>
+    <string name="hint_recog_test">拿虚拟屏当前画面跑模板匹配，报出每个模板的分数和命中框。不点任何东西。分数低说明模板/缩放有问题，先修这个再让脚本去点。</string>
     <string name="hint_tap_x">X（默认 640）</string>
     <string name="hint_tap_y">Y（默认 360）</string>
     <string name="test_tap_no_display">虚拟屏未启动（displayId ≤ 0），先建屏再测。</string>

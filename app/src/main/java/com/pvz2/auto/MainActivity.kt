@@ -30,6 +30,8 @@ import androidx.core.widget.doAfterTextChanged
 import com.pvz2.auto.core.ChannelPrefs
 import com.pvz2.auto.core.Pvz2Channels
 import android.widget.ImageView
+import org.opencv.core.Mat
+import com.pvz2.auto.service.RecognitionSelfTest
 import com.pvz2.auto.service.AutomationService
 import com.pvz2.auto.service.VirtualDisplaySession
 import com.pvz2.auto.shizuku.ShizukuBridge
@@ -51,6 +53,18 @@ class MainActivity : AppCompatActivity() {
         /** 虚拟屏尺寸。建屏时写死 1280×720（见 VirtualDisplaySession）。 */
         const val VD_WIDTH = 1280
         const val VD_HEIGHT = 720
+
+        /**
+         * 识别自检用的模板。
+         *
+         * 挑的是"画面里很容易出现"的特征：开始游戏按钮、通用叉叉、暂停。
+         * 它们的分数能直接说明识别链路（模板加载 → 缩放 → ROI → 匹配）通不通。
+         */
+        val PROBE_TEMPLATES = listOf(
+            "Start_game/开始游戏.png",
+            "Start_game/叉叉.png",
+            "General/暂停.png"
+        )
     }
 
     private lateinit var shizukuStateView: TextView
@@ -135,6 +149,9 @@ class MainActivity : AppCompatActivity() {
         // 留着只会让"该点哪个"变成一道谜题。
         findViewById<MaterialButton>(R.id.btnTestTap).setOnClickListener {
             testVirtualDisplayTap()
+        }
+        findViewById<MaterialButton>(R.id.btnRecogTest).setOnClickListener {
+            runRecognitionSelfTest()
         }
 
         // 调试工具默认折叠：它不是主流程，常驻展开会把主路径挤出首屏。
@@ -598,6 +615,78 @@ class MainActivity : AppCompatActivity() {
      * 组合起来正好能把原因分开（见下面的判读逻辑）。
      */
     private fun mark(ok: Boolean): String = if (ok) "✓ 接受" else "✗ 被拒"
+
+    /**
+     * 识别自检：把虚拟屏当前的画面跑一遍模板匹配，报出**分数和命中位置**。
+     *
+     * ## 为什么要它
+     *
+     * 注入已验证能进虚拟屏。接下来要回答"识别准不准"，而这件事没法从日志推断：
+     * 分数 0.65 是模板不对还是阈值定高了，只能看具体数字；
+     * 命中了却点不中，是框算错了还是坐标没换算，只能看命中框。
+     *
+     * 这个自检**不点任何东西**，只报数字。
+     */
+    private fun runRecognitionSelfTest() {
+        val resultView = findViewById<TextView>(R.id.tvTestTapResult)
+        val bitmap = VirtualDisplaySession.previewFlow.value
+
+        if (bitmap == null) {
+            resultView.setTextColor(ContextCompat.getColor(this, R.color.state_bad))
+            resultView.text = getString(R.string.recog_no_frame)
+            return
+        }
+
+        resultView.setTextColor(ContextCompat.getColor(this, R.color.ink_muted))
+        resultView.text = getString(R.string.recog_running)
+
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.Default) {
+                try {
+                    if (!org.opencv.android.OpenCVLoader.initLocal()) {
+                        return@withContext "ERROR: OpenCV 加载失败"
+                    }
+
+                    // Bitmap -> Mat。**不 recycle**：这张 Bitmap 归 previewFlow 所有，
+                    // 回收了 ImageView 会拿到一张废图。
+                    val mat = Mat()
+                    org.opencv.android.Utils.bitmapToMat(bitmap, mat)
+
+                    val probes = try {
+                        RecognitionSelfTest(applicationContext).run(
+                            frame = mat,
+                            templates = PROBE_TEMPLATES
+                        )
+                    } finally {
+                        mat.release()
+                    }
+
+                    if (probes.isEmpty()) {
+                        "没有任何结果 —— 帧为空或模板全部没加载上。"
+                    } else {
+                        buildString {
+                            appendLine("画面 ${bitmap.width}×${bitmap.height}")
+                            appendLine()
+                            probes.forEach { appendLine(it.toString()) }
+                            appendLine()
+                            val passed = probes.count { it.passed }
+                            appendLine("命中 $passed / ${probes.size}")
+                            if (passed == 0) {
+                                appendLine("全都没到阈值。看分数定位原因：")
+                                appendLine("  · 分数 < 0.3   → 画面里没有这东西，模板要换")
+                                appendLine("  · 分数 0.5~0.7 → 找对了，但缩放或通道有偏差")
+                                appendLine("  · 分数 -1      → 模板没加载（路径错）")
+                            }
+                        }
+                    }
+                } catch (t: Throwable) {
+                    "ERROR: ${t.message}"
+                }
+            }
+            resultView.text = text
+            resultView.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ink_muted))
+        }
+    }
 
     private fun testVirtualDisplayTap() {
         val resultView = findViewById<TextView>(R.id.tvTestTapResult)

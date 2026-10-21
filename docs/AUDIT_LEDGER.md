@@ -320,5 +320,52 @@ F/DEBUG: #08 ... createDisplayWithCapture+72
 | OCR 后处理常量 | 膨胀核 9×3、`MIN_BOX`、`y0/10` 分桶全是物理像素写死，1080p 会把一行切成多框 |
 | `AImageReader` 监听器 | 现在是轮询，事件驱动可做到空闲 0% CPU |
 | 帧传输换 `MemoryFile` | 现在每帧写 3.7MB 到 `/data/local/tmp`（真实 flash），60fps = 221 MB/s |
-| 副屏注入真机验证 | HANDOFF 记为"被 no touchable window 挡住"，但那是"游戏还没搬上去"时测的，**条件已变，需重测** |
+| ~~副屏注入真机验证~~ | ✅ **已完成**（真机四路对比 + scrcpy 对照，见第十一节） |
 
+---
+
+## 十一、副屏注入：为什么修了六轮（复盘）
+
+### 症状
+虚拟屏上游戏画面正常，但点击完全无反应。
+
+### 六轮错误排查（全是我在猜）
+
+| 轮次 | 我的猜测 | 结果 |
+|---|---|---|
+| 1 | 缺 `INJECT_EVENTS` 权限 | ✗ 权限其实是 granted |
+| 2 | 事件没设 `source` | 半对：方式错了（应构造时传） |
+| 3 | `displayId` 传成了 0 | 对，但不是唯一问题 |
+| 4 | 屏不 trusted | ✗ 日志显示 trusted=true |
+| 5 | 窗口不在那块屏上 | ✗ 窗口分布正确 |
+| 6 | 换了 shell 路径能通 → 但慢 | 能用，只是 fork 开销大 |
+
+### 真正定位方式：一次四路对比
+
+四条路同时打，失败方式的**组合**才可判读：
+
+```
+A  injectInputEvent + display 65 : ✗ 被拒
+B  injectInputEvent + display 0  : ✗ 被拒   ← 连主屏都拒 = 实现问题，不是屏/权限
+C  input -d 65 tap               : ✓ 接受
+D  input tap                     : ✓ 接受
+```
+
+### 根因：与 scrcpy 的三处差异
+
+读 `scrcpy/server/.../wrappers/InputManager.java`、`device/Device.java`、
+`control/Controller.java` 后确认：
+
+| 差异 | scrcpy | 我之前 |
+|---|---|---|
+| 取 InputManager | `context.getSystemService(INPUT_SERVICE)` | 反射 `InputManager.getInstance()` |
+| 构造 MotionEvent | 14 参数 `obtain(..., source, flags)` | 6 参数 + 事后 `event.source =` |
+| 指针类型 | `PointerProperties.toolType = TOOL_TYPE_FINGER` | **未设，默认 TOOL_TYPE_UNKNOWN** |
+
+三处**任何一处**都足以让 `injectInputEvent` 返回 false。我每轮只猜中一处。
+
+### 教训
+> **遇到"某条路径永远失败"，第一动作是找一个跑通的同类项目逐行对照，
+> 不是自己假设原因。**
+
+已写入 `docs/DEV_CONVENTIONS.md`。

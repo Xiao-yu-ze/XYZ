@@ -447,6 +447,20 @@
                 style="@style/Text.Hint"
                 android:layout_marginTop="2dp"
                 android:text="@string/hint_test_tap" />
+
+            <!-- 识别自检：不点任何东西，只报分数和命中框。
+                 注入通了之后，下一个要确认的就是"识别准不准" ——
+                 而这件事只能看具体数字，日志里推不出来。 -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnRecogTest"
+                style="@style/AppButton.Outline"
+                android:layout_marginTop="12dp"
+                android:text="@string/btn_recog_test" />
+
+            <TextView
+                style="@style/Text.Hint"
+                android:layout_marginTop="2dp"
+                android:text="@string/hint_recog_test" />
         </LinearLayout>
 
     </LinearLayout>
