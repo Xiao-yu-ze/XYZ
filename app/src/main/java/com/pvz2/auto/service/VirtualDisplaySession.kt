@@ -864,12 +864,34 @@ class VirtualDisplaySession(
         if (now - lastPreviewAt < PREVIEW_INTERVAL_MS) return
         lastPreviewAt = now
 
+        // ★ 必须先缩小再转 Bitmap。
+        //
+        //   这里原来是直接对 1280×720 做 `createBitmap` + `matToBitmap`：
+        //   一次 3.7MB 分配 + 一次全图拷贝，实测要 ~80-90ms。而它是在
+        //   **采集循环里同步调用**的，于是每 100ms 就把循环堵死一次 ——
+        //   实测帧率正好卡在 10fps（1000/100）。
+        //
+        //   实测证据（dumpsys SurfaceFlinger --latency，游戏那层）：
+        //   生产者 120.0 fps，帧间隔 P50=P95=8.3ms，完全稳定。
+        //   也就是说帧一直是够的，全被我们自己的预览转换吃掉了。
+        //
+        //   预览是给人看的，缩到 1/3（426×240）视觉上几乎无差别，
+        //   像素量只剩 1/9，转换成本降到约 3ms。
         val bitmap = runCatching {
-            val bmp = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888)
-            // frame 已经是 RGBA（CV_8UC4），matToBitmap 直接吃，**不需要转换**。
-            // 之前因为上游转成了 BGR，这里又转回 RGBA，两次全图拷贝来回折腾。
-            Utils.matToBitmap(frame, bmp)
-            bmp
+            val sw = (frame.width() / PREVIEW_DOWNSCALE).coerceAtLeast(1)
+            val sh = (frame.height() / PREVIEW_DOWNSCALE).coerceAtLeast(1)
+            val small = org.opencv.core.Mat()
+            try {
+                org.opencv.imgproc.Imgproc.resize(
+                    frame, small, org.opencv.core.Size(sw.toDouble(), sh.toDouble()),
+                    0.0, 0.0, org.opencv.imgproc.Imgproc.INTER_AREA
+                )
+                val bmp = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
+                Utils.matToBitmap(small, bmp)
+                bmp
+            } finally {
+                small.release()
+            }
         }.getOrNull() ?: return
 
         // ★ 不主动 recycle 旧 bitmap。
@@ -1101,6 +1123,9 @@ class VirtualDisplaySession(
 
         /** 预览刷新间隔。60fps 全转 Bitmap 太重，10fps 看着已经够流畅。 */
         const val PREVIEW_INTERVAL_MS = 100L
+
+        /** 预览缩小倍数。1/3 时像素量只剩 1/9，视觉上几乎无差别。 */
+        const val PREVIEW_DOWNSCALE = 3
 
         /** 事件流水最多保留多少条。 */
         const val MAX_HISTORY = 200
