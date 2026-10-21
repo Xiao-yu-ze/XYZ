@@ -141,6 +141,6 @@
     <string name="picker_cancel">取消</string>
     <!-- ===== 游戏帧率 ===== -->
     <string name="label_game_fps">帧率</string>
-    <string name="hint_game_fps">采集限 30fps（识别够用，再高会让系统服务无响应导致重启）；游戏帧率不限制，跟随屏幕自动跑。</string>
-    <string name="label_game_fps_fixed">采集 30fps · 游戏自动</string>
+    <string name="hint_game_fps">固定 30fps，游戏和采集同速。实测游戏在虚拟屏上跑 120fps 会让系统服务崩溃导致平板重启，所以不开放更高帧率。</string>
+    <string name="label_game_fps_fixed">30 fps（采集 + 游戏）</string>
 </resources>

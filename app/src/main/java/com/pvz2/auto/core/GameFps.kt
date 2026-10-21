@@ -47,9 +47,22 @@ object GameFps {
     val captureIntervalMs: Long get() = 1000L / CAPTURE_FPS
 
     /**
-     * 请求的虚拟屏刷新率。
+     * 请求的虚拟屏刷新率。**必须是 30，不能用系统默认。**
      *
-     * 0 = 不请求，用系统默认（这台设备默认 120Hz），游戏就能跑满。
+     * ## 一段被真机否掉的推理
+     *
+     * 我曾经认为"重启是采集负载造成的，游戏跑 120 不要紧"，依据是：
+     * 用户在物理屏上一直 120Hz 玩这个游戏，从未重启。
+     *
+     * 于是改成"虚拟屏用系统默认（120Hz）、采集限 30"。**结果又重启了。**
+     * dropbox：`uncaught_restart`（system_server 未捕获异常）。
+     *
+     * 那条"反证"是错的：物理屏和虚拟屏不是同一条路径。虚拟屏要把
+     * 120fps 的画面合成进 AImageReader 的 surface 再让 CPU 读回，
+     * 和直接显示到物理屏完全不是一回事。
+     *
+     * **结论：游戏在虚拟屏上跑 120 本身就会把系统搞崩，与采集多少无关。**
+     * 所以这里必须显式请求 30，不能留给系统默认。
      */
-    const val REQUESTED_REFRESH_RATE = 0f
+    const val REQUESTED_REFRESH_RATE = 30f
 }
