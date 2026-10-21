@@ -665,18 +665,18 @@ class MainActivity : AppCompatActivity() {
                         "没有任何结果 —— 帧为空或模板全部没加载上。"
                     } else {
                         buildString {
-                            appendLine("画面 ${bitmap.width}×${bitmap.height}")
+                            appendLine("画面 ${bitmap.width}×${bitmap.height}  全屏搜索（最坏情况）")
                             appendLine()
                             probes.forEach { appendLine(it.toString()) }
                             appendLine()
-                            val passed = probes.count { it.passed }
-                            appendLine("命中 $passed / ${probes.size}")
-                            if (passed == 0) {
-                                appendLine("全都没到阈值。看分数定位原因：")
-                                appendLine("  · 分数 < 0.3   → 画面里没有这东西，模板要换")
-                                appendLine("  · 分数 0.5~0.7 → 找对了，但缩放或通道有偏差")
-                                appendLine("  · 分数 -1      → 模板没加载（路径错）")
-                            }
+                            appendLine("可信 ${probes.count { it.trustworthy }} / ${probes.size}")
+                            appendLine()
+                            appendLine("「孤立度」= 最高分 − 次高分（次高分已扣掉峰值邻域）。")
+                            appendLine("  真命中会有明显高于周围的锐利峰值，孤立度通常 > 0.1；")
+                            appendLine("  画面里没有的东西只会在大量相近值里挑出个最大值，")
+                            appendLine("  孤立度会很小（< 0.05）—— 那 0.6~0.7 的分数是虚高，不是命中。")
+                            appendLine()
+                            appendLine("生产里每个节点都带 roi，搜索区小两个数量级，不会有这个虚高。")
                         }
                     }
                 } catch (t: Throwable) {

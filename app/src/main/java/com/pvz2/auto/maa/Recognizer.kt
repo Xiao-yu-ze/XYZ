@@ -142,6 +142,90 @@ class Recognizer(private val context: Context) {
         return current.toScreenRect(logical)
     }
 
+    /**
+     * 一次匹配的分数分布统计，用于判断"这个高分是真的还是噪声"。
+     *
+     * ## 为什么光看最高分不够
+     *
+     * `matchTemplate` 会在搜索区的**每一个**位置算一个分数，然后取最大值。
+     * 全屏搜索时那是约 **120 万个**位置（(1280−42+1)×(720−44+1)）——
+     * 从 120 万个样本里取 max，即使模板根本不在画面里，最大值也会明显偏高。
+     * 这是极值统计的必然结果，不是模板或算法有 bug。
+     *
+     * 实测过：一个画面上根本不存在的"叉叉"模板，全屏搜索能拿到 0.674；
+     * 而真实存在、确实命中的模板是 0.974 —— 两者只差 0.3，
+     * 单看阈值 0.7 几乎没有区分度。
+     *
+     * ## 判据：峰值是否"孤立"
+     *
+     * 真命中会有一个**明显高于周围**的锐利峰值；
+     * 噪声则是大量相近值里挑出的一个最大值。
+     * 所以除了最高分，还要看**次高分**（扣掉峰值邻域后的最大值）：
+     *
+     * ```
+     * margin = best − secondBest
+     * ```
+     *
+     * margin 小（比如 < 0.05）说明"到处都是差不多高的分"→ 不是真命中。
+     *
+     * @param best 最高分
+     * @param secondBest 扣掉最高分邻域后的最高分
+     */
+    data class ScoreStats(val best: Double, val secondBest: Double) {
+        val margin: Double get() = best - secondBest
+    }
+
+    /**
+     * 算一个模板在当前帧上的分数分布。**只做诊断，不做判断**。
+     *
+     * 与 [recognize] 的区别：后者低于阈值直接返回 null，看不到数字。
+     * 这个方法无条件返回分数，并额外给出"次高分"用来判断峰值是否孤立。
+     *
+     * @param roiLogical 720p 逻辑 ROI；null = 全屏
+     */
+    fun scoreStats(frame: Mat, path: String, roiLogical: IntArray?): ScoreStats? {
+        val current = adapter ?: return null
+        if (frame.empty()) return null
+        val template = loadScaled(path, current) ?: return null
+        if (template.empty()) return null
+        if (template.width() > frame.width() || template.height() > frame.height()) return null
+
+        val roi = roiToPhysical(roiLogical, current, frame) ?: return null
+        if (roi.width < template.width() || roi.height < template.height()) return null
+
+        val region = frame.submat(roi)
+        val result = Mat()
+        try {
+            Imgproc.matchTemplate(region, template, result, Imgproc.TM_CCOEFF_NORMED)
+            val mm = Core.minMaxLoc(result)
+
+            // 把峰值邻域抹掉，再取一次最大值 —— 得到"次高分"。
+            //
+            // 邻域半径取模板的一半：同一物体在相邻位置也会给高分，
+            // 不抹掉的话 secondBest 只是峰值旁边的点，margin 恒接近 0，没有意义。
+            val rx = (template.width() / 2).coerceAtLeast(1)
+            val ry = (template.height() / 2).coerceAtLeast(1)
+            val left = (mm.maxLoc.x.toInt() - rx).coerceAtLeast(0)
+            val top = (mm.maxLoc.y.toInt() - ry).coerceAtLeast(0)
+            val right = (mm.maxLoc.x.toInt() + rx).coerceAtMost(result.cols() - 1)
+            val bottom = (mm.maxLoc.y.toInt() + ry).coerceAtMost(result.rows() - 1)
+            if (right > left && bottom > top) {
+                result.submat(
+                    org.opencv.core.Rect(left, top, right - left + 1, bottom - top + 1)
+                ).setTo(org.opencv.core.Scalar(-1.0))
+            }
+
+            val second = Core.minMaxLoc(result).maxVal
+            return ScoreStats(mm.maxVal, second)
+        } catch (t: Throwable) {
+            Log.w(TAG, "scoreStats 失败 $path", t)
+            return null
+        } finally {
+            result.release()
+            region.release()
+        }
+    }
+
     private fun matchOne(
         frame: Mat,
         path: String,
