@@ -752,7 +752,20 @@ class VirtualDisplaySession(
                 val frame = runCatching { readFrameFromService(svc) }.getOrNull()
 
                 if (frame == null) {
-                    delay(POLL_INTERVAL_MS)
+                    // ★ 这里**不能**用 POLL_INTERVAL_MS(120ms)。
+                    //
+                    //   这是帧率的真正瓶颈，而且很难看出来：120ms 原本是
+                    //   "服务不可用时的重试间隔"，却被顺手用在了"这一轮没取到
+                    //   新帧"上。
+                    //
+                    //   实测：生产者 120fps（帧间隔 8.3ms，SurfaceFlinger 时间戳
+                    //   证明）。我们取到一帧、处理约 4ms、再取 —— 这时新帧还没到
+                    //   （还差 4ms），于是 frame == null，睡 120ms。
+                    //   结果每 124ms 才取一帧 = 8fps。界面读数 10fps 就是这么来的。
+                    //
+                    //   换成 2ms（远小于一帧间隔）即可每帧都接住：
+                    //   轮询开销可以忽略，又不会忙等烧 CPU。
+                    delay(FRAME_RETRY_INTERVAL_MS)
                     continue
                 }
 
@@ -864,34 +877,15 @@ class VirtualDisplaySession(
         if (now - lastPreviewAt < PREVIEW_INTERVAL_MS) return
         lastPreviewAt = now
 
-        // ★ 必须先缩小再转 Bitmap。
+        // 全分辨率转换。
         //
-        //   这里原来是直接对 1280×720 做 `createBitmap` + `matToBitmap`：
-        //   一次 3.7MB 分配 + 一次全图拷贝，实测要 ~80-90ms。而它是在
-        //   **采集循环里同步调用**的，于是每 100ms 就把循环堵死一次 ——
-        //   实测帧率正好卡在 10fps（1000/100）。
-        //
-        //   实测证据（dumpsys SurfaceFlinger --latency，游戏那层）：
-        //   生产者 120.0 fps，帧间隔 P50=P95=8.3ms，完全稳定。
-        //   也就是说帧一直是够的，全被我们自己的预览转换吃掉了。
-        //
-        //   预览是给人看的，缩到 1/3（426×240）视觉上几乎无差别，
-        //   像素量只剩 1/9，转换成本降到约 3ms。
+        // 曾经以为这里是瓶颈（缩到 1/3 试过），**实测帧率一点没变** ——
+        // 说明转换不是瓶颈，缩略只是把画面弄糊了。真正的瓶颈在
+        // [POLL_INTERVAL_MS] 那个 120ms 的空转等待，见下面的注释。
         val bitmap = runCatching {
-            val sw = (frame.width() / PREVIEW_DOWNSCALE).coerceAtLeast(1)
-            val sh = (frame.height() / PREVIEW_DOWNSCALE).coerceAtLeast(1)
-            val small = org.opencv.core.Mat()
-            try {
-                org.opencv.imgproc.Imgproc.resize(
-                    frame, small, org.opencv.core.Size(sw.toDouble(), sh.toDouble()),
-                    0.0, 0.0, org.opencv.imgproc.Imgproc.INTER_AREA
-                )
-                val bmp = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
-                Utils.matToBitmap(small, bmp)
-                bmp
-            } finally {
-                small.release()
-            }
+            val bmp = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(frame, bmp)
+            bmp
         }.getOrNull() ?: return
 
         // ★ 不主动 recycle 旧 bitmap。
@@ -1077,6 +1071,15 @@ class VirtualDisplaySession(
         const val VD_HEIGHT = 720
         const val VD_DPI = 240
         const val POLL_INTERVAL_MS = 120L
+
+        /**
+         * 这一轮没取到新帧时的重试间隔，毫秒。
+         *
+         * 必须**远小于**一帧的间隔（120fps 时是 8.3ms），否则每次错过一帧
+         * 都要白等一整个周期 —— 那正是帧率被压到 8fps 的原因。
+         * 2ms 足够细，又不会像 0ms 那样忙等。
+         */
+        const val FRAME_RETRY_INTERVAL_MS = 2L
 
         /**
          * 停止时等待帧循环退出的上限。
