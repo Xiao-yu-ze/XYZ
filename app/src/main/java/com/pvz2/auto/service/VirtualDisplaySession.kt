@@ -181,6 +181,15 @@ class VirtualDisplaySession(
         // 事件流水备查，**不进 message**。message 会直接显示在状态行上，
         // 之前用户就看到过"虚拟屏 59 运行中"里的那个 59。
         appendHistory("虚拟屏就绪 displayId=$displayId")
+
+        // ★ 建好屏立刻接上共享缓冲。
+        //
+        //   不接的话读帧会走"每帧写 3.7MB 文件再读回来"的老路 ——
+        //   720p@60fps 就是 440MB/s 的磁盘 I/O，实测只有 20fps。
+        //   失败也不要紧：readFrameFromService 有文件路径兜底。
+        if (!attachSharedFrame(service, VD_WIDTH, VD_HEIGHT)) {
+            appendHistory("共享帧缓冲不可用，回落到文件搬运（帧率会明显偏低）")
+        }
         update { it.copy(displayId = displayId, message = "虚拟屏就绪") }
 
         // ★ 建屏**当下**就把这块屏的客观状态记下来。
@@ -312,6 +321,74 @@ class VirtualDisplaySession(
         runCatching { src.clone() }.getOrNull()
     }
 
+    // -------------------------------------------------------- 共享内存帧缓冲
+
+    /**
+     * 帧数据走共享内存，不再走文件。
+     *
+     * ## 为什么必须改
+     *
+     * 原来每帧：服务端写 3.7MB 临时文件 → rename → App 读回 3.7MB。
+     * 720p@60fps 就是写 221MB/s + 读 221MB/s 的磁盘 I/O，实测把帧率
+     * 死死压在 **20fps**。而虚拟屏本身是 60Hz，帧是够的 ——
+     * 瓶颈全在这条搬运路径上。
+     *
+     * 共享内存是同一块物理页：服务端写，App 立刻可见。每帧只剩一次 memcpy
+     * （3.7MB，约 0.5ms），没有 syscall 风暴、没有文件系统。
+     */
+    private var sharedFrame: java.nio.ByteBuffer? = null
+    private var sharedFile: java.io.RandomAccessFile? = null
+
+    /** 头长度，与 Pvz2UserService.FRAME_HEADER_BYTES 必须一致。 */
+    private val frameHeaderBytes = 16
+
+    /** 帧缓冲文件；目录与服务端 FRAME_DIR 一致，文件由服务端创建。 */
+    private val FRAME_PATH = framesDir() + "/frame.shm"
+
+    /** 建共享内存并交给服务端。失败返回 false，调用方回落到文件路径。 */
+    /** 帧缓冲文件所在目录，必须与 Pvz2UserService.FRAME_DIR 一致。 */
+    private fun framesDir(): String = "/data/local/tmp/pvz2"
+
+    private fun attachSharedFrame(service: IPvz2Service, w: Int, h: Int): Boolean {
+        val need = w * h * 4
+        if (need <= 0) return false
+        return try {
+            detachSharedFrame()
+            val total = need + frameHeaderBytes
+            // ★ 顺序很关键：**先让服务端建并映射**，App 再打开。
+            //
+            //   `/data/local/tmp` 属于 shell，App（不同 uid）建不了目录，
+            //   所以文件必须由服务端创建、把权限放开，App 才能打开同一路径，
+            //   映射到同一份 page cache。
+            val path = FRAME_PATH
+            service.attachFrameBuffer(path, w, h)
+
+            val raf = java.io.RandomAccessFile(path, "rw")
+            if (raf.length() < total) {
+                Log.e(TAG, "共享帧文件长度不对：" + raf.length() + " < " + total)
+                runCatching { raf.close() }
+                return false
+            }
+            val mapped = raf.channel.map(
+                java.nio.channels.FileChannel.MapMode.READ_WRITE, 0, total.toLong()
+            )
+            sharedFile = raf
+            sharedFrame = mapped
+            Log.i(TAG, "共享帧缓冲就绪 ${w}x$h（$total 字节），不再走文件搬运")
+            true
+        } catch (t: Throwable) {
+            Log.e(TAG, "共享帧缓冲建立失败，回落到文件路径", t)
+            detachSharedFrame()
+            false
+        }
+    }
+
+    private fun detachSharedFrame() {
+        sharedFrame = null
+        runCatching { sharedFile?.close() }
+        sharedFile = null
+    }
+
     private fun readFrameFromService(service: IPvz2Service): Mat? {
         // ★ pfd 必须在**所有**返回路径上关闭。
         //
@@ -321,6 +398,32 @@ class VirtualDisplaySession(
         //   且不会有一条"fd 用尽"的日志。
         //
         //   用 use{} 包住：它保证 close，包括提前 return 和抛异常。
+        // ★ 优先走共享内存。文件路径只在共享内存不可用时兜底。
+        val shared = sharedFrame
+        if (shared != null) {
+            val w = VD_WIDTH
+            val h = VD_HEIGHT
+            val need = w * h * 4
+            if (!service.grabFrame()) return null
+            if (!ensureFrameBuffers(w, h)) return null
+
+            // seqlock：奇数说明服务端正在写，丢掉这一帧。
+            // 硬读的话会拿到"上半新下半旧"的撕裂帧，识别结果莫名其妙且偶发。
+            val seq1 = shared.getInt(0)
+            if (seq1 and 1 == 1) return null
+            val bytes = frameBytes
+            shared.position(frameHeaderBytes)
+            shared.get(bytes, 0, need)
+            val seq2 = shared.getInt(0)
+            if (seq1 != seq2) return null
+
+            synchronized(frameLock) {
+                val rgba = frameRgba ?: return null
+                rgba.put(0, 0, bytes, 0, need)
+            }
+            return frameRgba
+        }
+
         val pfd = service.acquireFrameFd() ?: return null
         return try {
             ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->

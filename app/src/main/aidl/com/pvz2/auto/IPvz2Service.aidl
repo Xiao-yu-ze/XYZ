@@ -200,5 +200,29 @@ interface IPvz2Service {
      */
     void setPendingRefreshRate(float refreshRate) = 21;
 
+    /**
+     * 把一块共享内存交给服务端，之后每帧直接写进去。
+     *
+     * ## 为什么不再走文件
+     *
+     * 原来 `acquireFrameFd()` 每帧写 3.7MB 临时文件再让 App 读回来 ——
+     * 720p@60fps 就是写 221MB/s + 读 221MB/s 的磁盘 I/O，实测把帧率
+     * 压在 20fps 上。共享内存是同一块物理页，两端各自映射，
+     * 省掉了全部文件系统开销。
+     *
+     * 缓冲区布局：前 16 字节是头（[0]=序号，奇偶表示是否正在写），
+     * 之后是 RGBA 像素。
+     *
+     * @param path 双方各自 mmap 的同一个文件路径
+     */
+    void attachFrameBuffer(String path, int width, int height) = 22;
+
+    /**
+     * 把最新一帧写进已附加的共享缓冲。
+     *
+     * @return true = 这一帧有效；false = 还没帧（刚建屏、或读取失败）。
+     */
+    boolean grabFrame() = 23;
+
     void destroy() = 16777114;
 }

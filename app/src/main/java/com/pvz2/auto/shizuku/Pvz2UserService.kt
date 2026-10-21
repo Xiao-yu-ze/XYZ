@@ -565,6 +565,92 @@ class Pvz2UserService : IPvz2Service.Stub() {
      *
      * 代价是每帧一次 write+read（720p 约 3.7 MB）。先保证功能跑通，真嫌慢再换。
      */
+    // ---------------------------------------------------------- 共享内存帧缓冲
+
+    /** App 交过来的内存映射。null = 还没附加。 */
+    private var sharedFrame: java.nio.ByteBuffer? = null
+    private var sharedFrameSize = 0
+
+    /** 序号，写帧时奇偶切换，供 App 侧检测撕裂。 */
+    private var sharedSeq = 0
+
+    /**
+     * 附加 App 提供的共享内存。
+     *
+     * 映射一次、长期使用 —— 每帧只做一次 memcpy，没有 fd 传递、没有磁盘 I/O。
+     * 尺寸必须与建屏尺寸一致，否则直接拒绝（错位写入会破坏内存）。
+     */
+    override fun attachFrameBuffer(path: String?, width: Int, height: Int) {
+        if (path.isNullOrBlank()) {
+            Log.e(TAG, "attachFrameBuffer: 路径为空")
+            return
+        }
+        val need = width * height * 4
+        if (need <= 0) {
+            Log.e(TAG, "attachFrameBuffer: 尺寸无效 ${width}x$height")
+            return
+        }
+        runCatching {
+            val total = need + FRAME_HEADER_BYTES
+            val mapped = mapFrameFile(path, total)
+            if (mapped == null) {
+                Log.e(TAG, "attachFrameBuffer: mmap 失败")
+                return
+            }
+            sharedFrame = mapped
+            sharedFrameSize = total
+            Log.i(TAG, "共享帧缓冲已附加：${width}x$height（${total} 字节）")
+        }.onFailure { Log.e(TAG, "attachFrameBuffer 异常", it) }
+    }
+
+    /**
+     * 把一个文件映射成可读写 ByteBuffer。
+     *
+     * 两端（shell 进程和 App 进程）映射**同一个文件**，得到的是同一份
+     * page cache —— 写进去对方立刻可见，不产生每帧 read/write 系统调用。
+     * 这就是要替换掉"每帧写 3.7MB 再读回来"的关键。
+     */
+    private fun mapFrameFile(path: String, total: Int): java.nio.ByteBuffer? {
+        val file = java.io.File(path)
+        file.parentFile?.let { ensureDirReadable(it) }
+        val raf = java.io.RandomAccessFile(file, "rw")
+        if (raf.length() < total) raf.setLength(total.toLong())
+        // ★ 必须放开到 0666：App 是另一个 uid，默认 0600 打不开。
+        //   打不开就退回文件搬运，帧率立刻掉到 20fps，而且只有在
+        //   日志里"共享帧缓冲建立失败"那一行能看出来。
+        runCatching {
+            file.setReadable(true, false)
+            file.setWritable(true, false)
+        }.onFailure { Log.w(TAG, "设置帧缓冲文件权限失败", it) }
+        Log.i(TAG, "映射帧缓冲 $path（$total 字节）")
+        return raf.channel.map(java.nio.channels.FileChannel.MapMode.READ_WRITE, 0, total.toLong())
+    }
+
+    /**
+     * 取一帧写进共享缓冲。
+     *
+     * 用 seqlock：写前把序号改成奇数，写完改回偶数。App 读到奇数说明正在写，
+     * 丢掉这一帧等下一次 —— 比加锁便宜得多，而且不会让写端等读端。
+     */
+    override fun grabFrame(): Boolean {
+        val out = sharedFrame ?: return false
+        val need = captureWidth * captureHeight * 4
+        if (need <= 0 || sharedFrameSize < need + FRAME_HEADER_BYTES) return false
+
+        val buffer = ensureFrameBuffer(need) ?: return false
+        buffer.clear()
+        if (!NativeCapture.acquireFrame(buffer, IntArray(2))) return false
+        buffer.position(0)
+
+        sharedSeq++
+        out.putInt(0, sharedSeq)          // 奇数 = 正在写
+        out.position(FRAME_HEADER_BYTES)
+        out.put(buffer)                   // 一次 memcpy
+        sharedSeq++
+        out.putInt(0, sharedSeq)          // 偶数 = 写完
+        return true
+    }
+
     override fun acquireFrameFd(): ParcelFileDescriptor? {
         // ★ 用**建屏时已知的尺寸**分配缓冲，不要先调 frameSize()。
         //
@@ -752,6 +838,9 @@ class Pvz2UserService : IPvz2Service.Stub() {
 
     private companion object {
         const val TAG = "Pvz2UserService"
+
+        /** 共享帧缓冲的头长度：序号(4) + 保留(12)，对齐 16 方便 mmap。 */
+        const val FRAME_HEADER_BYTES = 16
         val SIZE_PATTERN = Regex("""\d+x\d+""")
 
         /**
