@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat
 import com.pvz2.auto.IPvz2Service
 import com.pvz2.auto.MainActivity
 import com.pvz2.auto.R
+import com.pvz2.auto.core.ScriptRunState
 import com.pvz2.auto.core.BotState
 import com.pvz2.auto.core.ScreenCapturer
 import com.pvz2.auto.core.TemplateMatcher
@@ -29,7 +30,6 @@ import com.pvz2.auto.maa.PipelineRunner
 import com.pvz2.auto.maa.ProbeTargets
 import com.pvz2.auto.maa.RecognitionProbe
 import com.pvz2.auto.maa.Recognizer
-import com.pvz2.auto.maa.VerifyChain
 import com.pvz2.auto.shizuku.ShizukuBridge
 import com.pvz2.auto.shizuku.ShizukuScreenCapturer
 import com.pvz2.auto.shizuku.ShizukuTouchInjector
@@ -83,6 +83,9 @@ class AutomationService : Service() {
     private var capturer: ScreenCapturer? = null
     private var injector: TouchInjector? = null
     private var matcher: TemplateMatcher? = null
+
+    /** 当前脚本任务。停止时 cancel 它。 */
+    private var scriptJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -157,6 +160,29 @@ class AutomationService : Service() {
                     vdSession.stop()
                     stopSelf()
                 }
+            }
+
+            // ★ 脚本运行。这是整条执行链第一次有真实入口 ——
+            //   在此之前 PipelineRunner 只在自身声明处出现过一次，
+            //   节点解析和图执行都写好了，但没有任何地方会启动它。
+            ACTION_SCRIPT_RUN -> {
+                startForegroundCompat()
+                val dir = intent.getStringExtra(EXTRA_SCRIPT_DIR)
+                val entry = intent.getStringExtra(EXTRA_SCRIPT_ENTRY)
+                val dry = intent.getBooleanExtra(EXTRA_SCRIPT_DRY_RUN, true)
+                if (dir.isNullOrBlank()) {
+                    ScriptRunState.finish("没有指定脚本")
+                } else {
+                    scriptJob?.cancel()
+                    scriptJob = scope.launch { runScript(dir, entry, dry) }
+                }
+            }
+
+            ACTION_SCRIPT_STOP -> {
+                startForegroundCompat()
+                scriptJob?.cancel()
+                scriptJob = null
+                ScriptRunState.finish("已停止")
             }
 
             // 抓帧 / 探针 / 建屏探针 / 验证链（干跑、实跑）五个诊断入口已删除。
@@ -335,6 +361,59 @@ class AutomationService : Service() {
      * detected resolution, which is how you confirm the privileged screenshot path works
      * before you have any artwork.
      */
+    /**
+     * 跑一个脚本。
+     *
+     * 与旧的 `runLoop()`（识别到就点）并存：那条路是唯一在真机跑通过的退路，
+     * 等 pipeline 稳定后再删。
+     *
+     * 流程：绑定 Shizuku → 准备采集器/注入器 → 建 Recognizer → 交给 PipelineRunner。
+     */
+    private suspend fun runScript(scriptDir: String, entry: String?, dryRun: Boolean) {
+        if (!OpenCVLoader.initLocal()) {
+            ScriptRunState.finish("OpenCV 原生库加载失败")
+            return
+        }
+        if (!ShizukuBridge.hasPermission()) {
+            ScriptRunState.finish("需要 Shizuku 权限")
+            return
+        }
+
+        shizukuClient.bind()
+        val size = runCatching { shizukuClient.await()?.getDisplaySize() }.getOrNull()
+        if (size.isNullOrBlank()) {
+            ScriptRunState.finish("特权 shell 无响应")
+            return
+        }
+
+        val activeCapturer = capturer ?: VirtualDisplayCapturer(
+            vdSession,
+            ShizukuScreenCapturer(shizukuClient)
+        ).also { capturer = it }
+        val activeInjector = injector ?: ShizukuTouchInjector(shizukuClient) {
+            vdSession.state.value.displayId.takeIf { it > 0 } ?: 0
+        }.also { injector = it }
+
+        val recognizer = Recognizer(this)
+        try {
+            // 用虚拟屏的实际尺寸定识别基准，而不是写死 720p ——
+            // 换分辨率时 ScreenAdapter 才是准的。
+            val w = vdSession.state.value.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
+            val h = vdSession.state.value.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+            recognizer.setScreen(w, h)
+
+            PipelineRunner(
+                context = this,
+                capturer = activeCapturer,
+                injector = activeInjector,
+                recognizer = recognizer,
+                dryRun = dryRun
+            ).run(scriptDir, entry)
+        } finally {
+            recognizer.release()
+        }
+    }
+
     private fun loadMatcher(): Boolean {
         if (!OpenCVLoader.initLocal()) {
             fail("OpenCV 原生库加载失败")
@@ -438,6 +517,11 @@ class AutomationService : Service() {
         /** 持有式虚拟屏：start 之后屏一直在，直到 stop。 */
         private const val ACTION_VD_START = "com.pvz2.auto.VD_START"
         private const val ACTION_VD_STOP = "com.pvz2.auto.VD_STOP"
+    private const val ACTION_SCRIPT_RUN = "com.pvz2.auto.SCRIPT_RUN"
+    private const val ACTION_SCRIPT_STOP = "com.pvz2.auto.SCRIPT_STOP"
+    private const val EXTRA_SCRIPT_DIR = "script_dir"
+    private const val EXTRA_SCRIPT_ENTRY = "script_entry"
+    private const val EXTRA_SCRIPT_DRY_RUN = "script_dry_run"
         private const val EXTRA_TARGET_PACKAGE = "target_package"
 
         // 这里**不再**有默认包名。
@@ -481,6 +565,26 @@ class AutomationService : Service() {
         /** 停止虚拟屏：释放 display、游戏回到主屏。 */
         fun vdStop(context: Context) {
             ContextCompat.startForegroundService(context, intent(context, ACTION_VD_STOP))
+        }
+
+        /**
+         * 运行脚本。
+         *
+         * @param dir `assets/pipeline/` 下的脚本目录名
+         * @param entry 入口节点；null = 自动推断
+         * @param dryRun true = 只识别不点击。首次跑新脚本保持 true
+         */
+        fun scriptRun(context: Context, dir: String, entry: String?, dryRun: Boolean) {
+            val i = intent(context, ACTION_SCRIPT_RUN)
+            i.putExtra(EXTRA_SCRIPT_DIR, dir)
+            i.putExtra(EXTRA_SCRIPT_ENTRY, entry)
+            i.putExtra(EXTRA_SCRIPT_DRY_RUN, dryRun)
+            ContextCompat.startForegroundService(context, i)
+        }
+
+        /** 停止脚本。 */
+        fun scriptStop(context: Context) {
+            ContextCompat.startForegroundService(context, intent(context, ACTION_SCRIPT_STOP))
         }
 
         /** `stopService` is always permitted, unlike starting a service from the background. */

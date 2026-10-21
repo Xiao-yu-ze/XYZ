@@ -2,6 +2,7 @@ package com.pvz2.auto.maa
 
 import android.util.Log
 import com.pvz2.auto.core.BotState
+import com.pvz2.auto.core.ScriptRunState
 import com.pvz2.auto.core.ScreenCapturer
 import com.pvz2.auto.core.TapJitter
 import com.pvz2.auto.core.TouchInjector
@@ -109,6 +110,8 @@ class NodeGraph(
         var lastSleep = 0L
 
         while (currentCoroutineContext().isActive) {
+            val roundStart = System.nanoTime()
+
             if (!refreshFrame()) {
                 delay(RETRY_ON_CAPTURE_FAILURE)
                 if (System.currentTimeMillis() > deadline) return null
@@ -131,10 +134,17 @@ class NodeGraph(
                     }
                     if (hit != null) {
                         lastHit = hit
+                        reportHit(candidate.name)
                         return candidate
                     }
                 }
             }
+
+            // 把"这一轮在等谁、花了多久"报给界面。
+            //
+            // 没有这个，用户看到画面不动时分不清两件事：脚本卡死了，
+            // 还是它在正常地等一个还没出现的画面 —— 处理方式完全相反。
+            reportRound(parent.name, roundStart, next)
 
             val elapsed = System.currentTimeMillis() - (deadline - parent.timeout)
             // rate_limit 是"每轮识别的最低耗时"，不足则补睡（官方语义）。
@@ -286,6 +296,36 @@ class NodeGraph(
 
     /** 当前已命中的节点次数（供调试 / 状态显示）。 */
     fun hitsOf(node: String): Long = hitCounts[node] ?: 0L
+
+    /** 已跑过多少轮识别。 */
+    private var roundCount = 0L
+
+    /**
+     * 报一轮识别给界面。
+     *
+     * 只在**界面需要**的粒度上报（每轮一次），不因某个节点内部细节打扰用户。
+     * 写进程级单例而不是回调，是因为界面与服务是两个组件，
+     * 界面可能在任何时刻才订阅上来。
+     */
+    private fun reportRound(parentName: String, roundStartNanos: Long, waiting: List<String>) {
+        roundCount++
+        val costMs = (System.nanoTime() - roundStartNanos) / 1_000_000.0
+        ScriptRunState.update { prev ->
+            prev.copy(
+                currentNode = parentName,
+                round = roundCount,
+                lastRoundMs = costMs,
+                message = "等待：${waiting.joinToString(" / ").take(60)}"
+            )
+        }
+    }
+
+    /** 报一次命中。命中次数是 [max_hit] 判据的来源，所以在这里统一记账。 */
+    private fun reportHit(nodeName: String) {
+        ScriptRunState.update { prev ->
+            prev.copy(hits = prev.hits + (nodeName to (prev.hits[nodeName] ?: 0L) + 1))
+        }
+    }
 
     private companion object {
         const val TAG = "NodeGraph"

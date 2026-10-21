@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  诊断页。
+
+  这些不是日常操作，是"某个环节出问题了，要确认到底哪一环坏了"时用的。
+  按功能拆到单独一页，主页就不会被工具塞满。
+
+  两项自检各管一件事，互不依赖：
+    · 注入自检 —— 事件能不能进到虚拟屏
+    · 识别自检 —— 找到了没有、分数多少、搜索区多大、花了多久
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/paper"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="20dp"
+        android:paddingTop="20dp"
+        android:paddingBottom="32dp">
+
+        <TextView
+            style="@style/Text.Display"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/nav_diag" />
+
+        <TextView
+            style="@style/Text.Subtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/diag_subtitle" />
+
+        <!-- ==================== 注入自检 ==================== -->
+        <TextView
+            style="@style/Text.Section"
+            android:layout_marginTop="24dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/diag_inject_title" />
+
+        <TextView
+            style="@style/Text.Hint"
+            android:layout_marginTop="4dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/hint_test_tap" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <EditText
+                android:id="@+id/etTapX"
+                style="@style/Text.Body"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:hint="@string/hint_tap_x"
+                android:inputType="number"
+                android:singleLine="true" />
+
+            <EditText
+                android:id="@+id/etTapY"
+                style="@style/Text.Body"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:hint="@string/hint_tap_y"
+                android:inputType="number"
+                android:singleLine="true" />
+        </LinearLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnTestTap"
+            style="@style/AppButton.Outline"
+            android:layout_marginTop="10dp"
+            android:text="@string/btn_test_tap" />
+
+        <!-- ==================== 识别自检 ==================== -->
+        <TextView
+            style="@style/Text.Section"
+            android:layout_marginTop="28dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/diag_recog_title" />
+
+        <TextView
+            style="@style/Text.Hint"
+            android:layout_marginTop="4dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/hint_recog_test" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnRecogTest"
+            style="@style/AppButton.Outline"
+            android:layout_marginTop="10dp"
+            android:text="@string/btn_recog_test" />
+
+        <!-- 两项自检共用一个结果区。
+             分开显示的话页面会很长，而用户一次只跑一项。 -->
+        <TextView
+            android:id="@+id/tvTestTapResult"
+            style="@style/Text.Hint"
+            android:layout_marginTop="14dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:text="" />
+
+    </LinearLayout>
+</ScrollView>

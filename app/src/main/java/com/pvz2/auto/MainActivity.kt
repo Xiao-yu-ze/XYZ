@@ -142,20 +142,15 @@ class MainActivity : AppCompatActivity() {
             exportLogs()
         }
 
-        // 只保留注入自检。
-        //
-        // 抓帧 / 探针 / 验证链那几个临时工具已经删掉：抓帧和建屏探针的功能
-        // 被主界面的启动按钮覆盖，验证链依赖的模板集也早已不存在。
-        // 留着只会让"该点哪个"变成一道谜题。
-        findViewById<MaterialButton>(R.id.btnTestTap).setOnClickListener {
-            testVirtualDisplayTap()
+        // 按功能拆页：诊断工具搬到独立页面（注入自检 / 识别自检），
+        // 脚本运行也有自己的一页。主页只留"屏"和导航 ——
+        // 预览本来就占掉大半屏，工具再堆进来两边都挤。
+        findViewById<MaterialButton>(R.id.btnNavScript).setOnClickListener {
+            startActivity(Intent(this, ScriptActivity::class.java))
         }
-        findViewById<MaterialButton>(R.id.btnRecogTest).setOnClickListener {
-            runRecognitionSelfTest()
+        findViewById<MaterialButton>(R.id.btnNavDiag).setOnClickListener {
+            startActivity(Intent(this, DiagnosticsActivity::class.java))
         }
-
-        // 调试工具默认折叠：它不是主流程，常驻展开会把主路径挤出首屏。
-        findViewById<LinearLayout>(R.id.debugHeader).setOnClickListener { toggleDebugSection() }
 
         // Shizuku can arrive or disappear while we are on screen, so track both edges.
         ShizukuBridge.addPermissionResultListener(shizukuPermissionListener)
@@ -614,215 +609,12 @@ class MainActivity : AppCompatActivity() {
      * 单看"被拒"两个字无法定位原因。四条路径的**失败方式**不同，
      * 组合起来正好能把原因分开（见下面的判读逻辑）。
      */
-    private fun mark(ok: Boolean): String = if (ok) "✓ 接受" else "✗ 被拒"
-
-    /**
-     * 识别自检：把虚拟屏当前的画面跑一遍模板匹配，报出**分数和命中位置**。
-     *
-     * ## 为什么要它
-     *
-     * 注入已验证能进虚拟屏。接下来要回答"识别准不准"，而这件事没法从日志推断：
-     * 分数 0.65 是模板不对还是阈值定高了，只能看具体数字；
-     * 命中了却点不中，是框算错了还是坐标没换算，只能看命中框。
-     *
-     * 这个自检**不点任何东西**，只报数字。
-     */
-    private fun runRecognitionSelfTest() {
-        val resultView = findViewById<TextView>(R.id.tvTestTapResult)
-        val bitmap = VirtualDisplaySession.previewFlow.value
-
-        if (bitmap == null) {
-            resultView.setTextColor(ContextCompat.getColor(this, R.color.state_bad))
-            resultView.text = getString(R.string.recog_no_frame)
-            return
-        }
-
-        resultView.setTextColor(ContextCompat.getColor(this, R.color.ink_muted))
-        resultView.text = getString(R.string.recog_running)
-
-        lifecycleScope.launch {
-            val text = withContext(Dispatchers.Default) {
-                try {
-                    if (!org.opencv.android.OpenCVLoader.initLocal()) {
-                        return@withContext "ERROR: OpenCV 加载失败"
-                    }
-
-                    // Bitmap -> Mat。**不 recycle**：这张 Bitmap 归 previewFlow 所有，
-                    // 回收了 ImageView 会拿到一张废图。
-                    val mat = Mat()
-                    org.opencv.android.Utils.bitmapToMat(bitmap, mat)
-
-                    val probes = try {
-                        RecognitionSelfTest(applicationContext).run(
-                            frame = mat,
-                            templates = PROBE_TEMPLATES
-                        )
-                    } finally {
-                        mat.release()
-                    }
-
-                    if (probes.isEmpty()) {
-                        "没有任何结果 —— 帧为空或模板全部没加载上。"
-                    } else {
-                        buildString {
-                            appendLine("画面 ${bitmap.width}×${bitmap.height}，每个模板测两种搜索区")
-                            appendLine("─────────────────────────────")
-                            // 按模板分组，全屏与 ROI 并排，方便直接对比。
-                            probes.chunked(2).forEach { pair ->
-                                val full = pair.getOrNull(0)
-                                val roi = pair.getOrNull(1)
-                                if (full != null) {
-                                    appendLine(full.name.substringAfterLast('/'))
-                                    appendLine(full.toString())
-                                }
-                                if (roi != null) {
-                                    appendLine(roi.toString())
-                                    if (full != null && roi.costMs > 0) {
-                                        val ratio = full.costMs / roi.costMs
-                                        appendLine(
-                                            "     → ROI 快了 ${"%.1f".format(ratio)} 倍" +
-                                                "（${"%.1f".format(full.costMs)} → ${"%.1f".format(roi.costMs)} ms）"
-                                        )
-                                    }
-                                }
-                                appendLine()
-                            }
-                            appendLine("─────────────────────────────")
-                            val fullTotal = probes.filterIndexed { i, _ -> i % 2 == 0 }.sumOf { it.costMs }
-                            val roiTotal = probes.filterIndexed { i, _ -> i % 2 == 1 }.sumOf { it.costMs }
-                            appendLine("全屏总耗时 ${"%.1f".format(fullTotal)} ms / ${probes.size / 2} 个模板")
-                            appendLine("带 ROI 总耗时 ${"%.1f".format(roiTotal)} ms / ${probes.size / 2} 个模板")
-                            appendLine()
-                            appendLine("代价 ≈ 搜索区面积 × 模板面积。全屏 921600 px 是 71 万个候选位置，")
-                            appendLine("每个位置算一次模板面积大小的乘加 —— 这就是慢的唯一原因。")
-                            appendLine("真实 pipeline 每个节点都有 roi，搜索区小一个数量级，耗时跟着降。")
-                            appendLine()
-                            appendLine("注意 ROI 那一行的分数只有在目标确实落在 ROI 内时才可比；")
-                            appendLine("中央一半的 ROI 里没有的东西，分数自然低。")
-                        }
-                    }
-                } catch (t: Throwable) {
-                    "ERROR: ${t.message}"
-                }
-            }
-            resultView.text = text
-            resultView.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ink_muted))
-        }
-    }
-
-    private fun testVirtualDisplayTap() {
-        val resultView = findViewById<TextView>(R.id.tvTestTapResult)
-        val displayId = VirtualDisplaySession.sharedState.value.displayId
-
-        if (displayId <= 0) {
-            resultView.setTextColor(ContextCompat.getColor(this, R.color.state_bad))
-            resultView.text = getString(R.string.test_tap_no_display)
-            return
-        }
-
-        // 坐标从输入框读，空着就用屏幕正中。
-        // 虚拟屏是 1280×720，中心 (640, 360)。
-        val x = findViewById<EditText>(R.id.etTapX).text.toString().toIntOrNull()
-            ?.coerceIn(0, VD_WIDTH - 1) ?: (VD_WIDTH / 2)
-        val y = findViewById<EditText>(R.id.etTapY).text.toString().toIntOrNull()
-            ?.coerceIn(0, VD_HEIGHT - 1) ?: (VD_HEIGHT / 2)
-
-        resultView.setTextColor(ContextCompat.getColor(this, R.color.ink_muted))
-        resultView.text = getString(R.string.test_tap_running, displayId)
-
-        lifecycleScope.launch {
-            val text = withContext(Dispatchers.IO) {
-                val client = ShizukuUserServiceClient(applicationContext)
-                try {
-                    client.bind()
-                    val service = client.await()
-                        ?: return@withContext "ERROR: Shizuku 服务未连接（${client.lastError ?: "超时"}）"
-
-                    // 四条路径同时试。它们失败的**方式**不一样，正好能把原因分开：
-                    //
-                    //   A. injectInputEvent + setDisplayId(虚拟屏)  ← 线上用的这条
-                    //   B. injectInputEvent + display 0             ← 对照组：注入本身通不通
-                    //   C. `input -d <id> tap`                      ← shell 的官方路径
-                    //   D. `input tap`                              ← 对照组
-                    //
-                    // 判读：
-                    //   A✗ B✓ C✓ → 是 setDisplayId/副屏路由的问题
-                    //   A✗ B✗ C✗ → 权限或 InputManager 层的问题
-                    //   A✗ C✓    → 我们的注入实现有 bug，改用 shell 路径
-                    val report = StringBuilder()
-                    report.appendLine("display=$displayId  坐标 ($x, $y)")
-                    report.appendLine()
-
-                    val a = runCatching { service.tapOnDisplay(displayId, x, y, 80) }
-                        .getOrDefault(false)
-                    report.appendLine("A 直注 InputInjector → $displayId : ${mark(a)}")
-
-                    val b = runCatching { service.tapOnDisplay(0, x, y, 80) }
-                        .getOrDefault(false)
-                    report.appendLine("B 直注 → display 0（对照）        : ${mark(b)}")
-
-                    val cOut = runCatching {
-                        service.exec("input -d $displayId tap $x $y")
-                    }.getOrDefault("")
-                    // `input` 失败只往 stderr 写、退出码仍是 0，只能看输出。
-                    val c = cOut.isBlank()
-                    report.appendLine("C shell input -d $displayId（对照）: ${mark(c)}")
-                    if (!c) report.appendLine("   └ $cOut")
-
-                    val dOut = runCatching { service.exec("input tap $x $y") }.getOrDefault("")
-                    val d = dOut.isBlank()
-                    report.appendLine("D shell input（display 0）        : ${mark(d)}")
-                    if (!d) report.appendLine("   └ $dOut")
-
-                    report.appendLine()
-                    report.appendLine("判读：")
-                    report.appendLine(
-                        when {
-                            a -> "✓ A 通 —— 直注已能被系统接受，可以用它做自动化的动作层。"
-                            !a && c -> "A 不通但 C 通 → 直注实现仍有问题，继续用 shell。"
-                            !a && !c -> "两条都不通，看下面的窗口分布和权限。"
-                            else -> "状态异常。"
-                        }
-                    )
-
-                    val perm = runCatching {
-                        service.exec("dumpsys package com.android.shell | grep -i INJECT_EVENTS")
-                    }.getOrDefault("")
-                    report.appendLine()
-                    report.appendLine("shell 的 INJECT_EVENTS：")
-                    report.appendLine(if (perm.isBlank()) "  （查不到，可能没这个权限）" else "  ${perm.trim()}")
-
-                    val win = runCatching { service.exec("dumpsys window windows | grep -E 'Window #|mDisplayId'") }
-                        .getOrDefault("")
-                    report.appendLine()
-                    report.appendLine("窗口分布：")
-                    report.appendLine(win.trim().take(600))
-
-                    report.toString()
-                } catch (t: Throwable) {
-                    "ERROR: ${t.message}"
-                } finally {
-                    runCatching { client.unbind(remove = false) }
-                }
-            }
-
-            resultView.text = text
-            resultView.setTextColor(ContextCompat.getColor(this@MainActivity, R.color.ink_muted))
-        }
-    }
 
     /** Android 13 起通知权限才需要单独申请；更低版本视为已授予。 */
     private fun notificationsGranted(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
-
-    private fun toggleDebugSection() {
-        val body = findViewById<LinearLayout>(R.id.debugBody)
-        val expand = body.visibility != View.VISIBLE
-        body.visibility = if (expand) View.VISIBLE else View.GONE
-        findViewById<TextView>(R.id.debugArrow).text = if (expand) "▾" else "▸"
-    }
 
     override fun onResume() {
         super.onResume()

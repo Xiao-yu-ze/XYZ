@@ -43,6 +43,34 @@
             style="@style/Text.Subtitle"
             android:text="@string/ui_subtitle" />
 
+        <!-- ==================== 导航 ====================
+             按功能拆页：主页只放"屏"，脚本运行、诊断各占一页。
+             这一行是唯一的入口，不放多余的说明文字 ——
+             说明留在各自的页面里，主页保持干净。 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnNavScript"
+                style="@style/AppButton.Outline"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/nav_script" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnNavDiag"
+                style="@style/AppButton.Outline"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:text="@string/nav_diag" />
+        </LinearLayout>
+
         <!-- ==================== 状态卡 ==================== -->
         <LinearLayout
             style="@style/Card"
@@ -357,111 +385,6 @@
             style="@style/Text.Hint"
             android:text="@string/hint_export_log" />
 
-        <!-- ==================== 调试工具（默认折叠） ==================== -->
-        <LinearLayout
-            android:id="@+id/debugHeader"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="28dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingVertical="8dp">
-
-            <TextView
-                android:id="@+id/debugArrow"
-                style="@style/Text.RowAction"
-                android:text="▸"
-                android:textColor="@color/ink_faint" />
-
-            <TextView
-                style="@style/Text.Section"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_marginTop="0dp"
-                android:layout_marginStart="8dp"
-                android:text="@string/section_tools" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/debugBody"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:visibility="gone">
-
-            <!-- 这里曾经堆了 5 个按钮：验证链（dry/run）、探针、抓帧、建屏探针。
-                 它们都是排查早期问题的临时工具，问题解决后就没有用途了 ——
-                 抓帧和建屏探针的功能已经被主界面的启动按钮覆盖，
-                 验证链依赖的模板集也早已不存在。留着只会让"该点哪个"变成一道谜题。
-
-                 现在只保留一个：注入自检。它仍然是**唯一**能回答
-                 "事件到底能不能进到虚拟屏"的办法，其它工具都做不到。 -->
-
-            <!-- 注入自检：在虚拟屏上点一下指定位置，并直接显示系统是否接受。
-                 不经过识别、不经过脚本 —— 只验证注入通道本身。
-
-                 坐标可填：默认是屏幕正中 (640,360)。要验证"某个按钮点不中"时，
-                 填那个按钮的坐标再点一次，就能区分"注入不通"和"坐标不对"。 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <EditText
-                    android:id="@+id/etTapX"
-                    style="@style/Text.Body"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:hint="@string/hint_tap_x"
-                    android:inputType="number"
-                    android:singleLine="true" />
-
-                <EditText
-                    android:id="@+id/etTapY"
-                    style="@style/Text.Body"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:layout_marginStart="8dp"
-                    android:hint="@string/hint_tap_y"
-                    android:inputType="number"
-                    android:singleLine="true" />
-            </LinearLayout>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnTestTap"
-                style="@style/AppButton.Outline"
-                android:layout_marginTop="8dp"
-                android:text="@string/btn_test_tap" />
-
-            <TextView
-                android:id="@+id/tvTestTapResult"
-                style="@style/Text.Hint"
-                android:layout_marginTop="6dp"
-                android:text="" />
-
-            <TextView
-                style="@style/Text.Hint"
-                android:layout_marginTop="2dp"
-                android:text="@string/hint_test_tap" />
-
-            <!-- 识别自检：不点任何东西，只报分数和命中框。
-                 注入通了之后，下一个要确认的就是"识别准不准" ——
-                 而这件事只能看具体数字，日志里推不出来。 -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnRecogTest"
-                style="@style/AppButton.Outline"
-                android:layout_marginTop="12dp"
-                android:text="@string/btn_recog_test" />
-
-            <TextView
-                style="@style/Text.Hint"
-                android:layout_marginTop="2dp"
-                android:text="@string/hint_recog_test" />
-        </LinearLayout>
 
     </LinearLayout>
 </ScrollView>
