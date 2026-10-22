@@ -831,12 +831,23 @@ class ZjsEditorPage(
             val st = com.pvz2.auto.service.VirtualDisplaySession.sharedState.value
             val iw = st.frameWidth.takeIf { it > 0 } ?: 1280
             val ih = st.frameHeight.takeIf { it > 0 } ?: 720
+            // 条件里已经有范围就带出来 —— 不改也能直接点确定
+            val existing = condition.posData?.let { p ->
+                com.pvz2.auto.zjs.ZPosResolver.searchRect(
+                    p,
+                    com.pvz2.auto.zjs.ZPosResolver.Screen(iw, ih, host.resources.displayMetrics.density)
+                ).takeIf { p.limitArea != null }
+            }
             com.pvz2.auto.core.PreviewPicker.arm(
                 com.pvz2.auto.core.PreviewPicker.Mode.RECT,
                 screenWidth = iw, screenHeight = ih,
-                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
+                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value,
+                initialRect = existing
             )
-            toast("在画面上框出搜索范围，四角可拖")
+            toast(
+                if (existing != null) "范围已带出，拖四角可改，不改就点确定"
+                else "在画面上框出搜索范围，四角可拖"
+            )
 
             val r = deferred.await() ?: return@launch
             if (r.w <= 0 || r.h <= 0) return@launch
@@ -1605,11 +1616,20 @@ class ZjsEditorPage(
                     it.mode == com.pvz2.auto.core.PreviewPicker.Mode.RECT
                 }
             }
+            // 已有范围就带出来：用户可能只想看一眼，什么都不改就点确定。
+            // 不带的话「确定」会报"先框出一个框"，等于逼他重框一遍。
+            val existing = pos?.let { p ->
+                com.pvz2.auto.zjs.ZPosResolver.searchRect(
+                    p,
+                    com.pvz2.auto.zjs.ZPosResolver.Screen(iw, ih, host.resources.displayMetrics.density)
+                ).takeIf { p.limitArea != null }
+            }
             com.pvz2.auto.core.PreviewPicker.arm(
                 com.pvz2.auto.core.PreviewPicker.Mode.RECT,
                 screenWidth = iw, screenHeight = ih,
                 // 冻结当前帧：游戏在动，不冻结的话框永远对不准
-                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
+                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value,
+                initialRect = existing
             )
             android.widget.Toast.makeText(
                 host, "请在画面上拖出识别范围", android.widget.Toast.LENGTH_SHORT
@@ -1666,11 +1686,14 @@ class ZjsEditorPage(
                     it.mode == com.pvz2.auto.core.PreviewPicker.Mode.TEMPLATE
                 }
             }
+            // 先把这一帧固定下来：裁图、自检都必须用**同一张**，
+            // 否则比较的是两个时刻的画面，分数永远到不了 100%。
+            val frozen = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
             com.pvz2.auto.core.PreviewPicker.arm(
                 com.pvz2.auto.core.PreviewPicker.Mode.TEMPLATE,
                 screenWidth = iw, screenHeight = ih,
                 // 冻结当前帧：游戏在动，不冻结的话框永远对不准
-                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
+                frozenFrame = frozen
             )
             android.widget.Toast.makeText(
                 host, "请在画面上框住要识别的图案", android.widget.Toast.LENGTH_SHORT
@@ -1723,10 +1746,77 @@ class ZjsEditorPage(
             expandedIndex = actionIndex
             adapter.notifyItemChanged(actionIndex)
 
-            android.widget.Toast.makeText(
-                host, "已截取 ${crop.width}×${crop.height} 的模板，范围也一起设好了",
-                android.widget.Toast.LENGTH_SHORT
-            ).show()
+            /*
+             * 自检：把刚做好的模板拿**同一张冻结帧**再匹配一次。
+             *
+             * 用户最困惑的是"我明明框的就是这个，怎么匹配不上"。原因有两种：
+             * 我们的链路有问题（编码/通道/坐标换算），或者画面已经变了 ——
+             * 两者在界面上长得一模一样。
+             *
+             * 同帧自检把两者分开：接近 100% ⇒ 链路没问题，低分只能怪画面变化；
+             * 很低 ⇒ 是我们的 bug，当场就能发现。
+             */
+            /*
+             * 双自检：一次说明"我们的链路对不对"，一次说明"画面变了多少"。
+             *
+             * - sameBmp：模板和帧取自**同一张**冻结帧。链路（PNG 编解码、通道
+             *   顺序、坐标换算、ROI、matchTemplate）没问题时必须是 100%。
+             *   不到 100% 就是我们的 bug。
+             * - ring：模板和**当前帧**比。这才是运行时真正的分数，
+             *   低于 sameBmp 的部分全部来自画面变化。
+             */
+            var sameBmp = -1.0
+            var ringScore = -1.0
+            runCatching {
+                val p = updated.posData ?: return@runCatching
+                val sr = com.pvz2.auto.zjs.ZPosResolver.searchRect(
+                    p,
+                    com.pvz2.auto.zjs.ZPosResolver.Screen(
+                        iw, ih, host.resources.displayMetrics.density
+                    )
+                )
+
+                // ① 同一张图内部对比
+                if (frozen != null) {
+                    val mat = org.opencv.core.Mat()
+                    org.opencv.android.Utils.bitmapToMat(frozen, mat)
+                    val probe = com.pvz2.auto.zjs.ZRealMatcher(
+                        com.pvz2.auto.core.TemplateMatcher(),
+                        frame = { mat }, context = host
+                    )
+                    probe.findImage(p, sr)
+                    sameBmp = probe.lastScore
+                }
+
+                // ② 和当前帧比（运行时真正的分数）
+                val snap = com.pvz2.auto.service.VirtualDisplaySession.snapshotForMatch()
+                if (snap != null) {
+                    val probe2 = com.pvz2.auto.zjs.ZRealMatcher(
+                        com.pvz2.auto.core.TemplateMatcher(),
+                        frame = { snap }, context = host
+                    )
+                    probe2.findImage(p, sr)
+                    ringScore = probe2.lastScore
+                }
+
+                android.util.Log.i(
+                    "ZjsSelfCheck",
+                    "模板 ${crop.width}x${crop.height} 冻结帧 ${frozen?.width}x${frozen?.height} " +
+                        "ROI ${sr[0]},${sr[1]},${sr[2]},${sr[3]} " +
+                        "同帧=${"%.1f".format(sameBmp * 100)}% 当前帧=${"%.1f".format(ringScore * 100)}%"
+                )
+            }.onFailure { android.util.Log.e("ZjsSelfCheck", "自检异常", it) }
+
+            val msg = when {
+                sameBmp in 99.0..100.1 ->
+                    "已截取 ${crop.width}×${crop.height}（链路自检 ${"%.0f".format(sameBmp * 100)}%，" +
+                        "当前帧 ${"%.0f".format(ringScore * 100)}%）"
+                sameBmp > 0 ->
+                    "已截取，但同帧只有 ${"%.0f".format(sameBmp * 100)}% —— 这是 bug，请发日志"
+                else -> "已截取 ${crop.width}×${crop.height}"
+            }
+            android.widget.Toast.makeText(host, msg, android.widget.Toast.LENGTH_LONG).show()
+
         }
     }
 

@@ -130,10 +130,18 @@ object PreviewPicker {
         initial: Point? = null,
         screenWidth: Int = 0,
         screenHeight: Int = 0,
-        frozenFrame: Bitmap? = null
+        frozenFrame: Bitmap? = null,
+        /**
+         * 框选模式的**初始矩形**（虚拟屏坐标 l,t,r,b）。
+         *
+         * 为什么需要：截完模板后「范围」已经被设成模板那块了。用户再点
+         * 「范围」只是想看一眼，什么都不改就点确定 —— 这时如果 rect 是空的，
+         * 「确定」会报"先框出一个框"，等于逼他重框一遍自己刚框过的东西。
+         */
+        initialRect: IntArray? = null
     ) {
         _mode.value = m
-        _rect.value = null
+        _rect.value = initialRect
         _frozen.value = frozenFrame
         _crosshair.value = initial ?: if (screenWidth > 0 && screenHeight > 0) {
             Point(screenWidth / 2, screenHeight / 2)

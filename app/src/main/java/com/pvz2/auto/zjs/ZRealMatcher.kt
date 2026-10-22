@@ -101,42 +101,109 @@ class ZRealMatcher(
 
             val region = frameBgr.submat(org.opencv.core.Rect(left, top, roiW, roiH))
             val result = org.opencv.core.Mat()
-            var best = Double.NEGATIVE_INFINITY
-            var bestX = 0
-            var bestY = 0
+            val peaks: List<org.opencv.core.Point>
+            var bestCorr = 0.0
             try {
                 org.opencv.imgproc.Imgproc.matchTemplate(
                     region, tmpl, result, org.opencv.imgproc.Imgproc.TM_CCOEFF_NORMED
                 )
-                val mm = org.opencv.core.Core.minMaxLoc(result)
-                best = mm.maxVal
-                // minMaxLoc 给的是结果矩阵里的点，加回 ROI 左上角才是屏幕坐标
-                bestX = mm.maxLoc.x.toInt() + left
-                bestY = mm.maxLoc.y.toInt() + top
+                bestCorr = org.opencv.core.Core.minMaxLoc(result).maxVal
+
+                /*
+                 * 不只取全局最高点。
+                 *
+                 * 只取一个点的话，画面里只要有一处"碰巧更像"就会选中它 ——
+                 * 而真实目标可能就在旁边，分数低一点点。取所有过线的峰再做
+                 * 非极大值抑制，才谈得上"找到几处"和"选第几个"。
+                 */
+                val rows = result.rows()
+                val cols = result.cols()
+                val buf = FloatArray(rows * cols)
+                result.get(0, 0, buf)
+
+                val cands = ArrayList<Pair<org.opencv.core.Point, Double>>()
+                for (y in 0 until rows) {
+                    for (x in 0 until cols) {
+                        val v = buf[y * cols + x]
+                        if (v.isFinite() && v >= threshold) {
+                            cands.add(org.opencv.core.Point(x.toDouble(), y.toDouble()) to v.toDouble())
+                        }
+                    }
+                }
+                cands.sortByDescending { it.second }
+
+                // 非极大值抑制：两个候选挨得太近就没意义（同一个图案）
+                val minDist = maxOf(8, minOf(tmpl.width(), tmpl.height()) / 2).toDouble()
+                val kept = ArrayList<org.opencv.core.Point>()
+                for ((pt, _) in cands) {
+                    if (kept.size >= MAX_HITS) break
+                    val tooClose = kept.any { k ->
+                        Math.hypot(k.x - pt.x, k.y - pt.y) < minDist
+                    }
+                    if (!tooClose) kept.add(pt)
+                }
+                peaks = kept
             } finally {
                 region.release()
                 result.release()
+            }
+
+            lastScore = bestCorr
+
+            if (peaks.isEmpty()) {
+                // 把"最高多少"报出来 —— 用户据此决定是降阈值还是换模板，
+                // 只说"没找到"等于让他盲调。
+                lastUnsupported = null
+                frameBgr.release()
+                tmpl.release()
+                return emptyList()
+            }
+
+            /*
+             * 命中后复核：过线只说明"相关系数够高"，那只反映形状趋势，
+             * 大片纯色也能给出高分。再比一次逐像素差，把"看着像但其实是
+             * 一块纯色"的假命中剔掉。
+             *
+             * 允许的差随阈值放宽：阈值 90 → 允许差 35，阈值 70 → 允许差 87。
+             */
+            val allowMad = 255.0 * (1.0 - threshold) + 10.0
+            val hits = ArrayList<ZPosResolver.Hit>()
+            var rejected = 0
+            try {
+                for (pt in peaks) {
+                    val px = pt.x.toInt()
+                    val py = pt.y.toInt()
+                    val patch = frameBgr.submat(
+                        org.opencv.core.Rect(px + left, py + top, tmpl.width(), tmpl.height())
+                    )
+                    val mad = runCatching { meanAbsDiff(patch, tmpl) }.getOrDefault(0.0)
+                    patch.release()
+                    if (mad <= allowMad) {
+                        hits.add(
+                            ZPosResolver.Hit(
+                                px + left + tmpl.width() / 2,
+                                py + top + tmpl.height() / 2
+                            )
+                        )
+                    } else {
+                        rejected++
+                    }
+                }
+            } finally {
                 frameBgr.release()
                 tmpl.release()
             }
 
-            if (best < threshold) {
-                // 把"最高多少"报出来 —— 用户据此决定是降阈值还是换模板，
-                // 只说"没找到"等于让他盲调。
-                lastUnsupported = null
-                lastScore = best
+            lastUnsupported = null
+            if (hits.isEmpty()) {
+                lastUnsupported = "有 ${peaks.size} 处相关系数过线，但逐像素差都太大" +
+                    "（允许 ${"%.0f".format(allowMad)}），像是匹配到了纯色区域"
                 return emptyList()
             }
-
-            lastUnsupported = null
-            lastScore = best
-            // 命中的是模板左上角；用户要的是中心
-            listOf(
-                ZPosResolver.Hit(
-                    bestX + tmpl.width() / 2,
-                    bestY + tmpl.height() / 2
-                )
-            )
+            if (rejected > 0) {
+                Log.i(TAG, "匹配：${hits.size} 处通过，$rejected 处被逐像素复核剔除")
+            }
+            hits
         } catch (t: Throwable) {
             Log.e(TAG, "图片匹配失败", t)
             lastUnsupported = "图片匹配异常：${t.message}"
@@ -351,6 +418,23 @@ class ZRealMatcher(
         }
     }
 
+    /**
+     * 两块同尺寸图的平均逐像素差（0~255）。
+     *
+     * 相关系数只看"形状起伏像不像"，对整体色差、纯色块不敏感；
+     * 用它做命中后的复核，能把"匹配到一块纯色"剔掉。
+     */
+    private fun meanAbsDiff(a: Mat, b: Mat): Double {
+        val diff = Mat()
+        return try {
+            org.opencv.core.Core.absdiff(a, b, diff)
+            val m = org.opencv.core.Core.mean(diff).`val`
+            val ch = minOf(3, m.size)
+            (0 until ch).sumOf { m[it] } / ch
+        } finally {
+            diff.release()
+        }
+    }
     /** ROI 夹到帧内，越界会让 OpenCV 直接崩。 */
     private fun clampRect(rect: IntArray, w: Int, h: Int): IntArray {
         val l = rect[0].coerceIn(0, (w - 1).coerceAtLeast(0))
@@ -366,6 +450,9 @@ class ZRealMatcher(
          * 每个动作重建一次会让脚本慢到没法用。
          */
         private var sharedOcr: com.pvz2.auto.maa.OcrEngine? = null
+
+        /** 一次最多返回多少个命中。太多了没意义，用户也不会去选第 50 个。 */
+        private const val MAX_HITS = 20
 
         /**
          * `#RRGGBB` / `RRGGBB` / `0xAARRGGBB` → `[r, g, b]`。认不出返回 null。
