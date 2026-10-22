@@ -144,6 +144,32 @@ class ZjsEditorPage(
         adapter.notifyItemChanged(actionIndex)
     }
 
+    /**
+     * 删除一个动作。
+     *
+     * 先确认再删 —— 删错了没有撤销，而脚本可能有上百条，
+     * 用户很难记住自己刚才删的是哪一条。
+     */
+    private fun onDeleteRequested(index: Int) {
+        val cur = script ?: return
+        val action = cur.actions.getOrNull(index) ?: return
+
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle("删除这一条？")
+            .setMessage("第 ${index + 1} 个：${ZScriptIO.actionLabel(action)}")
+            .setPositiveButton("删除") { _, _ ->
+                val list = cur.actions.toMutableList()
+                list.removeAt(index)
+                script = cur.copy(actions = list)
+                adapter.submit(script!!.actions)
+                expandedIndex = -1
+                android.widget.Toast.makeText(
+                    host, "已删除", android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
     fun bind() {
         rvActions.layoutManager = LinearLayoutManager(host)
         rvActions.adapter = adapter
@@ -152,7 +178,72 @@ class ZjsEditorPage(
             .setOnClickListener { saveTo(defaultSavePath()) }
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsSaveAs)
             .setOnClickListener { promptSaveAs() }
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsAddAction)
+            .setOnClickListener { promptAddAction() }
         load()
+    }
+
+    /**
+     * 添加一个动作。
+     *
+     * 列表按分组排：先能跑的，再暂时不能跑的。
+     * 用户在安卓上看到一堆点了没反应的类型会以为程序坏了，
+     * 所以把「安卓上暂不支持」的排在后面并标出来。
+     */
+    private fun promptAddAction() {
+        val cur = script ?: return
+
+        // 可执行的排前面，同组内保持协议顺序
+        val sorted = Z.ActionType.entries.sortedBy { if (it.executable) 0 else 1 }
+        val labels = sorted.map {
+            val base = it.controlRunType?.let { c -> "${it.wire}·$c" } ?: it.wire
+            if (it.executable) base else "$base（暂不支持）"
+        }.toTypedArray()
+
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle("添加什么动作")
+            .setItems(labels) { dlg, which ->
+                dlg.dismiss()
+                addAction(sorted[which])
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun addAction(type: Z.ActionType) {
+        val cur = script ?: return
+
+        // 位置类动作要带一个默认位置，否则展开后什么都没有、校验也报错。
+        // 坐标给画面正中 —— 用户接下来会去取点，起点在哪里不重要，
+        // 重要的是别是空值。
+        val st = com.pvz2.auto.core.PreviewPicker.crosshair.value
+        val cx = st?.x ?: 640
+        val cy = st?.y ?: 360
+        val pos = Z.PosData(
+            type = ZFieldEditor.expectedPosType(type) ?: Z.PosType.LOCATION,
+            x = com.pvz2.auto.zjs.ZValue.parse("$cx"),
+            y = com.pvz2.auto.zjs.ZValue.parse("$cy")
+        )
+
+        val newAction = Z.Action(
+            type = type,
+            posData = if (ZFieldEditor.expectedPosType(type) != null) pos else null,
+            startPos = if (type == Z.ActionType.SWIPE) pos else null,
+            endPos = if (type == Z.ActionType.SWIPE) pos else null
+        )
+
+        // 加在当前展开的那一条后面。全收起时加到末尾 ——
+        // 用户刚看完某条就想在它后面加一条，比滚到底部合理。
+        val at = if (expandedIndex >= 0) expandedIndex + 1 else cur.actions.size
+        val list = cur.actions.toMutableList()
+        list.add(at, newAction)
+        script = cur.copy(actions = list)
+        adapter.submit(script!!.actions)
+        expandedIndex = at
+        adapter.notifyItemChanged(at)
+        android.widget.Toast.makeText(
+            host, "已添加「${type.wire}」", android.widget.Toast.LENGTH_SHORT
+        ).show()
     }
 
     /**
@@ -316,6 +407,13 @@ class ZjsEditorPage(
                     expandedIndex = if (prev == index) -1 else index
                     if (prev >= 0) notifyItemChanged(prev)
                     notifyItemChanged(index)
+                }
+
+                // 长按删除。不用短按 —— 短按是展开/收起，很容易误触，
+                // 而删除是不可撤销的。
+                itemView.setOnLongClickListener {
+                    onDeleteRequested(index)
+                    true
                 }
             }
 

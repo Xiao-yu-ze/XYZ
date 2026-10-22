@@ -50,6 +50,15 @@
             android:text="@string/zjs_save_as" />
     </LinearLayout>
 
+    <!-- 添加动作。没有这个，用户只能改现有动作，不能新增 —— 编辑器就不完整。 -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnZjsAddAction"
+        style="@style/AppButton.Outline"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="@string/zjs_add_action" />
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvZjsActions"
         android:layout_width="match_parent"

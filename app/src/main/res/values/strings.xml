@@ -148,4 +148,5 @@
     <string name="zjs_saved">已保存到 %1$s</string>
     <string name="zjs_save_failed">保存失败：%1$s</string>
     <string name="picker_ok">确定</string>
+    <string name="zjs_add_action">+ 添加动作</string>
 </resources>
