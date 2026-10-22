@@ -163,7 +163,6 @@ interface IPvz2Service {
      *
      * 返回的 fd 由调用方负责 close；取不到帧返回 null。
      */
-    ParcelFileDescriptor acquireFrameFd() = 18;
 
     /** 采集端当前状态，一行摘要（用于导出日志）。 */
     String captureStatus() = 19;
@@ -215,14 +214,31 @@ interface IPvz2Service {
      *
      * @param path 双方各自 mmap 的同一个文件路径
      */
-    void attachFrameBuffer(String path, int width, int height) = 22;
 
     /**
      * 把最新一帧写进已附加的共享缓冲。
      *
      * @return true = 这一帧有效；false = 还没帧（刚建屏、或读取失败）。
      */
-    boolean grabFrame() = 23;
+
+    /**
+     * 指定下一次建屏要用的共享帧环文件路径。
+     *
+     * App 侧先建好文件并放开到 0666（另一个 uid 才能打开），
+     * 然后把路径交给这里；`createDisplayWithCapture` 时 native 会 mmap 它。
+     */
+    void setPendingFramePath(String path) = 24;
+
+    /**
+     * 由特权侧（shell）建共享帧环文件并放开权限，返回路径。
+     *
+     * ## 为什么必须由服务端建
+     *
+     * `/data/local/tmp` 属于 shell，App 进程**建不了目录**（ENOENT）。
+     * 所以顺序是：服务端 mkdir + 定长 + chmod 0666 → 把路径给 App →
+     * App 打开同一个文件映射 → 建屏时 native 再 mmap。
+     */
+    String prepareFrameRing(int width, int height) = 25;
 
     void destroy() = 16777114;
 }

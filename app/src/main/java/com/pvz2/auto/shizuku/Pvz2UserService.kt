@@ -534,14 +534,31 @@ class Pvz2UserService : IPvz2Service.Stub() {
         // 这是"重建整条链路"，所以屏和采集端都要先清干净。
         releaseVirtualDisplay()
 
-        val surface = NativeCapture.setup(width, height)
+        // ★ 共享区必须**先建好**再让 native 映射。
+        //   App 侧负责建文件（它是客户），这里只把 fd 交给 native。
+        //   真正的共享区文件由 App 在 VirtualDisplaySession 里创建并传路径进来，
+        //   所以这里用 pendingFramePath 里那个路径打开。
+        val path = pendingFramePath
+        if (path.isNullOrBlank()) {
+            Log.e(TAG, "createDisplayWithCapture: 没有指定共享区路径")
+            return -1
+        }
+        val raf = runCatching { java.io.RandomAccessFile(java.io.File(path), "rw") }.getOrNull()
+        if (raf == null) {
+            Log.e(TAG, "createDisplayWithCapture: 打不开共享区 $path")
+            return -1
+        }
+
+        // native 会自己 dup 一份 fd，所以这里关掉 raf 不影响它。
+        val surface = NativeCapture.setup(width, height, raf.fd)
+        runCatching { raf.close() }
         if (surface == null) {
             Log.e(TAG, "native 采集端创建失败")
             return -1
         }
-        // 记下尺寸：取帧时按它分配缓冲，不再反查 native（反查会吃掉一帧）。
         captureWidth = width
         captureHeight = height
+        Log.i(TAG, "事件驱动采集已就绪：${width}x$height，共享区 $path")
         return doCreate(name, width, height, dpi, surface, flags, pendingRefreshRate)
     }
 
@@ -549,82 +566,50 @@ class Pvz2UserService : IPvz2Service.Stub() {
     @Volatile
     private var pendingRefreshRate = 0f
 
+    /** 下一次建屏要用的共享区文件路径（App 侧已建好并放开权限）。 */
+    @Volatile
+    private var pendingFramePath: String? = null
+
+    override fun setPendingFramePath(path: String?) {
+        pendingFramePath = path
+        Log.i(TAG, "下次建屏使用共享帧环：$path")
+    }
+
+    /**
+     * 建共享帧环文件并放开权限。**必须由特权侧做。**
+     *
+     * `/data/local/tmp` 属于 shell，App 进程建不了目录 —— 真机上直接报
+     * `ENOENT`。所以顺序必须是：服务端 mkdir + 定长 + chmod → 把路径给 App →
+     * App 打开同一个文件做映射 → 建屏时 native 再 mmap 一次。
+     *
+     * 长度：头 48 字节 + 3 块 × w × h × 4。与 capture.cpp / FrameRing 一致。
+     */
+    override fun prepareFrameRing(width: Int, height: Int): String? {
+        if (width <= 0 || height <= 0) return null
+        return runCatching {
+            val dir = java.io.File(FRAME_DIR)
+            dir.mkdirs()
+            dir.setReadable(true, false)
+            dir.setExecutable(true, false)
+            dir.setWritable(true, false)
+
+            val file = java.io.File(dir, "frame.ring")
+            val need = 48L + 3L * width * height * 4
+            java.io.RandomAccessFile(file, "rw").use { raf ->
+                if (raf.length() != need) raf.setLength(need)
+            }
+            file.setReadable(true, false)
+            file.setWritable(true, false)
+            Log.i(TAG, "共享帧环文件就绪：${file.absolutePath}（$need 字节）")
+            file.absolutePath
+        }.onFailure { Log.e(TAG, "prepareFrameRing 失败", it) }.getOrNull()
+    }
+
     override fun setPendingRefreshRate(refreshRate: Float) {
         pendingRefreshRate = refreshRate
         Log.i(TAG, "下次建屏刷新率设为 ${if (refreshRate <= 0f) "系统默认" else "${refreshRate}Hz"}")
     }
 
-    /**
-     * 把最新一帧写进一个文件，返回只读 fd。
-     *
-     * ## 为什么不用 SharedMemory
-     *
-     * 它的 `fileDescriptor` 在编译 SDK 上不可见（@hide），反射拿又要重来一遍
-     * 版本兼容。而这本来就是"读一次就丢"的临时数据，落文件更直白：
-     * 本进程写、App 读，各自管理自己的 fd，没有生命周期纠缠。
-     *
-     * 代价是每帧一次 write+read（720p 约 3.7 MB）。先保证功能跑通，真嫌慢再换。
-     */
-    // ---------------------------------------------------------- 共享内存帧缓冲
-
-    /** App 交过来的内存映射。null = 还没附加。 */
-    private var sharedFrame: java.nio.ByteBuffer? = null
-    private var sharedFrameSize = 0
-
-    /** 序号，写帧时奇偶切换，供 App 侧检测撕裂。 */
-    private var sharedSeq = 0
-
-    /**
-     * 附加 App 提供的共享内存。
-     *
-     * 映射一次、长期使用 —— 每帧只做一次 memcpy，没有 fd 传递、没有磁盘 I/O。
-     * 尺寸必须与建屏尺寸一致，否则直接拒绝（错位写入会破坏内存）。
-     */
-    override fun attachFrameBuffer(path: String?, width: Int, height: Int) {
-        if (path.isNullOrBlank()) {
-            Log.e(TAG, "attachFrameBuffer: 路径为空")
-            return
-        }
-        val need = width * height * 4
-        if (need <= 0) {
-            Log.e(TAG, "attachFrameBuffer: 尺寸无效 ${width}x$height")
-            return
-        }
-        runCatching {
-            val total = need + FRAME_HEADER_BYTES
-            val mapped = mapFrameFile(path, total)
-            if (mapped == null) {
-                Log.e(TAG, "attachFrameBuffer: mmap 失败")
-                return
-            }
-            sharedFrame = mapped
-            sharedFrameSize = total
-            Log.i(TAG, "共享帧缓冲已附加：${width}x$height（${total} 字节）")
-        }.onFailure { Log.e(TAG, "attachFrameBuffer 异常", it) }
-    }
-
-    /**
-     * 把一个文件映射成可读写 ByteBuffer。
-     *
-     * 两端（shell 进程和 App 进程）映射**同一个文件**，得到的是同一份
-     * page cache —— 写进去对方立刻可见，不产生每帧 read/write 系统调用。
-     * 这就是要替换掉"每帧写 3.7MB 再读回来"的关键。
-     */
-    private fun mapFrameFile(path: String, total: Int): java.nio.ByteBuffer? {
-        val file = java.io.File(path)
-        file.parentFile?.let { ensureDirReadable(it) }
-        val raf = java.io.RandomAccessFile(file, "rw")
-        if (raf.length() < total) raf.setLength(total.toLong())
-        // ★ 必须放开到 0666：App 是另一个 uid，默认 0600 打不开。
-        //   打不开就退回文件搬运，帧率立刻掉到 20fps，而且只有在
-        //   日志里"共享帧缓冲建立失败"那一行能看出来。
-        runCatching {
-            file.setReadable(true, false)
-            file.setWritable(true, false)
-        }.onFailure { Log.w(TAG, "设置帧缓冲文件权限失败", it) }
-        Log.i(TAG, "映射帧缓冲 $path（$total 字节）")
-        return raf.channel.map(java.nio.channels.FileChannel.MapMode.READ_WRITE, 0, total.toLong())
-    }
 
     /**
      * 取一帧写进共享缓冲。
@@ -632,97 +617,6 @@ class Pvz2UserService : IPvz2Service.Stub() {
      * 用 seqlock：写前把序号改成奇数，写完改回偶数。App 读到奇数说明正在写，
      * 丢掉这一帧等下一次 —— 比加锁便宜得多，而且不会让写端等读端。
      */
-    override fun grabFrame(): Boolean {
-        val out = sharedFrame ?: return false
-        val need = captureWidth * captureHeight * 4
-        if (need <= 0 || sharedFrameSize < need + FRAME_HEADER_BYTES) return false
-
-        val buffer = ensureFrameBuffer(need) ?: return false
-        buffer.clear()
-        if (!NativeCapture.acquireFrame(buffer, IntArray(2))) return false
-        buffer.position(0)
-
-        sharedSeq++
-        out.putInt(0, sharedSeq)          // 奇数 = 正在写
-        out.position(FRAME_HEADER_BYTES)
-        out.put(buffer)                   // 一次 memcpy
-        sharedSeq++
-        out.putInt(0, sharedSeq)          // 偶数 = 写完
-        return true
-    }
-
-    override fun acquireFrameFd(): ParcelFileDescriptor? {
-        // ★ 用**建屏时已知的尺寸**分配缓冲，不要先调 frameSize()。
-        //
-        //   之前的写法是先 `NativeCapture.frameSize()` —— 那个函数内部会
-        //   `AImageReader_acquireLatestImage` 拿走一帧再 delete 掉，只为读宽高；
-        //   紧接着 `acquireFrame` 又取一次。等于**每帧白扔一帧**，
-        //   而且如果队列里只有一帧，第二取就什么都拿不到 —— 表现为"一直 0 帧"。
-        //
-        //   尺寸在 createDisplayWithCapture 时就知道，直接存下来用。
-        val size = captureWidth * captureHeight * 4
-        if (size <= 0) return null
-
-        return runCatching {
-            val dir = File(FRAME_DIR).apply { mkdirs() }
-            // ★ 目录权限只在第一次设一次，之后不再动。
-            //   目录 0777 是为了让 App 进程（不同 uid）能进来读。
-            ensureDirReadable(dir)
-
-            // ★ 缓冲复用，不要每帧 allocateDirect。
-            //
-            //   `allocateDirect(3.7MB)` 每帧一次，60fps 就是 **221 MB/s**
-            //   的堆外分配。DirectByteBuffer 只由 Cleaner 回收，ART 还得为
-            //   每次分配调 trackExternalAllocation —— 后果是 shell 进程持续
-            //   触发 GC、帧时间抖动，严重时 OOM: Direct buffer memory。
-            //
-            //   这块缓冲在会话期内复用，只在尺寸变化时重建，
-            //   由 releaseVirtualDisplay 负责释放。
-            val buffer = ensureFrameBuffer(size) ?: return@runCatching null
-            buffer.clear()
-            if (!NativeCapture.acquireFrame(buffer, IntArray(2))) {
-                return@runCatching null
-            }
-            buffer.position(0)
-
-            // ★ 先写临时文件，再原子 rename。
-            //
-            //   之前直接写 `frame.rgba` 然后立刻 open 它 —— 写端和读端之间
-            //   没有任何同步，App 可能在写到一半时打开文件，读到**半截帧**
-            //   （下半部分是上一次的旧数据，或者全是 0）。这种帧拿去识别会
-            //   得到莫名其妙的结果，而且偶发、极难复现。
-            //
-            //   rename 在同一文件系统上是原子的：读端要么看到旧的完整文件，
-            //   要么看到新的完整文件，不存在中间态。
-            val tmp = File(dir, "frame.tmp")
-            FileOutputStream(tmp).use { out ->
-                val chunk = writeChunk
-                while (buffer.hasRemaining()) {
-                    val n = minOf(chunk.size, buffer.remaining())
-                    buffer.get(chunk, 0, n)
-                    out.write(chunk, 0, n)
-                }
-            }
-            // 用 Java API 设权限，**不要 fork 一个 chmod 进程**。
-            // 之前每帧都 `Runtime.exec("chmod")` —— 每秒十几次 fork，
-            // 开销比拷贝 3.7MB 还大，而且 chmod 本身也可能失败。
-            tmp.setReadable(true, false)
-
-            val file = File(dir, "frame.rgba")
-            if (!tmp.renameTo(file)) {
-                // rename 失败（极少数情况：目标被占用）。退回直接覆盖写。
-                Log.w(TAG, "rename 失败，退回直接写入")
-                tmp.copyTo(file, overwrite = true)
-                tmp.delete()
-                file.setReadable(true, false)
-            }
-
-            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-        }.onFailure { Log.e(TAG, "取帧失败", it) }
-            .getOrNull()
-    }
-
-    /** 帧目录只需设一次权限，之后复用。 */
     @Volatile
     private var frameDirReady = false
 
