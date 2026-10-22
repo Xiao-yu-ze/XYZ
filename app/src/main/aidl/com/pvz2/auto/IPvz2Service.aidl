@@ -240,5 +240,28 @@ interface IPvz2Service {
      */
     String prepareFrameRing(int width, int height) = 25;
 
+    /**
+     * 流式手势：按下。
+     *
+     * ## 为什么要拆成三个方法
+     *
+     * `tapOnDisplay` / `swipeOnDisplay` 是**一次性**的：手势形状必须事先知道，
+     * 所以一次拖动只能在抬手那一刻才注入 —— 用户看到的就是"手不动、
+     * 松手后画面才滑一下"，完全不像真实触摸。
+     *
+     * 拆成 down/move/up 之后，App 那边按下就发 DOWN、手指每动一次发 MOVE、
+     * 抬手发 UP。游戏收到的是连续事件流，画面跟着手指实时动。
+     *
+     * @return false 表示这次 down 没被接受，后续 move/up 应该跳过
+     */
+    boolean gestureDown(int displayId, float x, float y) = 26;
+
+    void gestureMove(float x, float y) = 27;
+
+    void gestureUp(float x, float y) = 28;
+
+    /** 取消当前手势（手指划出画面时用），发 ACTION_CANCEL。 */
+    void gestureCancel() = 29;
+
     void destroy() = 16777114;
 }

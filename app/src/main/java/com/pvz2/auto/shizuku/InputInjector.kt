@@ -73,7 +73,7 @@ internal object InputInjector {
      *   反射 `InputManager.getInstance()` 在 Android 12+ 上拿到的实例
      *   调用 `injectInputEvent` 恒返回 false —— 这正是之前"连主屏都注入不了"的原因。
      */
-    private fun inputManager(): Any? {
+    internal fun inputManager(): Any? {
         manager?.let { return it }
         return synchronized(this) {
             manager ?: runCatching {
@@ -106,7 +106,7 @@ internal object InputInjector {
      * 6 参数版本 + 事后 `event.source = ...` 不够：内部 pointer 数据
      * 不会跟着重建。
      */
-    private fun buildEvent(
+    internal fun buildEvent(
         downTime: Long,
         eventTime: Long,
         action: Int,
@@ -134,7 +134,7 @@ internal object InputInjector {
     }
 
     /** `InputEvent.setDisplayId(int)`。scrcpy 在 `InputEvent.class` 上取。 */
-    private fun setDisplayId(event: InputEvent, displayId: Int): Boolean = runCatching {
+    internal fun setDisplayId(event: InputEvent, displayId: Int): Boolean = runCatching {
         val method = setDisplayIdMethod
             ?: InputEvent::class.java
                 .getMethod("setDisplayId", Int::class.javaPrimitiveType)
@@ -252,5 +252,82 @@ internal object InputInjector {
         return allOk
     }
 
+    /** 开始一次由手指驱动的手势。 */
+    fun beginGesture(displayId: Int, x: Float, y: Float): Gesture = Gesture(displayId, x, y)
+
+    // ------------------------------------------------------------ 流式手势
+
+    /**
+     * 一次进行中的手势。**由用户的真实手指驱动**，不是预录的轨迹。
+     *
+     * ## 为什么需要它
+     *
+     * 之前只有 tap 和 swipe 两个一次性原语：手势的形状（起终点、步数）
+     * 必须事先知道，于是一次完整的拖动只能在**抬手那一刻**才注入 ——
+     * 用户看到的就是"手不动，松手后画面才滑一下"。
+     *
+     * 现在改成按下就注入 DOWN、手指每移动一次注入一个 MOVE、抬手注入 UP。
+     * 游戏收到的是连续事件流，画面跟着手指实时动。
+     *
+     * ## 事件时间必须递增
+     *
+     * `eventTime` 用真实时刻。如果所有事件共用同一个时间戳，输入系统会认为
+     * 它们同时发生 —— 滑动距离算出来是 0，或者速度无穷大导致惯性飞出去。
+     */
+    class Gesture(private val displayId: Int, x: Float, y: Float) {
+
+        private val downTime = SystemClock.uptimeMillis()
+        private val pointerProps = pointerProperties
+        private val coords = pointerCoords
+
+        /** 上一个已注入的坐标，用来跳过原地不动的 MOVE（省事件、也少一次 Binder）。 */
+        private var lastX = x
+        private var lastY = y
+
+        private var finished = false
+
+        init {
+            inject(buildEvent(downTime, downTime, MotionEvent.ACTION_DOWN, x, y))
+        }
+
+        /** 手指移动到 (x, y)。同一位置重复调用会被忽略。 */
+        fun moveTo(x: Float, y: Float) {
+            if (finished) return
+            // 亚像素抖动也跳过：手指在屏幕上"按住"时总会抖 0.5px，
+            // 每次都发一个 MOVE 会把 Binder 和输入队列占满。
+            if (kotlin.math.abs(x - lastX) < MOVE_EPSILON && kotlin.math.abs(y - lastY) < MOVE_EPSILON) return
+            lastX = x
+            lastY = y
+            inject(buildEvent(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, x, y))
+        }
+
+        /** 抬手。必须调用，否则游戏里那个"按下"永远不释放。 */
+        fun finish(x: Float, y: Float) {
+            if (finished) return
+            finished = true
+            inject(buildEvent(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y))
+        }
+
+        /** 取消（例如手指划出画面）。用 ACTION_CANCEL 让游戏知道这不是一次正常点击。 */
+        fun cancel() {
+            if (finished) return
+            finished = true
+            inject(buildEvent(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_CANCEL, lastX, lastY))
+        }
+
+        private fun inject(event: MotionEvent) {
+            try {
+                injectEvent(event, displayId, MODE_ASYNC)
+            } catch (t: Throwable) {
+                Log.e(TAG, "手势事件注入失败 display=$displayId", t)
+            } finally {
+                event.recycle()
+            }
+        }
+    }
+
     private const val MOVE_STEPS = 8
+
+    /** 小于这个位移（虚拟屏像素）的 MOVE 不发。 */
+    private const val MOVE_EPSILON = 0.8f
 }

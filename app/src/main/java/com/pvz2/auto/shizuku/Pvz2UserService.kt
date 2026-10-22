@@ -610,6 +610,63 @@ class Pvz2UserService : IPvz2Service.Stub() {
         Log.i(TAG, "下次建屏刷新率设为 ${if (refreshRate <= 0f) "系统默认" else "${refreshRate}Hz"}")
     }
 
+    // ---------------------------------------------------------- 流式手势
+
+    /**
+     * 手势状态机。
+     *
+     * 一次拖动会产生几十个 MOVE。如果 App 每个 MOVE 都传完整状态（downTime、
+     * 上一个坐标）过来，光是序列化就够把手指动作拖成阶梯。所以状态留在这边，
+     * App 只传坐标。
+     */
+    private val gesture = GestureInjector()
+
+    override fun gestureDown(displayId: Int, x: Float, y: Float): Boolean =
+        gesture.start(displayId, x, y)
+
+    override fun gestureMove(x: Float, y: Float) = gesture.moveTo(x, y)
+
+    override fun gestureUp(x: Float, y: Float) = gesture.finish(x, y)
+
+    override fun gestureCancel() = gesture.cancel()
+
+    private class GestureInjector {
+
+        private var active: InputInjector.Gesture? = null
+        private var lastX = 0f
+        private var lastY = 0f
+
+        fun start(displayId: Int, x: Float, y: Float): Boolean {
+            lastX = x
+            lastY = y
+            active = runCatching { InputInjector.beginGesture(displayId, x, y) }
+                .onFailure { Log.e(TAG, "手势开始失败", it) }
+                .getOrNull()
+            return active != null
+        }
+
+        fun moveTo(x: Float, y: Float) {
+            val g = active ?: return
+            // 亚像素抖动过滤：手指"按住"时总在抖，每次都发会塞满输入队列。
+            if (kotlin.math.abs(x - lastX) < 0.8f && kotlin.math.abs(y - lastY) < 0.8f) return
+            lastX = x
+            lastY = y
+            g.moveTo(x, y)
+        }
+
+        fun finish(x: Float, y: Float) {
+            val g = active ?: return
+            active = null
+            g.finish(x, y)
+        }
+
+        fun cancel() {
+            val g = active ?: return
+            active = null
+            g.cancel()
+        }
+    }
+
 
     /**
      * 取一帧写进共享缓冲。

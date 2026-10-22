@@ -83,6 +83,12 @@ class AutomationService : Service() {
 
     private var capturer: ScreenCapturer? = null
     private var injector: TouchInjector? = null
+
+    /** 注入器就绪/销毁时同步到静态引用，供预览手势使用。 */
+    private fun publishInjector(v: TouchInjector?) {
+        injector = v
+        sharedInjector = v
+    }
     private var matcher: TemplateMatcher? = null
 
     /** 当前脚本任务。停止时 cancel 它。 */
@@ -141,7 +147,21 @@ class AutomationService : Service() {
                 if (pkg.isNullOrBlank()) {
                     BotState.setStatus("没有指定游戏包名")
                 } else {
-                    scope.launch { vdSession.start(pkg) }
+                    scope.launch {
+                        // ★ 先把注入器建起来。
+                        //
+                        //   预览上的触摸（点击/拖动）走 beginManualGesture，
+                        //   它读 sharedInjector；而注入器只在 ensureInjector()
+                        //   里创建。加了手势之后触摸不再经过 ACTION_MANUAL_TAP，
+                        //   于是没人调 ensureInjector —— sharedInjector 一直是
+                        //   null，按下永远返回 null，表现成"点也没反应、拖也没反应"。
+                        //
+                        //   在这里建：建屏和建注入器本来就该一起完成，
+                        //   用户看见画面时，注入器必然已经就绪。
+                        runCatching { ensureInjector() }
+                            .onFailure { Log.e(TAG, "建屏后创建注入器失败", it) }
+                        vdSession.start(pkg)
+                    }
                 }
             }
 
@@ -292,7 +312,7 @@ class AutomationService : Service() {
         // 第一次真机日志里 `虚拟屏已释放 displayId=44` 就是这个误伤。
         capturer = null
         injector?.release()
-        injector = null
+        publishInjector(null)
         matcher?.release()
         matcher = null
 
@@ -422,6 +442,8 @@ class AutomationService : Service() {
             vdSession.state.value.displayId.takeIf { it > 0 } ?: 0
         }
         injector = created
+        // 同步给预览手势用的静态引用。漏了这一步，预览里按下不会有任何反应。
+        sharedInjector = created
         Log.i(TAG, "ensureInjector: 注入器已就绪")
         return created
     }
@@ -746,6 +768,51 @@ class AutomationService : Service() {
             i.putExtra(EXTRA_SWIPE_MS, durationMs)
             context.startService(i)
         }
+
+        /**
+         * 开始一次跟随手指的手势。
+         *
+         * ## 为什么不走 Intent
+         *
+         * 每次 MOVE 都发一个 Intent 会走一遍 startService、序列化、进程调度 ——
+         * 手指移动一秒几十次，这条路上每一跳都是延迟。而且事件顺序无法保证，
+         * 可能出现 MOVE 比 DOWN 先到，游戏收到的是无头事件。
+         *
+         * 预览和注入器在同一个进程（都在 App 里），所以直接拿实例调用即可。
+         *
+         * @return null 表示注入器还没就绪（虚拟屏没启动）
+         */
+        fun beginManualGesture(
+            context: Context,
+            x: Int,
+            y: Int
+        ): com.pvz2.auto.core.StreamingGesture? {
+            val injector = sharedInjector
+            if (injector == null) {
+                // 注入器在建屏成功后由会话创建（见 ACTION_VD_START）。
+                // 走到这里说明还没建好 —— 报出来，别静默失败。
+                Log.w(TAG, "手势未开始：注入器还没就绪")
+                return null
+            }
+            val displayId = VirtualDisplaySession.sharedState.value.displayId
+            if (displayId <= 0) {
+                Log.w(TAG, "手势未开始：虚拟屏 displayId=$displayId")
+                return null
+            }
+            // 坐标已经是虚拟屏坐标系（PreviewTouchMapper 换算过），直接转 Float。
+            return runCatching {
+                injector.beginGesture(x.toFloat(), y.toFloat())
+            }.onFailure { Log.e(TAG, "开始手势失败", it) }.getOrNull()
+        }
+        /**
+         * 当前注入器的静态引用。
+         *
+         * companion object 拿不到服务实例的字段，而预览的手势要从 Activity
+         * 调到同一个注入器 —— 用一个 @Volatile 静态引用桥接。
+         * 服务销毁时清空（见 publishInjector(null)），避免握着已释放的后端。
+         */
+        @Volatile
+        var sharedInjector: TouchInjector? = null
 
         /** `stopService` is always permitted, unlike starting a service from the background. */
         /**

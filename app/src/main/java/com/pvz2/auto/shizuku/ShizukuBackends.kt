@@ -98,6 +98,38 @@ class ShizukuTouchInjector(
         }
     }
 
+    /**
+     * 开始一次跟随手指的手势。
+     *
+     * ## 为什么在本进程注入，不走 AIDL
+     *
+     * 之前写成转发到 shell 进程、那边再用 `InputInjector` 注入 —— 但
+     * `InputInjector` 靠 `FakeContext` 取 `InputManager`，而 FakeContext
+     * 只在 App 进程里构造得出来。放到 shell 进程里必然失败，
+     * `gestureDown` 恒返回 false，界面表现成"点了没反应"。
+     *
+     * 直接在本进程调 `InputInjector`：既能用，每个 MOVE 还省一次 AIDL 往返。
+     */
+    override fun beginGesture(x: Float, y: Float): com.pvz2.auto.core.StreamingGesture? {
+        val target = displayIdProvider()
+        if (target <= 0) {
+            Log.w(TAG, "手势未开始：displayId=$target 无效")
+            return null
+        }
+        val inner = runCatching { InputInjector.beginGesture(target, x, y) }
+            .onFailure { Log.e(TAG, "手势开始失败 display=$target", it) }
+            .getOrNull()
+        if (inner == null) {
+            Log.w(TAG, "手势开始返回 null display=$target")
+            return null
+        }
+        return object : com.pvz2.auto.core.StreamingGesture {
+            override fun moveTo(x: Float, y: Float) = inner.moveTo(x, y)
+            override fun finish(x: Float, y: Float) = inner.finish(x, y)
+            override fun cancel() = inner.cancel()
+        }
+    }
+
     override fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long) {
         val service = client.peek()
         val target = displayIdProvider()

@@ -475,6 +475,12 @@ class MainActivity : AppCompatActivity() {
      * 把帧送到界面** —— `ivVdPreview` 从布局定义至今一次都没被赋过值。
      * 采集到的像素全留在内存里烂掉，用户看到的就是一块永远空白的区域。
      */
+    /** 正在跟随手指的手势。null = 当前没有按住。 */
+    private var activeGesture: com.pvz2.auto.core.StreamingGesture? = null
+
+    /** 这次手势里手指是否真的移动过（用来区分点击和拖动）。 */
+    private var gestureMoved = false
+
     /**
      * 让预览画面可以点 —— 点哪就往虚拟屏的哪注入一次点击。
      *
@@ -519,9 +525,49 @@ class MainActivity : AppCompatActivity() {
                     downX = event.x
                     downY = event.y
                     downAt = SystemClock.uptimeMillis()
+                    activeGesture = null
+                    gestureMoved = false
+
+                    // ★ 按下就立刻注入 DOWN，不等抬手。
+                    //
+                    //   之前的模型是"按 A、抬手在 B → 事后补一个 A→B 的 swipe"，
+                    //   于是拖动要等手指松开才发生。用户看到的就是
+                    //   "手不动，松手后画面才滑一下"，完全不像真实触摸。
+                    //
+                    //   现在改成跟随手指：DOWN 立刻发，每个 MOVE 立刻发，
+                    //   UP 在抬手时发。游戏收到的是连续事件流。
+                    //
+                    //   取点模式例外 —— 那时触摸属于"选位置"，不该操作游戏。
+                    if (PreviewPicker.mode.value == null) {
+                        val st = VirtualDisplaySession.sharedState.value
+                        val iw = st.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
+                        val ih = st.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+                        val mapped = PreviewTouchMapper.map(event.x, event.y, view.width, view.height, iw, ih)
+                        if (mapped == null) {
+                        } else {
+                            activeGesture = AutomationService.beginManualGesture(this, mapped.x, mapped.y)
+                        }
+                    }
                     true
                 }
-
+                MotionEvent.ACTION_MOVE -> {
+                    // 跟随手指：每移动一次就注入一个 MOVE。
+                    //
+                    //   只发坐标变化超过阈值的（注入端会过滤亚像素抖动），
+                    //   既能让画面实时跟手，又不会用一堆原地 MOVE 把输入队列塞满。
+                    val g = activeGesture
+                    if (g != null) {
+                        val st = VirtualDisplaySession.sharedState.value
+                        val iw = st.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
+                        val ih = st.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+                        PreviewTouchMapper.map(event.x, event.y, view.width, view.height, iw, ih)
+                            ?.let {
+                                g.moveTo(it.x.toFloat(), it.y.toFloat())
+                                gestureMoved = true
+                            }
+                    }
+                    true
+                }
                 MotionEvent.ACTION_UP -> {
                     val elapsed = (SystemClock.uptimeMillis() - downAt).toInt()
 
@@ -563,42 +609,28 @@ class MainActivity : AppCompatActivity() {
                         return@setOnTouchListener true
                     }
 
-                    val state = VirtualDisplaySession.sharedState.value
-                    val imageWidth = state.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
-                    val imageHeight = state.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
-
-                    fun mapPoint(vx: Float, vy: Float) = PreviewTouchMapper.map(
-                        viewX = vx, viewY = vy,
-                        viewWidth = view.width, viewHeight = view.height,
-                        imageWidth = imageWidth, imageHeight = imageHeight
-                    )
-
-                    val start = mapPoint(downX, downY)
-                    val end = mapPoint(event.x, event.y)
-                    // 起点或终点落在留边上：那里没有画面，什么都不做 ——
-                    // 否则会误触屏幕边缘的按钮。
-                    if (start == null || end == null) return@setOnTouchListener true
-
-                    val dx = (end.x - start.x).toDouble()
-                    val dy = (end.y - start.y).toDouble()
-                    val distance = kotlin.math.hypot(dx, dy)
-
-                    if (distance < swipeThresholdPx()) {
-                        AutomationService.manualTap(this, end.x, end.y)
-                    } else {
-                        // 时长下限保护：太快的手势在低帧率下会被识别成"瞬移"，
-                        // 游戏里的列表不会跟着滚。
-                        AutomationService.manualSwipe(
-                            this,
-                            start.x, start.y, end.x, end.y,
-                            elapsed.coerceIn(MIN_SWIPE_MS, MAX_SWIPE_MS)
-                        )
+                    // 抬手：结束手势。
+                    //
+                    //   DOWN 和 MOVE 已经在前面实时发过了，这里只补一个 UP。
+                    //   没有 activeGesture 说明刚才处于取点模式、或按下时落在留边上 ——
+                    //   那就什么都不发，避免在屏幕上莫名戳一下。
+                    val g = activeGesture
+                    activeGesture = null
+                    if (g != null) {
+                        val st = VirtualDisplaySession.sharedState.value
+                        val iw = st.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
+                        val ih = st.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+                        val end = PreviewTouchMapper.map(event.x, event.y, view.width, view.height, iw, ih)
+                        if (end != null) {
+                            g.finish(end.x.toFloat(), end.y.toFloat())
+                        } else {
+                            // 手指抬在留边上：用 CANCEL 收尾，让游戏知道这不是一次点击。
+                            g.cancel()
+                        }
                     }
                     true
                 }
 
-                // MOVE 必须消费掉，否则系统不会继续给我们后续事件。
-                MotionEvent.ACTION_MOVE -> true
 
                 else -> false
             }
