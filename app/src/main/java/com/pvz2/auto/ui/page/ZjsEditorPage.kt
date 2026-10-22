@@ -280,6 +280,32 @@ class ZjsEditorPage(
                 }
             }
 
+            // ---- 多指滑动的手指
+            //
+            // 手指多了以后要能逐根改起终点，所以列一个表：
+            // 第一项是添加，中间每根手指一项，最后是删除。
+            row.field == "fingers" -> {
+                val n = action.fingers.size
+                val items = ArrayList<String>()
+                items.add("＋ 添加一根手指")
+                for (i in 0 until n) items.add("手指${i + 1}  改起终点")
+                if (n > 0) items.add("删除最后一根")
+
+                androidx.appcompat.app.AlertDialog.Builder(host)
+                    .setTitle("手指（$n 根）")
+                    .setItems(items.toTypedArray()) { dlg, which ->
+                        dlg.dismiss()
+                        when {
+                            which == 0 -> addFinger(action, actionIndex)
+                            which == items.size - 1 && n > 0 ->
+                                removeFinger(action, actionIndex)
+                            else -> showFingerEditor(action, actionIndex, which - 1)
+                        }
+                    }
+                    .setNegativeButton("关闭", null)
+                    .show()
+            }
+
             // ---- 监听
             row.field == "callbacks" -> {
                 val slots = Z.CallbackSlot.entries
@@ -793,6 +819,191 @@ class ZjsEditorPage(
      *
      * 这和 自动精灵 一致 —— 它也是让用户在"脚本运行区域"上完成选择。
      */
+    // ------------------------------------------------------------ 多指滑动的手指
+
+    /**
+     * 给多指滑动加一根手指。
+     *
+     * 新手指横向错开（640、760、880…）—— 两根手指叠在同一个点上等于单指，
+     * 用户还得自己拖开。上下留出距离，加进来就是一条像样的"几指下滑"。
+     */
+    private fun addFinger(action: Z.Action, actionIndex: Int) {
+        val x = 640 + action.fingers.size * 120
+        val start = Z.PosData(
+            type = Z.PosType.LOCATION,
+            x = com.pvz2.auto.zjs.ZValue.parse("$x"),
+            y = com.pvz2.auto.zjs.ZValue.parse("460")
+        )
+        val end = Z.PosData(
+            type = Z.PosType.LOCATION,
+            x = com.pvz2.auto.zjs.ZValue.parse("$x"),
+            y = com.pvz2.auto.zjs.ZValue.parse("260")
+        )
+        applyFingers(action, actionIndex, action.fingers + Z.Action.Finger(start, end))
+    }
+
+    private fun removeFinger(action: Z.Action, actionIndex: Int) {
+        if (action.fingers.isEmpty()) return
+        applyFingers(action, actionIndex, action.fingers.dropLast(1))
+    }
+
+    private fun applyFingers(
+        action: Z.Action,
+        actionIndex: Int,
+        fingers: List<Z.Action.Finger>
+    ) {
+        val list = currentActions().toMutableList()
+        list[actionIndex] = action.copy(fingers = fingers)
+        commitActions(list)
+        adapter.submit(currentActions())
+        expandedIndex = actionIndex
+        adapter.notifyItemChanged(actionIndex)
+    }
+
+    /**
+     * 改某一根手指的起点和终点。
+     *
+     * 列一行一项，点哪项改哪项 —— 和动作字段同一套交互。
+     * 坐标既能手输（`50%` / `200dp` / `640`），也能走取点 ——
+     * 手输纯像素在游戏画面上几乎不可能对准。
+     */
+    private fun showFingerEditor(action: Z.Action, actionIndex: Int, fingerIndex: Int) {
+        val finger = action.fingers.getOrNull(fingerIndex) ?: return
+        val s = finger.startPos
+        val e = finger.endPos
+
+        val items = arrayOf(
+            "起点 X：${s?.x?.raw ?: "未设置"}",
+            "起点 Y：${s?.y?.raw ?: "未设置"}",
+            "终点 X：${e?.x?.raw ?: "未设置"}",
+            "终点 Y：${e?.y?.raw ?: "未设置"}",
+            "在画面上取起点",
+            "在画面上取终点"
+        )
+
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle("手指${fingerIndex + 1}")
+            .setItems(items) { dlg, which ->
+                dlg.dismiss()
+                when (which) {
+                    4 -> onPickFingerPoint(action, actionIndex, fingerIndex, isStart = true)
+                    5 -> onPickFingerPoint(action, actionIndex, fingerIndex, isStart = false)
+                    else -> {
+                        val cur = when (which) {
+                            0 -> s?.x?.raw.orEmpty()
+                            1 -> s?.y?.raw.orEmpty()
+                            2 -> e?.x?.raw.orEmpty()
+                            else -> e?.y?.raw.orEmpty()
+                        }
+                        promptFingerValue(action, actionIndex, fingerIndex, which, cur)
+                    }
+                }
+            }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+    /** 手输一个坐标分量。 */
+    private fun promptFingerValue(
+        action: Z.Action,
+        actionIndex: Int,
+        fingerIndex: Int,
+        which: Int,
+        current: String
+    ) {
+        val input = android.widget.EditText(host).apply {
+            setText(current)
+            setSingleLine(true)
+            setPadding(32, 24, 32, 24)
+        }
+        val label = arrayOf("起点 X", "起点 Y", "终点 X", "终点 Y")[which]
+
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle(label)
+            .setView(input)
+            .setPositiveButton("确定") { _, _ ->
+                setFingerComponent(
+                    action, actionIndex, fingerIndex, which,
+                    com.pvz2.auto.zjs.ZValue.parse(input.text?.toString())
+                )
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 把某个分量写进第 [fingerIndex] 根手指。 */
+    private fun setFingerComponent(
+        action: Z.Action,
+        actionIndex: Int,
+        fingerIndex: Int,
+        which: Int,
+        value: com.pvz2.auto.zjs.ZValue
+    ) {
+        val fingers = action.fingers.toMutableList()
+        val f = fingers.getOrNull(fingerIndex) ?: return
+        val s = f.startPos ?: Z.PosData(type = Z.PosType.LOCATION)
+        val e = f.endPos ?: Z.PosData(type = Z.PosType.LOCATION)
+
+        fingers[fingerIndex] = when (which) {
+            0 -> f.copy(startPos = s.copy(x = value))
+            1 -> f.copy(startPos = s.copy(y = value))
+            2 -> f.copy(endPos = e.copy(x = value))
+            else -> f.copy(endPos = e.copy(y = value))
+        }
+        applyFingers(action, actionIndex, fingers)
+    }
+
+    /**
+     * 在预览上给某根手指取点。
+     *
+     * 复用同一套准星，只是写回目标换成 fingers —— 用户不该因为改的是
+     * "第二根手指"就换一种操作方式。一次取点同时写 X 和 Y。
+     */
+    private fun onPickFingerPoint(
+        action: Z.Action,
+        actionIndex: Int,
+        fingerIndex: Int,
+        isStart: Boolean
+    ) {
+        val f = action.fingers.getOrNull(fingerIndex) ?: return
+        val pos = if (isStart) f.startPos else f.endPos
+        val initX = pos?.x?.raw?.toIntOrNull()
+        val initY = pos?.y?.raw?.toIntOrNull()
+        val initial = if (initX != null && initY != null) {
+            com.pvz2.auto.core.PreviewPicker.Point(initX, initY)
+        } else null
+
+        host.lifecycleScope.launch {
+            val deferred = host.lifecycleScope.async {
+                com.pvz2.auto.core.PreviewPicker.result.firstOrNull {
+                    it.mode == com.pvz2.auto.core.PreviewPicker.Mode.POINT
+                }
+            }
+            com.pvz2.auto.core.PreviewPicker.arm(
+                com.pvz2.auto.core.PreviewPicker.Mode.POINT,
+                initial = initial
+            )
+            android.widget.Toast.makeText(
+                host, "按住画面拖动准星，位置对了点确定", android.widget.Toast.LENGTH_SHORT
+            ).show()
+
+            val r = deferred.await() ?: return@launch
+            val px = "%.2f%%".format(100.0 * r.x / r.screenWidth)
+            val py = "%.2f%%".format(100.0 * r.y / r.screenHeight)
+
+            val fingers = action.fingers.toMutableList()
+            val cur = fingers.getOrNull(fingerIndex) ?: return@launch
+            val target = if (isStart) cur.startPos else cur.endPos
+            val newPos = (target ?: Z.PosData(type = Z.PosType.LOCATION)).copy(
+                x = com.pvz2.auto.zjs.ZValue.parse(px),
+                y = com.pvz2.auto.zjs.ZValue.parse(py)
+            )
+            fingers[fingerIndex] = if (isStart) cur.copy(startPos = newPos)
+            else cur.copy(endPos = newPos)
+            applyFingers(action, actionIndex, fingers)
+        }
+    }
+
     private fun onPickPoint(prefix: String, actionIndex: Int) {
         val cur = script ?: return
         val action = currentActions().getOrNull(actionIndex) ?: return
