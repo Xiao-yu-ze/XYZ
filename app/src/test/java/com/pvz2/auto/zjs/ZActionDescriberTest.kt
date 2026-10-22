@@ -21,13 +21,13 @@ class ZActionDescriberTest {
     fun `点击会列出类型和坐标`() {
         val r = rows("""{"type":"点击","delayUnit":1,"posData":{"type":"location","x":"386","y":"536"}}""")
         assertEquals("点击", r.first().value)
-        assertEquals("386", r.first { it.label == "位置 X" }.value)
-        assertEquals("536", r.first { it.label == "位置 Y" }.value)
+        assertEquals("386", r.first { it.label == "X" }.value)
+        assertEquals("536", r.first { it.label == "Y" }.value)
     }
 
     @Test
     fun `坐标字段挂的是取点类型，UI 才能放取点按钮`() {
-        val r = row("""{"type":"点击","delayUnit":1,"posData":{"type":"location","x":"1","y":"2"}}""", "位置 X")!!
+        val r = row("""{"type":"点击","delayUnit":1,"posData":{"type":"location","x":"1","y":"2"}}""", "X")!!
         assertEquals(ZActionDescriber.Kind.COORD, r.kind)
         assertEquals("位置.x", r.field)
     }
@@ -95,7 +95,7 @@ class ZActionDescriberTest {
             """{"type":"点击图片","delayUnit":1,
                "posData":{"type":"image","imageData":{"data":"AAAA","imageWidth":86,"imageHeight":32}}}"""
         )
-        val img = r.first { it.label == "位置 模板" }
+        val img = r.first { it.label == "模板" }
         assertTrue("应显示尺寸：${img.value}", img.value.contains("86×32"))
         assertTrue("不该糊出 base64：${img.value}", !img.value.contains("AAAA"))
     }
@@ -157,7 +157,7 @@ class ZActionDescriberTest {
         val labels = rows(
             """{"type":"点击文字","delayUnit":1,"posData":{"type":"text","text":"开始"}}"""
         ).map { it.label }
-        assertTrue("应提示文字类型：$labels", labels.contains("位置 类型"))
+        assertTrue("应提示文字类型：$labels", labels.contains("类型"))
     }
 
     @Test
@@ -180,7 +180,7 @@ class ZActionDescriberTest {
                "posData":{"type":"location","x":"1","y":"2",
                           "indexNum":"2","xOffset":"5","yOffset":"6"}}"""
         )
-        for (label in listOf("位置 选第几个", "位置 X偏移", "位置 Y偏移")) {
+        for (label in listOf("选第几个", "X偏移", "Y偏移")) {
             val r = rows.firstOrNull { it.label == label }
             assertTrue("缺 [$label]：${rows.map { it.label }}", r != null)
             assertTrue("[$label] 应该可编辑，实际 ${r!!.kind}", r.kind != ZActionDescriber.Kind.READONLY)

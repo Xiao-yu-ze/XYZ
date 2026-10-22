@@ -67,6 +67,14 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent" />
 
+            <!-- 框选层。拖四个角调整，不靠"一次拖准" —— 手一抖就差 20px，
+                 而模板差 20px 就匹配不上。 -->
+            <com.pvz2.auto.ui.RectPickerOverlay
+                android:id="@+id/ovRect"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+
             <!-- 预览查找结果的工具条：说明 + 取消。 -->
             <LinearLayout
                 android:id="@+id/llResultsBar"

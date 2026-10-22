@@ -250,7 +250,8 @@ class MainActivity : AppCompatActivity() {
                         } else {
                             banner.text = PreviewPicker.hintText(mode)
                             banner.visibility = View.VISIBLE
-                            if (mode == PreviewPicker.Mode.POINT) setupCrosshair()
+                            // POINT 用准星，其余（框范围/截模板）用可拖角的框
+                            if (mode == PreviewPicker.Mode.POINT) setupCrosshair() else setupRectPicker()
                         }
                     }
                 }
@@ -272,7 +273,13 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     com.pvz2.auto.core.PreviewResults.outcome.collect { o ->
                         val ov = findViewById<com.pvz2.auto.ui.ResultsOverlay>(R.id.ovResults)
-                        if (o == null) return@collect
+                        if (o == null) {
+                            // ★ 必须把已经画上去的框擦掉。
+                            //   原来这里直接 return，取消预览后框还留在画面上，
+                            //   于是「取消」看起来完全没反应。
+                            ov.clear()
+                            return@collect
+                        }
                         findViewById<TextView>(R.id.tvResultsMsg).text = o.message
 
                         // 每次重算画面上矩形 —— 转屏、分页切换都会让控件尺寸变，
@@ -699,13 +706,72 @@ class MainActivity : AppCompatActivity() {
             pos.text = "${vx.coerceIn(0, iw - 1)}, ${vy.coerceIn(0, ih - 1)}"
         }
 
+        setupPickerBar(iw, ih)
+    }
+
+    /**
+     * 框选 / 截模板时接管预览：显示冻结帧 + 一个可拖四角的框。
+     *
+     * 框实时写回 [PreviewPicker.setRect]，所以「确定」拿到的就是用户
+     * 最后看到的那个框，中间没有第二次换算。
+     */
+    /**
+     * 底部「取消 / 确定」条。准星和框选共用一套。
+     *
+     * ## 为什么必须抽出来
+     *
+     * 原来这两个监听只在 setupCrosshair() 里挂。框选走的是另一个函数，
+     * 于是框选时「确定」**根本没有监听** —— 点了没反应，
+     * 用户会以为框白拖了。
+     */
+    private fun setupPickerBar(iw: Int, ih: Int) {
         findViewById<com.google.android.material.button.MaterialButton>(R.id.btnCrosshairCancel)
             .setOnClickListener { PreviewPicker.cancel() }
 
         findViewById<com.google.android.material.button.MaterialButton>(R.id.btnCrosshairOk)
             .setOnClickListener {
-                PreviewPicker.confirmCrosshair(iw, ih)
+                // 框选模式必须走 confirmRect —— 准星那条路没有矩形，
+                // 调它永远返回 false。
+                val ok = if (PreviewPicker.mode.value == PreviewPicker.Mode.POINT) {
+                    PreviewPicker.confirmCrosshair(iw, ih)
+                } else {
+                    PreviewPicker.confirmRect(iw, ih)
+                }
+                if (!ok) {
+                    android.widget.Toast.makeText(
+                        this, "先在画面上拖出一个框", android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
             }
+    }
+    private fun setupRectPicker() {
+        val overlay = findViewById<com.pvz2.auto.ui.RectPickerOverlay>(R.id.ovRect)
+        val bar = findViewById<View>(R.id.llCrosshairBar)
+        val pos = findViewById<TextView>(R.id.tvCrosshairPos)
+
+        val st = VirtualDisplaySession.sharedState.value
+        val iw = st.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
+        val ih = st.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+
+        overlay.visibility = View.VISIBLE
+        bar.visibility = View.VISIBLE
+        pos.text = "拖四角调整"
+
+        overlay.post {
+            val r = PreviewTouchMapper.imageRect(overlay.width, overlay.height, iw, ih)
+            overlay.setFrame(r[0], r[1], r[2], r[3], iw, ih)
+            // 已有范围就带出来，用户是在原来基础上微调而不是重新框
+            val cur = PreviewPicker.rect.value
+            if (cur != null) overlay.setRect(cur)
+        }
+
+        setupPickerBar(iw, ih)
+
+        overlay.onRectChanged = { rect ->
+            PreviewPicker.setRect(rect)
+            // 实时显示尺寸，用户才知道自己框了多大
+            pos.text = "${rect[2] - rect[0]} × ${rect[3] - rect[1]}"
+        }
     }
 
     private fun teardownCrosshair() {
@@ -713,6 +779,12 @@ class MainActivity : AppCompatActivity() {
             it.hide()
             it.visibility = View.GONE
             it.onDrag = null
+        }
+        // 框选层也要收起来。只收准星的话，取点结束后框会留在画面上，
+        // 而且它可点，会把之后的点按操作全吃掉。
+        findViewById<com.pvz2.auto.ui.RectPickerOverlay>(R.id.ovRect)?.let {
+            it.visibility = View.GONE
+            it.onRectChanged = null
         }
         findViewById<View>(R.id.llCrosshairBar)?.visibility = View.GONE
     }
@@ -891,10 +963,18 @@ class MainActivity : AppCompatActivity() {
     private fun observePreview() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                VirtualDisplaySession.previewFlow.collect { bitmap ->
-                    findViewById<ImageView>(R.id.ivVdPreview).setImageBitmap(bitmap)
-                    updatePreviewEmptyState()
-                }
+                // 取点/框选/截模板时显示**冻结帧**。
+                //
+                // 定位置时游戏还在动，要瞄准的东西一直跑，四个角根本对不准。
+                // 冻结一帧再操作，位置才点得准；操作结束恢复实时画面。
+                kotlinx.coroutines.flow.combine(
+                    VirtualDisplaySession.previewFlow,
+                    com.pvz2.auto.core.PreviewPicker.frozen
+                ) { live, frozen -> frozen ?: live }
+                    .collect { bitmap ->
+                        findViewById<ImageView>(R.id.ivVdPreview).setImageBitmap(bitmap)
+                        updatePreviewEmptyState()
+                    }
             }
         }
     }

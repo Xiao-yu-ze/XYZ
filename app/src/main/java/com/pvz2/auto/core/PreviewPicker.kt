@@ -99,20 +99,52 @@ object PreviewPicker {
     val result: SharedFlow<Result> = _result.asSharedFlow()
 
     /**
+     * 冻结帧。非 null 时预览显示这张静图而不是实时画面。
+     *
+     * ## 为什么必须冻结
+     *
+     * 用户在画面上定位置时游戏还在跑。要瞄准的东西一直在动，四个角
+     * 根本对不准 —— 松手那一刻位置已经变了。冻结一帧，用户面对的
+     * 就是一张静止的图，框哪里就是哪里。
+     *
+     * 拿到的东西（模板像素、坐标）也应该来自这同一张图，
+     * 否则"看到的"和"存下来的"不是一回事。
+     */
+    private val _frozen = MutableStateFlow<Bitmap?>(null)
+    val frozen: StateFlow<Bitmap?> = _frozen.asStateFlow()
+
+    /** 框选模式下当前的矩形（虚拟屏坐标），null = 还没框。 */
+    private val _rect = MutableStateFlow<IntArray?>(null)
+    val rect: StateFlow<IntArray?> = _rect.asStateFlow()
+
+    /**
      * 开始取点。
      *
      * @param m 取什么
      * @param initial 准星初始位置。null = 屏幕正中
-     *        （自动精灵也是这个默认值，见 renderer-home-bundle 的 `e.x = "50%"`）
      * @param screenWidth / screenHeight 虚拟屏尺寸，用来算正中
+     * @param frozenFrame 当前帧的快照。取点/框选期间预览显示它。
      */
-    fun arm(m: Mode, initial: Point? = null, screenWidth: Int = 0, screenHeight: Int = 0) {
+    fun arm(
+        m: Mode,
+        initial: Point? = null,
+        screenWidth: Int = 0,
+        screenHeight: Int = 0,
+        frozenFrame: Bitmap? = null
+    ) {
         _mode.value = m
+        _rect.value = null
+        _frozen.value = frozenFrame
         _crosshair.value = initial ?: if (screenWidth > 0 && screenHeight > 0) {
             Point(screenWidth / 2, screenHeight / 2)
         } else {
             null
         }
+    }
+
+    /** 更新框选矩形（拖角时调用）。 */
+    fun setRect(r: IntArray?) {
+        _rect.value = r
     }
 
     /** 拖准星。坐标会被夹到屏幕范围内，出界的话写回脚本就是个坏值。 */
@@ -128,6 +160,10 @@ object PreviewPicker {
     fun cancel() {
         _mode.value = null
         _crosshair.value = null
+        _rect.value = null
+        // 关键：不清掉冻结帧的话，用户取消后画面会一直停在那一帧，
+        // 游戏看起来像卡死了。
+        _frozen.value = null
     }
 
     /**
@@ -141,10 +177,52 @@ object PreviewPicker {
         val p = _crosshair.value ?: return false
         _mode.value = null
         _crosshair.value = null
+        _rect.value = null
+        _frozen.value = null
         _result.tryEmit(
             Result(
                 mode = mode,
                 x = p.x, y = p.y, w = 0, h = 0,
+                screenWidth = screenWidth, screenHeight = screenHeight
+            )
+        )
+        return true
+    }
+
+    /**
+     * 用户确认了框选。
+     *
+     * 模板模式直接从**冻结帧**上裁图 —— 用户看到的就是那张静图，
+     * 从别处裁会和他眼睛看到的错位。
+     */
+    fun confirmRect(screenWidth: Int, screenHeight: Int): Boolean {
+        val mode = _mode.value ?: return false
+        val r = _rect.value ?: return false
+        val x = r[0].coerceIn(0, (screenWidth - 1).coerceAtLeast(0))
+        val y = r[1].coerceIn(0, (screenHeight - 1).coerceAtLeast(0))
+        val w = (r[2] - r[0]).coerceIn(0, screenWidth - x)
+        val h = (r[3] - r[1]).coerceIn(0, screenHeight - y)
+        if (w <= 0 || h <= 0) return false
+
+        val crop = if (mode == Mode.TEMPLATE) {
+            _frozen.value?.let { bmp ->
+                runCatching {
+                    val cw = w.coerceAtMost(bmp.width - x)
+                    val ch = h.coerceAtMost(bmp.height - y)
+                    if (cw > 0 && ch > 0) Bitmap.createBitmap(bmp, x, y, cw, ch) else null
+                }.getOrNull()
+            }
+        } else null
+
+        _mode.value = null
+        _crosshair.value = null
+        _rect.value = null
+        _frozen.value = null
+        _result.tryEmit(
+            Result(
+                mode = mode,
+                x = x, y = y, w = w, h = h,
+                crop = crop,
                 screenWidth = screenWidth, screenHeight = screenHeight
             )
         )
@@ -161,6 +239,8 @@ object PreviewPicker {
         if (_mode.value == null) return false
         _mode.value = null
         _crosshair.value = null
+        _rect.value = null
+        _frozen.value = null
         _result.tryEmit(result)
         return true
     }

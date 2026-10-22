@@ -20,18 +20,26 @@
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
+        <!-- Text.Section 自带 marginTop=24dp（它是给页面里的大标题用的），
+             放在这一行会把标题往下顶 24dp，和右边的「3 个」错成两行、
+             看起来像两个不相关的文字。这里必须归零。 -->
         <TextView
             style="@style/Text.Section"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginTop="0dp"
             android:layout_weight="1"
-            android:text="@string/library_title" />
+            android:text="@string/library_title"
+            android:textColor="@color/ink"
+            android:textSize="15sp" />
 
         <TextView
             android:id="@+id/tvLibraryCount"
             style="@style/Text.Hint"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content" />
+            android:layout_height="wrap_content"
+            android:layout_marginTop="0dp"
+            android:textColor="@color/ink_muted" />
     </LinearLayout>
 
     <!-- 导入 / 导出。

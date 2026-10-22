@@ -6,6 +6,9 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.drop
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -153,6 +156,38 @@ class ZjsEditorPage(
         commitField(cur, action, actionIndex, row, value)
     }
 
+    /** 模板缩略图缓存。base64 解码 + 缩放很贵，而列表每次绑定都要用。 */
+    private val thumbCache = object : android.util.LruCache<Int, android.graphics.Bitmap>(24) {}
+
+    /** 把模板 base64 解成小图。失败返回 null（界面上显示"未设置"而不是崩）。 */
+    private fun templateThumb(b64: String): android.graphics.Bitmap? {
+        val key = b64.hashCode()
+        thumbCache.get(key)?.let { return it }
+        val bmp = runCatching {
+            val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull() ?: return null
+        thumbCache.put(key, bmp)
+        return bmp
+    }
+
+    /**
+     * 从字段路径反查模板数据。
+     *
+     * 路径形如 `位置.image` / `起点.image`，前缀就是 posData 在动作里的位置。
+     */
+    private fun imageDataFor(field: String, actionIndex: Int): Z.ImageData? {
+        val action = currentActions().getOrNull(actionIndex) ?: return null
+        val prefix = field.substringBeforeLast('.')
+        val pos = when {
+            prefix == "位置" -> action.posData
+            prefix == "起点" -> action.startPos
+            prefix == "终点" -> action.endPos
+            // 手指N 起点/终点：手指行目前不显示缩略图，返回 null 即可
+            else -> null
+        }
+        return pos?.imageData
+    }
     private fun onEditRequested(row: ZActionDescriber.Row, actionIndex: Int) {
         val cur = script ?: return
         val action = currentActions().getOrNull(actionIndex) ?: return
@@ -473,6 +508,20 @@ class ZjsEditorPage(
             .setOnClickListener { promptSave() }
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsAddAction)
             .setOnClickListener { promptAddAction() }
+
+        // 从脚本库打开另一份时，这一页可能还活着（翻页不保证销毁）。
+        // 只靠 bind() 里那次 load() 不够 —— 它早就跑完了，界面还是旧脚本。
+        // 所以订阅代号变化，变了就整体重画。
+        host.lifecycleScope.launch {
+            host.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                ZjsEditState.generation.drop(1).collect {
+                    val s = ZjsEditState.script ?: return@collect
+                    navStack.clear()
+                    expandedIndex = -1
+                    showScript(ZjsEditState.fileName, s)
+                }
+            }
+        }
         load()
     }
 
@@ -855,6 +904,38 @@ class ZjsEditorPage(
                     return line
                 }
 
+                // ---- 模板：显示缩略图，不是「212×211，125352 字符」
+                //
+                // 那串字符数对用户没有任何意义 —— 他要知道的是"我截的是哪个图案"，
+                // 而这件事只能看图。
+                if (row.kind == ZActionDescriber.Kind.IMAGE) {
+                    val img = imageDataFor(row.field, actionIndex)
+                    if (img != null) {
+                        val thumb = android.widget.ImageView(ctx).apply {
+                            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                            setBackgroundColor(0x11000000)
+                            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+                        }
+                        templateThumb(img.data)?.let { thumb.setImageBitmap(it) }
+                        line.addView(thumb)
+                    }
+                    line.addView(TextView(ctx).apply {
+                        text = if (img != null) "${img.width ?: 0}×${img.height ?: 0}" else "未设置"
+                        textSize = 13f
+                        setTextColor(ctx.getColor(R.color.ink_muted))
+                        setPadding(dp(8), 0, 0, 0)
+                        layoutParams = LinearLayout.LayoutParams(
+                            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                        )
+                    })
+                    if (row.field.isNotEmpty()) {
+                        line.addView(glyphButton("✂", "在画面上截取模板") {
+                            onPickTemplate(row.field, actionIndex)
+                        })
+                    }
+                    return line
+                }
+
                 val value = TextView(ctx).apply {
                     text = row.value.ifEmpty { "—" }
                     textSize = 14f
@@ -871,7 +952,15 @@ class ZjsEditorPage(
 
                 // 可编辑字段点一下弹输入框。
                 // 只读字段不挂点击 —— 挂了会让人以为能改，点了没反应比不能点更糟。
-                if (row.kind != ZActionDescriber.Kind.READONLY && row.field.isNotEmpty()) {
+                // 坐标和模板**不给整行点击**：
+                //   坐标弹窗让用户手输像素，而他根本不知道那个按钮在第几像素 ——
+                //   必须用准星在画面上取。
+                //   模板弹窗只能改摘要字符串，里面的 base64 他改不了，纯耽误事。
+                val clickable = row.kind != ZActionDescriber.Kind.READONLY &&
+                    row.kind != ZActionDescriber.Kind.COORD &&
+                    row.kind != ZActionDescriber.Kind.IMAGE &&
+                    row.field.isNotEmpty()
+                if (clickable) {
                     line.setBackgroundResource(android.R.drawable.list_selector_background)
                     line.setOnClickListener {
                         // ENTER 是"点进去看另一层"，不是改标量 ——
@@ -1164,7 +1253,8 @@ class ZjsEditorPage(
             }
             com.pvz2.auto.core.PreviewPicker.arm(
                 com.pvz2.auto.core.PreviewPicker.Mode.POINT,
-                initial = initial
+                initial = initial,
+                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
             )
             android.widget.Toast.makeText(
                 host, "按住画面拖动准星，位置对了点确定", android.widget.Toast.LENGTH_SHORT
@@ -1223,7 +1313,9 @@ class ZjsEditorPage(
             }
             com.pvz2.auto.core.PreviewPicker.arm(
                 com.pvz2.auto.core.PreviewPicker.Mode.RECT,
-                screenWidth = iw, screenHeight = ih
+                screenWidth = iw, screenHeight = ih,
+                // 冻结当前帧：游戏在动，不冻结的话框永远对不准
+                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
             )
             android.widget.Toast.makeText(
                 host, "请在画面上拖出识别范围", android.widget.Toast.LENGTH_SHORT
@@ -1282,7 +1374,9 @@ class ZjsEditorPage(
             }
             com.pvz2.auto.core.PreviewPicker.arm(
                 com.pvz2.auto.core.PreviewPicker.Mode.TEMPLATE,
-                screenWidth = iw, screenHeight = ih
+                screenWidth = iw, screenHeight = ih,
+                // 冻结当前帧：游戏在动，不冻结的话框永远对不准
+                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
             )
             android.widget.Toast.makeText(
                 host, "请在画面上框住要识别的图案", android.widget.Toast.LENGTH_SHORT
@@ -1314,8 +1408,20 @@ class ZjsEditorPage(
                 screenHeight = r.screenHeight
             )
 
-            val updated = com.pvz2.auto.zjs.ZFieldEditor
+            // 模板和范围一起写。
+            //
+            // 用户框的这一块**就是他要在哪里找** —— 模板和搜索范围本来就是
+            // 同一个动作的两面。只写模板不写范围的话，运行时会在整屏上找，
+            // 同一个图案在别处也能命中，于是点错地方。
+            var updated = com.pvz2.auto.zjs.ZFieldEditor
                 .applyImage(action, field, img) ?: action
+
+            val pct = { v: Int, total: Int -> "%.2f%%".format(100.0 * v / total) }
+            val area = "${pct(r.x, r.screenWidth)} ${pct(r.y, r.screenHeight)} " +
+                "${pct(r.x + r.w, r.screenWidth)} ${pct(r.y + r.h, r.screenHeight)}"
+            updated = com.pvz2.auto.zjs.ZFieldEditor
+                .apply(updated, field.substringBeforeLast('.') + ".limitArea", area) ?: updated
+
             val list = currentActions().toMutableList()
             list[actionIndex] = updated
             commitActions(list)
@@ -1324,7 +1430,7 @@ class ZjsEditorPage(
             adapter.notifyItemChanged(actionIndex)
 
             android.widget.Toast.makeText(
-                host, "已截取 ${crop.width}×${crop.height} 的模板",
+                host, "已截取 ${crop.width}×${crop.height} 的模板，范围也一起设好了",
                 android.widget.Toast.LENGTH_SHORT
             ).show()
         }
@@ -1355,7 +1461,8 @@ class ZjsEditorPage(
             }
             com.pvz2.auto.core.PreviewPicker.arm(
                 com.pvz2.auto.core.PreviewPicker.Mode.POINT,
-                initial = initial
+                initial = initial,
+                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
             )
             android.widget.Toast.makeText(
                 host, "按住画面拖动准星，位置对了点确定", android.widget.Toast.LENGTH_SHORT

@@ -176,7 +176,9 @@ object ZActionDescriber {
 
         // ---- 位置
         rows += section("识别")
-        action.posData?.let { rows += posRows("位置", it) }
+        // 主位置不带「位置」前缀 —— 外面已经有「识别」小节，
+        // 每行再来一个「位置」只是重复两个字，还占掉标签宽度。
+        action.posData?.let { rows += posRows("位置", it, showPrefix = false) }
         action.startPos?.let { rows += posRows("起点", it) }
         action.endPos?.let { rows += posRows("终点", it) }
 
@@ -310,7 +312,9 @@ object ZActionDescriber {
      * `x`/`y` 用 [Kind.COORD]，编辑时能挂取点按钮；
      * `limitArea` 用 [Kind.AREA]，能挂框选按钮。
      */
-    private fun posRows(prefix: String, pos: Z.PosData): List<Row> {
+    private fun posRows(prefix: String, pos: Z.PosData, showPrefix: Boolean = true): List<Row> {
+        // 小节已经说明了这是"位置"，每行再带「位置」两个字既重复又占宽度
+        val p = if (showPrefix) "$prefix " else ""
         val rows = ArrayList<Row>()
 
         // ★ 坐标类型不单列"类型"行。
@@ -330,54 +334,54 @@ object ZActionDescriber {
                 Z.PosType.AI_LOC -> "AI位置"
                 Z.PosType.LOCATION -> "坐标"
             }
-            rows += Row("$prefix 类型", typeLabel)
+            rows += Row("${p}类型", typeLabel)
         }
 
         when (pos.type) {
             Z.PosType.LOCATION -> {
                 val x = pos.x?.raw.orEmpty()
                 val y = pos.y?.raw.orEmpty()
-                rows += Row("$prefix X", x, Kind.COORD, field = "$prefix.x")
-                rows += Row("$prefix Y", y, Kind.COORD, field = "$prefix.y")
+                rows += Row("${p}X", x, Kind.COORD, field = "$prefix.x")
+                rows += Row("${p}Y", y, Kind.COORD, field = "$prefix.y")
             }
 
             Z.PosType.IMAGE -> {
                 pos.imageData?.let { img ->
                     val size = if (img.width != null && img.height != null) "${img.width}×${img.height}" else "未知尺寸"
-                    rows += Row("$prefix 模板", "$size，${img.data.length} 字符", Kind.IMAGE, field = "$prefix.image")
+                    rows += Row("${p}模板", "$size，${img.data.length} 字符", Kind.IMAGE, field = "$prefix.image")
                 }
                 // 阈值是模板匹配唯一的调节旋钮，必须能改。
                 rows += Row(
-                    "$prefix 相似度",
+                    "${p}相似度",
                     pos.minSimilarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
                     Kind.PERCENT, field = "$prefix.minSimilarPercent"
                 )
             }
 
             Z.PosType.TEXT -> {
-                rows += Row("$prefix 文字", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
+                rows += Row("${p}文字", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
                 rows += Row(
-                    "$prefix 相似度",
+                    "${p}相似度",
                     pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
                     Kind.PERCENT, field = "$prefix.similarPercent"
                 )
             }
 
             Z.PosType.COLOR -> {
-                rows += Row("$prefix 颜色", pos.color.orEmpty(), Kind.TEXT, field = "$prefix.color")
+                rows += Row("${p}颜色", pos.color.orEmpty(), Kind.TEXT, field = "$prefix.color")
                 rows += Row(
-                    "$prefix 相似度",
+                    "${p}相似度",
                     pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
                     Kind.PERCENT, field = "$prefix.similarPercent"
                 )
             }
 
             Z.PosType.NODE -> {
-                rows += Row("$prefix 节点", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
+                rows += Row("${p}节点", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
             }
 
             Z.PosType.AI_LOC -> {
-                rows += Row("$prefix AI", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
+                rows += Row("${p}AI", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
             }
         }
 
@@ -392,7 +396,7 @@ object ZActionDescriber {
             pos.type == Z.PosType.COLOR || pos.type == Z.PosType.NODE
         ) {
             rows += Row(
-                "$prefix 预览",
+                "${p}预览",
                 "点这里在画面上看命中位置",
                 Kind.ENTER,
                 field = "$prefix.preview"
@@ -405,17 +409,17 @@ object ZActionDescriber {
         // 也不说明为什么，用户会当成 bug。
         // 属性名对应 [Z.PosData] 里的字段，写回走 ZFieldEditor。
         pos.limitArea?.let {
-            rows += Row("$prefix 范围", it.toString(), Kind.AREA, field = "$prefix.limitArea")
+            rows += Row("${p}范围", it.toString(), Kind.AREA, field = "$prefix.limitArea")
         }
         pos.indexNum?.let {
             // 多命中时选第几个："2" / "-1" / "0"(随机) / "1-3"(区间随机) / "1,3,4"
-            rows += Row("$prefix 选第几个", it, Kind.TEXT, field = "$prefix.indexNum")
+            rows += Row("${p}选第几个", it, Kind.TEXT, field = "$prefix.indexNum")
         }
         pos.xOffset?.let {
-            rows += Row("$prefix X偏移", it.raw, Kind.TEXT, field = "$prefix.xOffset")
+            rows += Row("${p}X偏移", it.raw, Kind.TEXT, field = "$prefix.xOffset")
         }
         pos.yOffset?.let {
-            rows += Row("$prefix Y偏移", it.raw, Kind.TEXT, field = "$prefix.yOffset")
+            rows += Row("${p}Y偏移", it.raw, Kind.TEXT, field = "$prefix.yOffset")
         }
 
         // 「位置周围条件」（FIELDS.md:147）。
@@ -428,7 +432,7 @@ object ZActionDescriber {
                 val obj = if (raw is org.json.JSONObject) raw else org.json.JSONObject(raw.toString())
                 Z.Condition.parse(obj)?.let { ZConditionDescriber.summary(it) }
             }.getOrNull()
-            rows += Row("$prefix 周围条件", summary ?: "（格式无法解析）", Kind.READONLY)
+            rows += Row("${p}周围条件", summary ?: "（格式无法解析）", Kind.READONLY)
         }
 
         return rows

@@ -36,9 +36,16 @@ object ZjsEditState {
     /** 有未保存的改动。 */
     var dirty: Boolean = false
 
-    /** 编辑器内容代号。换脚本时递增，让活着的页面实例知道要重画。 */
-    var generation: Int = 0
-        private set
+    private val _generation = MutableStateFlow(0)
+
+    /**
+     * 编辑器内容代号。换脚本时递增，让活着的页面实例知道要重画。
+     *
+     * 用 Flow 而不是普通 Int：第 3 页在 ViewPager2 里，翻页不一定销毁它，
+     * 所以光改状态它不会自己刷新 —— 用户点了脚本库里的另一条，
+     * 看到的还是上一个。必须有东西能"叫醒"它。
+     */
+    val generation: StateFlow<Int> = _generation.asStateFlow()
 
     private val _savedRevision = MutableStateFlow(0)
 
@@ -55,7 +62,7 @@ object ZjsEditState {
         fileName = name
         this.script = script
         dirty = false
-        generation++
+        _generation.value = _generation.value + 1
     }
 
     /** 保存成功：清脏标记并通知列表刷新。 */
@@ -69,6 +76,6 @@ object ZjsEditState {
         script = null
         fileName = ""
         dirty = false
-        generation++
+        _generation.value = _generation.value + 1
     }
 }
