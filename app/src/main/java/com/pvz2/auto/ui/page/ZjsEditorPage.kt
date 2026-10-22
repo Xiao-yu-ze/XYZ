@@ -495,9 +495,20 @@ class ZjsEditorPage(
     }
 
     private fun startRun(path: String) {
-        com.pvz2.auto.service.AutomationService.zjsRun(host, path)
+        android.util.Log.i("ZjsEditor", "startRun path=$path")
+        try {
+            com.pvz2.auto.service.AutomationService.zjsRun(host, path)
+        } catch (t: Throwable) {
+            // 前台服务启动失败会抛 SecurityException / ForegroundServiceStartNotAllowed
+            // 之类。静默吞掉的话用户点了没反应、日志里也没有 —— 最难查的一类。
+            android.util.Log.e("ZjsEditor", "zjsRun 失败", t)
+            android.widget.Toast.makeText(
+                host, "启动失败：${t.message}", android.widget.Toast.LENGTH_LONG
+            ).show()
+            return
+        }
         android.widget.Toast.makeText(
-            host, "已开始运行（$path）", android.widget.Toast.LENGTH_SHORT
+            host, "已开始运行", android.widget.Toast.LENGTH_SHORT
         ).show()
     }
 

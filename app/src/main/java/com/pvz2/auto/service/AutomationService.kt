@@ -230,8 +230,10 @@ class AutomationService : Service() {
 
             // ---- 自动精灵格式
             ACTION_ZJS_RUN -> {
+                Log.i(TAG, "[zjs] 收到运行请求")
                 startForegroundCompat()
                 val path = intent.getStringExtra(EXTRA_ZJS_PATH)
+                Log.i(TAG, "[zjs] path=$path")
                 if (path.isNullOrBlank()) {
                     ScriptRunState.finish("没有指定脚本文件")
                 } else {
@@ -565,12 +567,20 @@ class AutomationService : Service() {
      * `stopped` 标志，停止时置位，等待里检测到就退。
      */
     private suspend fun runZjs(path: String) {
+        // ★ 这条链路的每一步都留日志。
+        //
+        //   之前这里静默失败过：用户点了运行、保存和校验都成功、然后什么都没发生，
+        //   日志里也查不到原因 —— 这是最难排查的一类失败。宁可多几行日志。
+        Log.i(TAG, "[zjs] runZjs 开始 path=$path")
+
         val loaded = withContext(Dispatchers.IO) { ZScriptIO.load(path) }
         if (loaded.error != null) {
+            Log.e(TAG, "[zjs] 读脚本失败：${loaded.error}")
             ScriptRunState.finish("读不出脚本：${loaded.error}")
             return
         }
         val script = loaded.script!!
+        Log.i(TAG, "[zjs] 读到 ${script.actions.size} 个动作")
         if (script.actions.isEmpty()) {
             ScriptRunState.finish("脚本里没有动作")
             return
@@ -578,6 +588,7 @@ class AutomationService : Service() {
 
         val touch = ensureInjector()
         if (touch == null) {
+            Log.e(TAG, "[zjs] 注入器不可用")
             ScriptRunState.finish("注入器没准备好（Shizuku 未就绪？）")
             return
         }
@@ -588,6 +599,7 @@ class AutomationService : Service() {
         val w = st.frameWidth.takeIf { it > 0 } ?: 1280
         val h = st.frameHeight.takeIf { it > 0 } ?: 720
         val screen = ZPosResolver.Screen(w, h, resources.displayMetrics.density)
+        Log.i(TAG, "[zjs] 屏幕 ${w}x$h displayId=${st.displayId} running=${st.running}")
 
         val adapter = ZTouchInjectorAdapter(touch)
         // 按键和文字走 Shizuku 侧的另一条通道

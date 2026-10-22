@@ -67,13 +67,14 @@
     {
       "type": "控制执行",
       "controlRunType": "jumpTo",
-      "desc": "跳到标了 start 的那一条",
+      "desc": "跳到标了 end 的那一条",
       "delayUnit": 1,
-      "jumpToPosition": "start"
+      "jumpToPosition": "end"
     },
     {
       "type": "多指滑动",
       "desc": "双指下滑（两根手指同时）",
+      "jumpId": "end",
       "delayUnit": 0,
       "duration": "400",
       "multiSwipe": [
