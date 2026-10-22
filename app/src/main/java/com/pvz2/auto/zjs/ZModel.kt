@@ -219,7 +219,34 @@ object Z {
         val repeatDelayUnit: TimeUnit = TimeUnit.SECONDS,
         val fastRepeatMode: Boolean = false,
         val disabled: Boolean = false,
-        val condition: Condition? = null
+        val condition: Condition? = null,
+        /**
+         * 字段级变量覆盖：key = 被覆盖的字段名，value = 该字段的变量定义。
+         *
+         * ## 这个机制很容易漏，漏了会丢数据
+         *
+         * 自动精灵允许把任意字段改成"运行时求值"。落盘时，
+         * **被变量化的原字段会被删除**（避免污染），只留 `__vars`。
+         *
+         * 所以序列化时反过来也要做同样的处理：`__vars` 里出现了哪些字段，
+         * 输出时就要把这些字段从顶层删掉。否则用户导出后，那个字段会同时
+         * 存在"固定值"和"变量"两份，行为变得不确定。
+         *
+         * 原实现（反编译得到的 toStringifyJSON）：
+         * ```js
+         * this.json.__vars && Object.keys(this.json.__vars).forEach(t => {
+         *   null != this.json.__vars[t] && delete e[t]
+         * })
+         * ```
+         */
+        val vars: Map<String, org.json.JSONObject> = emptyMap()
+    )
+
+    /** 所有能被 `__vars` 覆盖的字段名。序列化时要跳过它们。 */
+    internal val ACTION_FIELD_NAMES = setOf(
+        "desc", "jumpId", "duration", "delay", "repeatCount",
+        "repeatDelayValue", "fastRepeatMode", "mouseButton", "posData",
+        "startPos", "endPos", "keyCode", "inputText"
     )
 
     /**
@@ -255,17 +282,36 @@ object Z {
             startPos?.let { put("startPos", it.toJson()) }
             endPos?.let { put("endPos", it.toJson()) }
             extra.forEach { (k, v) -> put(k, v) }
+
+            // ★ __vars 必须在最后处理，而且要把被变量化的字段从顶层删掉。
+            //
+            //   自动精灵的规则：某个字段改用变量后，原字段不落盘 ——
+            //   只留 __vars 里那一份。两边都写的话，导出后那个字段会同时
+            //   存在"固定值"和"变量"，行为不确定，用户还看不出来。
+            if (common.vars.isNotEmpty()) {
+                put("__vars", JSONObject().apply {
+                    common.vars.forEach { (k, v) -> put(k, v) }
+                })
+                common.vars.keys.forEach { field -> if (has(field)) remove(field) }
+            }
         }
 
         companion object {
             private val HANDLED = setOf(
                 "type", "controlRunType", "desc", "jumpId", "duration", "delay", "delayUnit",
                 "repeatCount", "repeatDelayValue", "repeatDelayUnit", "fastRepeatMode",
-                "disabled", "condition", "posData", "startPos", "endPos"
+                "disabled", "condition", "posData", "startPos", "endPos", "__vars"
             )
 
             fun parse(o: JSONObject): Action? {
                 val type = ActionType.ofWire(o.optString("type"), o.optString("controlRunType")) ?: return null
+                // __vars：字段名 -> 变量定义。值可能是 null（表示"已移除"），跳过。
+                val vars = LinkedHashMap<String, JSONObject>()
+                o.optJSONObject("__vars")?.let { m ->
+                    for (k in m.keys()) {
+                        m.optJSONObject(k)?.let { vars[k] = it }
+                    }
+                }
                 val common = ActionCommon(
                     desc = o.optString("desc").takeIf { it.isNotEmpty() },
                     jumpId = o.optString("jumpId").takeIf { it.isNotEmpty() },
@@ -277,7 +323,8 @@ object Z {
                     repeatDelayUnit = TimeUnit.of(o.optInt("repeatDelayUnit", 1)),
                     fastRepeatMode = o.optBoolean("fastRepeatMode", false),
                     disabled = o.optBoolean("disabled", false),
-                    condition = o.optJSONObject("condition")?.let { Condition.parse(it) }
+                    condition = o.optJSONObject("condition")?.let { Condition.parse(it) },
+                    vars = vars
                 )
                 return Action(
                     type = type,

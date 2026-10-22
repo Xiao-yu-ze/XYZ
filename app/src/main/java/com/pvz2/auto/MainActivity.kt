@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.pvz2.auto.ui.page.EditorPage
+import com.pvz2.auto.ui.page.ZjsEditorPage
 import com.pvz2.auto.ui.page.ScriptPage
 import com.pvz2.auto.ui.page.DiagPage
 import android.os.Bundle
@@ -66,6 +67,7 @@ class MainActivity : AppCompatActivity() {
         const val PAGE_SCRIPT = 1
         const val PAGE_EDITOR = 2
         const val PAGE_DIAG = 3
+        const val PAGE_ZJS = 4
 
         /** 虚拟屏尺寸。建屏时写死 1280×720（见 VirtualDisplaySession）。 */
         const val VD_WIDTH = 1280
@@ -188,7 +190,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderDots(selected: Int) {
-        val ids = intArrayOf(R.id.dot0, R.id.dot1, R.id.dot2, R.id.dot3)
+        val ids = intArrayOf(R.id.dot0, R.id.dot1, R.id.dot2, R.id.dot3, R.id.dot4)
         ids.forEachIndexed { i, id ->
             findViewById<TextView>(id).apply {
                 text = getString(
@@ -205,7 +207,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private inner class PageAdapter : RecyclerView.Adapter<PageAdapter.Holder>() {
-        override fun getItemCount(): Int = 4
+        override fun getItemCount(): Int = 5
 
         /**
          * ★ 必须重写，否则启动即崩。
@@ -224,6 +226,7 @@ class MainActivity : AppCompatActivity() {
                 PAGE_SCREEN -> R.layout.page_screen
                 PAGE_SCRIPT -> R.layout.activity_script
                 PAGE_EDITOR -> R.layout.page_editor
+                PAGE_ZJS -> R.layout.page_zjs_editor
                 else -> R.layout.activity_diagnostics
             }
             return Holder(layoutInflater.inflate(layout, parent, false))
@@ -244,6 +247,7 @@ class MainActivity : AppCompatActivity() {
                     PAGE_SCRIPT -> ScriptPage(this@MainActivity, holder.itemView).bind()
                     PAGE_EDITOR -> EditorPage(this@MainActivity, holder.itemView).bind()
                     PAGE_DIAG -> DiagPage(this@MainActivity, holder.itemView).bind()
+                    PAGE_ZJS -> ZjsEditorPage(this@MainActivity, holder.itemView).bind()
                 }
             }.onFailure {
                 Log.e(TAG, "第 $position 页绑定失败", it)

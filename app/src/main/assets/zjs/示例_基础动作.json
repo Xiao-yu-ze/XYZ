@@ -1,0 +1,79 @@
+{
+  "baseInfo": {
+    "repeatCount": 1,
+    "delay": "1000",
+    "delayUnit": 0,
+    "pauseOnFail": true,
+    "screenWidth": 1280,
+    "screenHeight": 720,
+    "description": "示例：验证自动精灵格式的读写与编辑"
+  },
+  "actions": [
+    {
+      "type": "点击",
+      "desc": "点开始按钮",
+      "delayUnit": 1,
+      "delay": "1",
+      "duration": "100",
+      "posData": {
+        "type": "location",
+        "x": "640",
+        "y": "520"
+      }
+    },
+    {
+      "type": "滑动",
+      "desc": "往上翻一屏",
+      "delayUnit": 1,
+      "duration": "400",
+      "startPos": {
+        "type": "location",
+        "x": "640",
+        "y": "520"
+      },
+      "endPos": {
+        "type": "location",
+        "x": "640",
+        "y": "300"
+      }
+    },
+    {
+      "type": "点击图片",
+      "desc": "点某个图标（图片匹配）",
+      "delayUnit": 1,
+      "posData": {
+        "type": "image",
+        "imageData": {
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          "imageWidth": 1,
+          "imageHeight": 1,
+          "imageLeft": 640,
+          "imageTop": 360,
+          "screenWidth": 1280,
+          "screenHeight": 720
+        },
+        "limitArea": "320 180 960 540",
+        "minSimilarPercent": 90
+      }
+    },
+    {
+      "type": "控制执行",
+      "controlRunType": "waitDelay",
+      "desc": "等两秒",
+      "delayUnit": 1,
+      "delay": "2"
+    },
+    {
+      "type": "控制执行",
+      "controlRunType": "jumpTo",
+      "desc": "无条件跳回开头",
+      "delayUnit": 1,
+      "jumpId": "start"
+    },
+    {
+      "type": "多指手势",
+      "desc": "双指缩放（安卓暂不支持，验证提示）",
+      "delayUnit": 1
+    }
+  ]
+}

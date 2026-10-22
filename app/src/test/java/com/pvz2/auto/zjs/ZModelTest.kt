@@ -180,4 +180,40 @@ class ZModelTest {
         // 静默当成"满足"会让动作在错误的时机执行，必须显式失败
         assertEquals(null, Z.Condition.parse(JSONObject("""{"type":"不存在"}""")))
     }
+    // ------------------------------------------------------------ __vars
+
+    @Test
+    fun `__vars 覆盖的字段在落盘时被删除`() {
+        // 自动精灵的规则：字段改用变量后，原字段不落盘，只留 __vars。
+        // 两边都写的话，导出后那个字段会同时存在"固定值"和"变量"。
+        val json = """
+        {"type":"点击","delayUnit":1,"duration":"100",
+         "posData":{"type":"location","x":"1","y":"2"},
+         "__vars":{"duration":{"varType":"number","varScope":"script","valueExp":"500"}}}
+        """.trimIndent()
+        val a = Z.Action.parse(JSONObject(json))!!
+        assertEquals(1, a.common.vars.size)
+
+        val back = a.toJson()
+        assertTrue("duration 应该被删掉", !back.has("duration"))
+        assertTrue("__vars 应该保留", back.has("__vars"))
+        assertEquals("500", back.getJSONObject("__vars").getJSONObject("duration").getString("valueExp"))
+    }
+
+    @Test
+    fun `没有 __vars 时不影响正常字段`() {
+        val a = Z.Action.parse(JSONObject("""{"type":"点击","delayUnit":1,"duration":"150"}"""))!!
+        val back = a.toJson()
+        assertEquals("150", back.getString("duration"))
+        assertTrue(!back.has("__vars"))
+    }
+
+    @Test
+    fun `__vars 里的 null 值被忽略`() {
+        // 协议里 null 表示"已移除该变量覆盖"，不该当成一个变量定义。
+        val a = Z.Action.parse(
+            JSONObject("""{"type":"点击","delayUnit":1,"__vars":{"duration":null}}""")
+        )!!
+        assertEquals(0, a.common.vars.size)
+    }
 }
