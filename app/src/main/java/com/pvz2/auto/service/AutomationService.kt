@@ -190,7 +190,7 @@ class AutomationService : Service() {
                 startForegroundCompat()
                 val dir = intent.getStringExtra(EXTRA_SCRIPT_DIR)
                 val entry = intent.getStringExtra(EXTRA_SCRIPT_ENTRY)
-                val dry = intent.getBooleanExtra(EXTRA_SCRIPT_DRY_RUN, true)
+                // 干跑已移除，脚本一律真跑。
                 if (dir.isNullOrBlank()) {
                     ScriptRunState.finish("没有指定脚本")
                 } else {
@@ -207,7 +207,7 @@ class AutomationService : Service() {
                     val previous = scriptJob
                     scriptJob = scope.launch {
                         previous?.cancelAndJoin()
-                        runScript(dir, entry, dry)
+                        runScript(dir, entry, false)
                     }
                 }
             }
@@ -671,7 +671,6 @@ class AutomationService : Service() {
     private const val ACTION_SCRIPT_STOP = "com.pvz2.auto.SCRIPT_STOP"
     private const val EXTRA_SCRIPT_DIR = "script_dir"
     private const val EXTRA_SCRIPT_ENTRY = "script_entry"
-    private const val EXTRA_SCRIPT_DRY_RUN = "script_dry_run"
     private const val ACTION_MANUAL_TAP = "com.pvz2.auto.MANUAL_TAP"
     private const val EXTRA_TAP_X = "tap_x"
     private const val EXTRA_TAP_Y = "tap_y"
@@ -731,13 +730,18 @@ class AutomationService : Service() {
          *
          * @param dir `assets/pipeline/` 下的脚本目录名
          * @param entry 入口节点；null = 自动推断
-         * @param dryRun true = 只识别不点击。首次跑新脚本保持 true
          */
-        fun scriptRun(context: Context, dir: String, entry: String?, dryRun: Boolean) {
+        /**
+         * 运行脚本。
+         *
+         * 干跑（只识别不点击）已移除：它打印的是"本该点哪里"，
+         * 而真正要验证的恰恰是"点了之后成不成"。留着一个不产生真实动作的
+         * 模式，只会让人以为脚本已经被验证过。
+         */
+        fun scriptRun(context: Context, dir: String, entry: String?) {
             val i = intent(context, ACTION_SCRIPT_RUN)
             i.putExtra(EXTRA_SCRIPT_DIR, dir)
             i.putExtra(EXTRA_SCRIPT_ENTRY, entry)
-            i.putExtra(EXTRA_SCRIPT_DRY_RUN, dryRun)
             ContextCompat.startForegroundService(context, i)
         }
 

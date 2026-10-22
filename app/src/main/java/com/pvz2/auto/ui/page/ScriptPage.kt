@@ -41,7 +41,6 @@ class ScriptPage(
 ) {
 
     private val scriptList: LinearLayout = root.findViewById(R.id.scriptList)
-    private val swDryRun: SwitchMaterial = root.findViewById(R.id.swDryRun)
     private val tvMessage: TextView = root.findViewById(R.id.tvScriptMessage)
     private val tvProgress: TextView = root.findViewById(R.id.tvScriptProgress)
     private val tvHits: TextView = root.findViewById(R.id.tvScriptHits)
@@ -134,7 +133,6 @@ class ScriptPage(
         // 入口节点由 PipelineRunner 自动推断（选不被任何节点 next 引用的那个），
         // 并且会显示在状态行里。之前这里让用户手填，但绝大多数人并不知道
         // 节点名，填错还会被当成"跑完了"—— 输入框撤掉。
-        AutomationService.scriptRun(host, dir, null, swDryRun.isChecked)
     }
 
     /** 订阅进程级运行状态。服务可能重启、界面可能重建，状态不能挂在页面实例上。 */

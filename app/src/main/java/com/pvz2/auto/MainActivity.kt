@@ -11,10 +11,8 @@ import com.pvz2.auto.core.PreviewTouchMapper
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
-import com.pvz2.auto.ui.page.EditorPage
 import com.pvz2.auto.ui.page.ZjsEditorPage
 import com.pvz2.auto.ui.page.ScriptPage
-import com.pvz2.auto.ui.page.DiagPage
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
@@ -65,9 +63,10 @@ class MainActivity : AppCompatActivity() {
         /** 功能页下标。 */
         const val PAGE_SCREEN = 0
         const val PAGE_SCRIPT = 1
-        const val PAGE_EDITOR = 2
-        const val PAGE_DIAG = 3
-        const val PAGE_ZJS = 4
+        const val PAGE_ZJS = 2
+        /* PAGE_EDITOR / PAGE_DIAG 已移除：前者只读浏览 MaaFramework 节点、
+           后者是手填坐标的调试工具，对用户没有价值。 */
+
 
         /** 虚拟屏尺寸。建屏时写死 1280×720（见 VirtualDisplaySession）。 */
         const val VD_WIDTH = 1280
@@ -190,7 +189,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderDots(selected: Int) {
-        val ids = intArrayOf(R.id.dot0, R.id.dot1, R.id.dot2, R.id.dot3, R.id.dot4)
+            val ids = intArrayOf(R.id.dot0, R.id.dot1, R.id.dot2)
         ids.forEachIndexed { i, id ->
             findViewById<TextView>(id).apply {
                 text = getString(
@@ -207,7 +206,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private inner class PageAdapter : RecyclerView.Adapter<PageAdapter.Holder>() {
-        override fun getItemCount(): Int = 5
+        override fun getItemCount(): Int = 3
 
         /**
          * ★ 必须重写，否则启动即崩。
@@ -225,9 +224,10 @@ class MainActivity : AppCompatActivity() {
             val layout = when (viewType) {
                 PAGE_SCREEN -> R.layout.page_screen
                 PAGE_SCRIPT -> R.layout.activity_script
-                PAGE_EDITOR -> R.layout.page_editor
                 PAGE_ZJS -> R.layout.page_zjs_editor
-                else -> R.layout.activity_diagnostics
+                // 兜底：viewType 超出页数说明常量没同步。用第一页的布局
+                // 至少能起来，比崩在启动好。
+                else -> R.layout.page_screen
             }
             return Holder(layoutInflater.inflate(layout, parent, false))
         }
@@ -245,8 +245,6 @@ class MainActivity : AppCompatActivity() {
                 when (position) {
                     PAGE_SCREEN -> bindScreenPage(holder.itemView)
                     PAGE_SCRIPT -> ScriptPage(this@MainActivity, holder.itemView).bind()
-                    PAGE_EDITOR -> EditorPage(this@MainActivity, holder.itemView).bind()
-                    PAGE_DIAG -> DiagPage(this@MainActivity, holder.itemView).bind()
                     PAGE_ZJS -> ZjsEditorPage(this@MainActivity, holder.itemView).bind()
                 }
             }.onFailure {

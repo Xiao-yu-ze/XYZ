@@ -45,28 +45,7 @@
 
         
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
 
-            <com.google.android.material.switchmaterial.SwitchMaterial
-                android:id="@+id/swDryRun"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:checked="true"
-                android:text="@string/script_dry_run" />
-        </LinearLayout>
-
-        <TextView
-            style="@style/Text.Hint"
-            android:layout_marginTop="2dp"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/script_dry_run_hint" />
 
         <LinearLayout
             android:layout_width="match_parent"
