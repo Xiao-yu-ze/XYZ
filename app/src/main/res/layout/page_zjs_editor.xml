@@ -25,6 +25,31 @@
         android:layout_marginTop="4dp"
         android:text="@string/zjs_loading" />
 
+    <!-- 保存 / 另存为。改了不保存等于白改，所以放在列表上方一直可见。 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnZjsSave"
+            style="@style/AppButton.Primary"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/zjs_save" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnZjsSaveAs"
+            style="@style/AppButton.Outline"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="@string/zjs_save_as" />
+    </LinearLayout>
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvZjsActions"
         android:layout_width="match_parent"

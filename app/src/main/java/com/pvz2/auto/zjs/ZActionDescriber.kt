@@ -283,11 +283,37 @@ object ZActionDescriber {
             }
         }
 
-        // 通用字段
-        pos.limitArea?.let { rows += Row("$prefix 范围", it.toString(), Kind.AREA, field = "$prefix.limitArea") }
-        pos.indexNum?.let { rows += Row("$prefix 选第几个", it) }
-        pos.xOffset?.let { rows += Row("$prefix X偏移", it.raw) }
-        pos.yOffset?.let { rows += Row("$prefix Y偏移", it.raw) }
+        // 通用字段（FIELDS.md:144-147）
+        //
+        // 每一行都要带 field 和 Kind —— 否则界面上看得见、点不动、
+        // 也不说明为什么，用户会当成 bug。
+        // 属性名对应 [Z.PosData] 里的字段，写回走 ZFieldEditor。
+        pos.limitArea?.let {
+            rows += Row("$prefix 范围", it.toString(), Kind.AREA, field = "$prefix.limitArea")
+        }
+        pos.indexNum?.let {
+            // 多命中时选第几个："2" / "-1" / "0"(随机) / "1-3"(区间随机) / "1,3,4"
+            rows += Row("$prefix 选第几个", it, Kind.TEXT, field = "$prefix.indexNum")
+        }
+        pos.xOffset?.let {
+            rows += Row("$prefix X偏移", it.raw, Kind.TEXT, field = "$prefix.xOffset")
+        }
+        pos.yOffset?.let {
+            rows += Row("$prefix Y偏移", it.raw, Kind.TEXT, field = "$prefix.yOffset")
+        }
+
+        // 「位置周围条件」（FIELDS.md:147）。
+        //
+        // 只用于 posData，不出现在条件类型下拉里（FIELDS.md:281）。
+        // 之前的实现把它当未知字段，摊出一坨原始 JSON ——
+        // 结构没丢，但用户看不懂。现在用条件摘要显示。
+        pos.extra["filterByAroundConditionSet"]?.let { raw ->
+            val summary = runCatching {
+                val obj = if (raw is org.json.JSONObject) raw else org.json.JSONObject(raw.toString())
+                Z.Condition.parse(obj)?.let { ZConditionDescriber.summary(it) }
+            }.getOrNull()
+            rows += Row("$prefix 周围条件", summary ?: "（格式无法解析）", Kind.READONLY)
+        }
 
         return rows
     }

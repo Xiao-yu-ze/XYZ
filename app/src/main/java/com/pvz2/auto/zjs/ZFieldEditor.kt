@@ -90,6 +90,11 @@ object ZFieldEditor {
         "y" -> pos.copy(y = parseOrNull(value))
         "text" -> pos.copy(text = value.ifBlank { null })
         "color" -> pos.copy(color = value.ifBlank { null })
+        // 多命中时选第几个："2" / "-1" / "0"(随机) / "1-3" / "1,3,4"
+        "indexNum" -> pos.copy(indexNum = value.ifBlank { null })
+        // 命中后的偏移，格式同 x/y（Value）
+        "xOffset" -> pos.copy(xOffset = parseOrNull(value))
+        "yOffset" -> pos.copy(yOffset = parseOrNull(value))
         "limitArea" -> {
             if (value.isBlank()) {
                 pos.copy(limitArea = null)

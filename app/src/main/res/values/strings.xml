@@ -143,4 +143,8 @@
     <string name="label_game_fps_fixed">30 fps（采集 + 游戏）</string>
     <string name="zjs_editor_title">脚本动作（自动精灵格式）</string>
     <string name="zjs_loading">正在读取…</string>
+    <string name="zjs_save">保存</string>
+    <string name="zjs_save_as">另存为</string>
+    <string name="zjs_saved">已保存到 %1$s</string>
+    <string name="zjs_save_failed">保存失败：%1$s</string>
 </resources>

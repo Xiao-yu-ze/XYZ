@@ -170,4 +170,53 @@ class ZActionDescriberTest {
         assertTrue("应列出变量：$rows", v != null)
         assertTrue("应显示表达式：${v!!.value}", v.value.contains("500"))
     }
+    // ------------------------------------------------------------ 本轮审计修复
+
+    @Test
+    fun `位置的选择器与偏移都能编辑`() {
+        // 之前这三行没有 field，看得见点不动，也不说明为什么
+        val rows = rows(
+            """{"type":"点击","delayUnit":1,
+               "posData":{"type":"location","x":"1","y":"2",
+                          "indexNum":"2","xOffset":"5","yOffset":"6"}}"""
+        )
+        for (label in listOf("位置 选第几个", "位置 X偏移", "位置 Y偏移")) {
+            val r = rows.firstOrNull { it.label == label }
+            assertTrue("缺 [$label]：${rows.map { it.label }}", r != null)
+            assertTrue("[$label] 应该可编辑，实际 ${r!!.kind}", r.kind != ZActionDescriber.Kind.READONLY)
+            assertTrue("[$label] 应该有 field", r.field.isNotEmpty())
+        }
+    }
+
+    @Test
+    fun `位置周围条件用摘要显示而不是原始 JSON`() {
+        val rows = rows(
+            """{"type":"点击","delayUnit":1,
+               "posData":{"type":"location","x":"1","y":"2",
+                 "filterByAroundConditionSet":{"type":"conditionSet","matchMode":"and"}}}"""
+        )
+        val r = rows.firstOrNull { it.label.contains("周围条件") }
+        assertTrue("应显示周围条件：${rows.map { it.label }}", r != null)
+        assertTrue("不该是原始 JSON：${r!!.value}", !r.value.startsWith("{"))
+    }
+
+    @Test
+    fun `取反和重复检查要同时显示`() {
+        // 两个是独立开关，可同时开启。提前 return 会把重试次数吞掉。
+        val c = Z.Condition.parse(
+            JSONObject("""{"type":"random","runWhenFalse":true,
+                "repeatWhenFalse":true,"repeatWhenFalseLimitTimes":5,"percent":30}""")
+        )!!
+        val s = ZConditionDescriber.summary(c)
+        assertTrue("要有取反：$s", s.contains("取反"))
+        assertTrue("要有重试次数：$s", s.contains("5"))
+        assertTrue("要有百分比：$s", s.contains("30"))
+    }
+
+    @Test
+    fun `随机条件缺省百分比显示 50`() {
+        // 协议默认 50。显示 "?" 会让用户以为没配置好。
+        val c = Z.Condition.parse(JSONObject("""{"type":"random"}"""))!!
+        assertTrue(ZConditionDescriber.summary(c).contains("50"))
+    }
 }

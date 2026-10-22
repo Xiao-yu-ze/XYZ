@@ -111,7 +111,71 @@ class ZjsEditorPage(
         rvActions.layoutManager = LinearLayoutManager(host)
         rvActions.adapter = adapter
         rvActions.itemAnimator = null
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsSave)
+            .setOnClickListener { saveTo(defaultSavePath()) }
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsSaveAs)
+            .setOnClickListener { promptSaveAs() }
         load()
+    }
+
+    /**
+     * 默认保存路径。
+     *
+     * 放在 App 自己的外部目录 —— 不需要任何存储权限，而且用户能用文件管理器
+     * 找得到。写到 assets 里是不行的（只读），写到 /sdcard 根目录在
+     * Android 11+ 要 MANAGE_EXTERNAL_STORAGE。
+     */
+    private fun defaultSavePath(): String {
+        val dir = java.io.File(host.getExternalFilesDir(null), "zjs")
+        dir.mkdirs()
+        val base = fileName.substringBeforeLast('.').ifBlank { "script" }
+        return java.io.File(dir, "$base.zjs").absolutePath
+    }
+
+    /** 另存为：弹输入框填文件名。 */
+    private fun promptSaveAs() {
+        val dir = java.io.File(host.getExternalFilesDir(null), "zjs")
+        dir.mkdirs()
+        val base = fileName.substringBeforeLast('.').ifBlank { "script" }
+
+        val input = android.widget.EditText(host).apply {
+            setText("${base}_已编辑.zjs")
+            setSingleLine(true)
+            setPadding(32, 24, 32, 24)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle("另存为")
+            .setMessage(dir.absolutePath)
+            .setView(input)
+            .setPositiveButton("保存") { _, _ ->
+                val name = input.text?.toString().orEmpty().trim()
+                if (name.isBlank()) return@setPositiveButton
+                saveTo(java.io.File(dir, name).absolutePath)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 保存，并把结果告诉用户。
+     *
+     * ## 为什么必须给反馈
+     *
+     * 保存是最怕"看起来成功了"的操作。写失败（路径不可写、磁盘满）时
+     * 静默返回，用户会关掉 App 然后发现改动没了。
+     */
+    private fun saveTo(path: String) {
+        val script = this.script ?: return
+        val ok = ZScriptIO.save(script, path)
+        if (ok) {
+            android.widget.Toast.makeText(
+                host, host.getString(R.string.zjs_saved, path), android.widget.Toast.LENGTH_LONG
+            ).show()
+        } else {
+            android.widget.Toast.makeText(
+                host, host.getString(R.string.zjs_save_failed, "写入失败，看日志"), android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     private fun load() {

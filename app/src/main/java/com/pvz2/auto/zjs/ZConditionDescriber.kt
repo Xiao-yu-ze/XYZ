@@ -30,9 +30,16 @@ object ZConditionDescriber {
         }
 
         val parts = ArrayList<String>()
+
+        // 反相是最容易看漏的，放最前面。
+        //
+        // ★ 不能 return —— 「反相」和「不成立时重复检查」是两个**独立开关**，
+        //   可以同时开启（FIELDS.md:254/256）。提前 return 会把重试次数吞掉，
+        //   用户就看不到这条条件其实还会重试 5 次。
+        if (c.runWhenFalse) parts += "取反"
+
         parts += base
-        // 反相是最容易看漏的，放最前面
-        if (c.runWhenFalse) return "取反（条件不成立时执行）：$base"
+
         if (c.repeatWhenFalse) {
             val lim = c.repeatWhenFalseLimitTimes
             parts += if (lim == null || lim == 0) "不成立时反复检查" else "不成立时最多重试 $lim 次"
@@ -63,9 +70,15 @@ object ZConditionDescriber {
         }
     }
 
-    /** `random` 条件的百分比。字段名在文档里是 `percent`，放 extra。 */
+    /**
+     * `random` 条件的百分比。
+     *
+     * 字段名是 `percent`（FIELDS.md:273），**默认 50**。
+     * 缺省时显示 50 而不是 "?" —— 真实脚本里默认值通常不写，
+     * 显示 "?" 会让用户以为这个条件没配置好。
+     */
     private fun percentOf(c: Z.Condition): String {
         val v = c.extra["percent"] ?: c.extra["probability"]
-        return v?.toString() ?: "?"
+        return v?.toString()?.takeIf { it.isNotBlank() } ?: "50"
     }
 }
