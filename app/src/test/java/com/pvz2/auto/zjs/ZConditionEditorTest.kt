@@ -106,7 +106,7 @@ class ZConditionEditorTest {
 
         val rows = ZConditionEditor.describe(c)
         val labels = rows.map { it.label }
-        for (must in listOf("条件类型", "百分比", "备注", "取反", "禁用", "不成立时重复")) {
+        for (must in listOf("条件类型", "百分比", "备注", "取反", "禁用", "不成立时反复检查")) {
             assertTrue("缺 [$must]：$labels", labels.any { it == must })
         }
         // 开了重复检查才显示次数
@@ -130,8 +130,9 @@ class ZConditionEditorTest {
     fun `开关字段挂的是枚举让我们能下拉选`() {
         val c = ZConditionEditor.create(Z.ConditionType.RANDOM)
         val row = ZConditionEditor.describe(c).first { it.label == "取反" }
-        assertEquals(ZActionDescriber.Kind.ENUM, row.kind)
-        assertEquals(listOf("否", "是"), row.options)
+        // 布尔值现在是开关，直接拨，不再弹"否/是"下拉
+        assertEquals(ZActionDescriber.Kind.SWITCH, row.kind)
+        assertTrue(row.options.isEmpty())
     }
 
     @Test
@@ -140,8 +141,9 @@ class ZConditionEditorTest {
         val rows = ZConditionEditor.describe(c)
         val mode = rows.firstOrNull { it.label == "匹配方式" }
         assertNotNull(mode)
-        assertEquals("and", mode!!.value)
-        assertEquals(listOf("and", "or", "count"), mode.options)
+        // 界面上是中文，协议里是 and/or/count —— 写回时由 apply 还原
+        assertEquals("全部满足", mode!!.value)
+        assertEquals(listOf("全部满足", "任一满足", "满足指定个数"), mode.options)
     }
 
     @Test
@@ -166,5 +168,109 @@ class ZConditionEditorTest {
         val rows = ZConditionEditor.describe(c)
         assertTrue("应有文字行：${rows.map { it.label }}", rows.any { it.label == "文字" })
         assertTrue("不该有坐标行", rows.none { it.label == "位置 X" })
+    }
+    // ------------------------------------------------------------ 类型专属字段（后补的）
+
+    @Test
+    fun `在时间之后能填时间`() {
+        // 这条以前只有摘要、没有字段，用户选完类型就卡住了
+        var c = ZConditionEditor.create(Z.ConditionType.TIME_AFTER)
+        val row = ZConditionEditor.describe(c).first { it.label == "时间" }
+        assertEquals(ZActionDescriber.Kind.TEXT, row.kind)
+
+        c = ZConditionEditor.apply(c, "timeValue", "09:30:58")!!
+        assertEquals("09:30:58", c.extra["timeValue"])
+        assertEquals("09:30:58", ZConditionEditor.describe(c).first { it.label == "时间" }.value)
+    }
+
+    @Test
+    fun `动作运行状态能填目标动作和状态`() {
+        var c = ZConditionEditor.create(Z.ConditionType.SCRIPT_RUN_STATE)
+        val rows = ZConditionEditor.describe(c)
+        assertTrue(rows.any { it.label == "目标动作" })
+        assertTrue(rows.any { it.label == "状态" })
+
+        c = ZConditionEditor.apply(c, "aimPosition", "第3个动作")!!
+        c = ZConditionEditor.apply(c, "aimScriptRunState", "失败")!!
+        // 界面中文，协议英文 —— 写错就是条件静默失效
+        assertEquals("第3个动作", c.extra["aimPosition"])
+        assertEquals("fail", c.extra["aimScriptRunState"])
+    }
+
+    @Test
+    fun `时间间隔的单位和忽略首次都能改`() {
+        var c = ZConditionEditor.create(Z.ConditionType.TIME_INTERVAL)
+        val unit = ZConditionEditor.describe(c).first { it.label == "间隔单位" }
+        assertEquals(ZActionDescriber.Kind.ENUM, unit.kind)
+        assertEquals("秒", unit.value)
+
+        c = ZConditionEditor.apply(c, "timeIntervalUnit", "分钟")!!
+        c = ZConditionEditor.apply(c, "ignoreInitPass", "是")!!
+        assertEquals(2, c.extra["timeIntervalUnit"])
+        assertEquals(true, c.extra["ignoreInitPass"])
+    }
+
+    @Test
+    fun `限制次数的清零时机写回英文`() {
+        var c = ZConditionEditor.create(Z.ConditionType.LIMIT_RUN_TIMES)
+        val row = ZConditionEditor.describe(c).first { it.label == "清零时机" }
+        assertEquals("跑完后", row.value)
+
+        c = ZConditionEditor.apply(c, "resetTime", "每次重复后")!!
+        assertEquals("afterRepeat", c.extra["resetTime"])
+    }
+
+    @Test
+    fun `图片条件能改相似度和范围`() {
+        var c = ZConditionEditor.create(Z.ConditionType.IMAGE)
+        val labels = ZConditionEditor.describe(c).map { it.label }
+        for (must in listOf("模板", "相似度", "范围", "预览")) {
+            assertTrue("缺 [$must]：$labels", labels.contains(must))
+        }
+        // 模板必须是可截取的 IMAGE 行，不是只读文字
+        assertEquals(
+            ZActionDescriber.Kind.IMAGE,
+            ZConditionEditor.describe(c).first { it.label == "模板" }.kind
+        )
+
+        c = ZConditionEditor.apply(c, "cond.minSimilarPercent", "75%")!!
+        assertEquals(75, c.posData!!.minSimilarPercent)
+
+        c = ZConditionEditor.apply(c, "cond.limitArea", "10% 20% 30% 40%")!!
+        assertEquals("10% 20% 30% 40%", c.posData!!.limitArea.toString())
+    }
+
+    @Test
+    fun `图片条件能挂模板图`() {
+        var c = ZConditionEditor.create(Z.ConditionType.IMAGE)
+        val img = Z.ImageData(
+            data = "AA", width = 12, height = 34,
+            left = 1, top = 2, screenWidth = 1280, screenHeight = 720
+        )
+        c = ZConditionEditor.applyImage(c, "cond.image", img)!!
+        assertEquals(12, c.posData!!.imageData!!.width)
+        assertEquals("12×34", ZConditionEditor.describe(c).first { it.label == "模板" }.value)
+    }
+
+    @Test
+    fun `AI 云识别有文字速度和三张图`() {
+        val c = ZConditionEditor.create(Z.ConditionType.AI_CLOUD)
+        val labels = ZConditionEditor.describe(c).map { it.label }
+        for (must in listOf("文字", "速度", "图1", "图2", "图3")) {
+            assertTrue("缺 [$must]：$labels", labels.contains(must))
+        }
+        val speed = ZConditionEditor.describe(c).first { it.label == "速度" }
+        assertEquals("普通", speed.value)
+        assertEquals(listOf("快", "普通"), speed.options)
+    }
+
+    @Test
+    fun `条件组选按个数时出现数量字段`() {
+        var c = ZConditionEditor.create(Z.ConditionType.CONDITION_SET)
+        assertTrue(ZConditionEditor.describe(c).none { it.label == "匹配数量" })
+
+        c = ZConditionEditor.apply(c, "matchMode", "满足指定个数")!!
+        assertEquals("count", c.extra["matchMode"])
+        assertTrue(ZConditionEditor.describe(c).any { it.label == "匹配数量" })
     }
 }

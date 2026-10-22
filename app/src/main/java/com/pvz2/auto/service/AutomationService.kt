@@ -32,11 +32,6 @@ import com.pvz2.auto.zjs.ZScriptIO
 import com.pvz2.auto.zjs.ZTouchInjectorAdapter
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
-import com.pvz2.auto.maa.OcrEngine
-import com.pvz2.auto.maa.PipelineRunner
-import com.pvz2.auto.maa.ProbeTargets
-import com.pvz2.auto.maa.RecognitionProbe
-import com.pvz2.auto.maa.Recognizer
 import com.pvz2.auto.shizuku.ShizukuBridge
 import com.pvz2.auto.shizuku.ShizukuScreenCapturer
 import com.pvz2.auto.shizuku.ShizukuTouchInjector
@@ -195,38 +190,7 @@ class AutomationService : Service() {
             // ★ 脚本运行。这是整条执行链第一次有真实入口 ——
             //   在此之前 PipelineRunner 只在自身声明处出现过一次，
             //   节点解析和图执行都写好了，但没有任何地方会启动它。
-            ACTION_SCRIPT_RUN -> {
-                startForegroundCompat()
-                val dir = intent.getStringExtra(EXTRA_SCRIPT_DIR)
-                val entry = intent.getStringExtra(EXTRA_SCRIPT_ENTRY)
-                // 干跑已移除，脚本一律真跑。
-                if (dir.isNullOrBlank()) {
-                    ScriptRunState.finish("没有指定脚本")
-                } else {
-                    // ★ 必须等旧任务**真正结束**再起新的。
-                    //
-                    //   只 cancel() 不够：cancel 只是发出信号，旧协程可能还在
-                    //   runScript 的 bind()+await()（最长 5 秒）或 loadNodes 里。
-                    //   那段时间 ScriptRunState.running 仍是 false，界面上的
-                    //   「运行」按钮还能点 —— 用户连点两下就有两个 job 共用同一个
-                    //   采集器和注入器：并发抓帧，非干跑时两边同时在点游戏。
-                    //
-                    //   cancelAndJoin 保证串行。previous 在挂起前就捕获了，
-                    //   不受下面重新赋值的影响。
-                    val previous = scriptJob
-                    scriptJob = scope.launch {
-                        previous?.cancelAndJoin()
-                        runScript(dir, entry, false)
-                    }
-                }
-            }
 
-            ACTION_SCRIPT_STOP -> {
-                startForegroundCompat()
-                scriptJob?.cancel()
-                scriptJob = null
-                ScriptRunState.finish("已停止")
-            }
 
             // ---- 自动精灵格式
             ACTION_ZJS_RUN -> {
@@ -654,50 +618,6 @@ class AutomationService : Service() {
             ScriptRunState.finish("执行异常：${t.message}")
         }
     }
-    private suspend fun runScript(scriptDir: String, entry: String?, dryRun: Boolean) {
-        if (!OpenCVLoader.initLocal()) {
-            ScriptRunState.finish("OpenCV 原生库加载失败")
-            return
-        }
-        if (!ShizukuBridge.hasPermission()) {
-            ScriptRunState.finish("需要 Shizuku 权限")
-            return
-        }
-
-        shizukuClient.bind()
-        val size = runCatching { shizukuClient.await()?.getDisplaySize() }.getOrNull()
-        if (size.isNullOrBlank()) {
-            ScriptRunState.finish("特权 shell 无响应")
-            return
-        }
-
-        val activeCapturer = capturer ?: VirtualDisplayCapturer(
-            vdSession,
-            ShizukuScreenCapturer(shizukuClient)
-        ).also { capturer = it }
-        val activeInjector = injector ?: ShizukuTouchInjector(shizukuClient) {
-            vdSession.state.value.displayId.takeIf { it > 0 } ?: 0
-        }.also { injector = it }
-
-        val recognizer = Recognizer(this)
-        try {
-            // 用虚拟屏的实际尺寸定识别基准，而不是写死 720p ——
-            // 换分辨率时 ScreenAdapter 才是准的。
-            val w = vdSession.state.value.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
-            val h = vdSession.state.value.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
-            recognizer.setScreen(w, h)
-
-            PipelineRunner(
-                context = this,
-                capturer = activeCapturer,
-                injector = activeInjector,
-                recognizer = recognizer,
-                dryRun = dryRun
-            ).run(scriptDir, entry)
-        } finally {
-            recognizer.release()
-        }
-    }
 
     private fun loadMatcher(): Boolean {
         if (!OpenCVLoader.initLocal()) {
@@ -805,10 +725,6 @@ class AutomationService : Service() {
     private const val ACTION_ZJS_RUN = "com.pvz2.auto.ZJS_RUN"
     private const val ACTION_ZJS_STOP = "com.pvz2.auto.ZJS_STOP"
     private const val EXTRA_ZJS_PATH = "zjs_path"
-    private const val ACTION_SCRIPT_RUN = "com.pvz2.auto.SCRIPT_RUN"
-    private const val ACTION_SCRIPT_STOP = "com.pvz2.auto.SCRIPT_STOP"
-    private const val EXTRA_SCRIPT_DIR = "script_dir"
-    private const val EXTRA_SCRIPT_ENTRY = "script_entry"
     private const val ACTION_MANUAL_TAP = "com.pvz2.auto.MANUAL_TAP"
     private const val EXTRA_TAP_X = "tap_x"
     private const val EXTRA_TAP_Y = "tap_y"
@@ -863,25 +779,6 @@ class AutomationService : Service() {
             ContextCompat.startForegroundService(context, intent(context, ACTION_VD_STOP))
         }
 
-        /**
-         * 运行脚本。
-         *
-         * @param dir `assets/pipeline/` 下的脚本目录名
-         * @param entry 入口节点；null = 自动推断
-         */
-        /**
-         * 运行脚本。
-         *
-         * 干跑（只识别不点击）已移除：它打印的是"本该点哪里"，
-         * 而真正要验证的恰恰是"点了之后成不成"。留着一个不产生真实动作的
-         * 模式，只会让人以为脚本已经被验证过。
-         */
-        fun scriptRun(context: Context, dir: String, entry: String?) {
-            val i = intent(context, ACTION_SCRIPT_RUN)
-            i.putExtra(EXTRA_SCRIPT_DIR, dir)
-            i.putExtra(EXTRA_SCRIPT_ENTRY, entry)
-            ContextCompat.startForegroundService(context, i)
-        }
 
         /**
          * 运行一个**自动精灵格式**的脚本。
@@ -902,10 +799,6 @@ class AutomationService : Service() {
         /** 停止自动精灵脚本。 */
         fun zjsStop(context: Context) {
             ContextCompat.startForegroundService(context, intent(context, ACTION_ZJS_STOP))
-        }
-        /** 停止脚本。 */
-        fun scriptStop(context: Context) {
-            ContextCompat.startForegroundService(context, intent(context, ACTION_SCRIPT_STOP))
         }
 
         /**

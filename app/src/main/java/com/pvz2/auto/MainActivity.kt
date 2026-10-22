@@ -41,7 +41,6 @@ import com.pvz2.auto.core.ChannelPrefs
 import com.pvz2.auto.core.Pvz2Channels
 import android.widget.ImageView
 import org.opencv.core.Mat
-import com.pvz2.auto.service.RecognitionSelfTest
 import com.pvz2.auto.service.AutomationService
 import com.pvz2.auto.service.VirtualDisplaySession
 import com.pvz2.auto.shizuku.ShizukuBridge

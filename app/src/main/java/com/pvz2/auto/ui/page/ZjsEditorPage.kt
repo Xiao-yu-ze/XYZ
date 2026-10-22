@@ -430,7 +430,8 @@ class ZjsEditorPage(
         condition: Z.Condition,
         row: ZActionDescriber.Row
     ) {
-        // 换类型要单独处理 —— 位置对象和专属参数都得跟着换
+
+        // 换类型：位置对象和专属参数都得跟着换
         if (row.label == "条件类型") {
             val labels = ZConditionEditor.TYPE_LABELS.map { it.second }.toTypedArray()
             androidx.appcompat.app.AlertDialog.Builder(host)
@@ -438,17 +439,43 @@ class ZjsEditorPage(
                 .setItems(labels) { dlg, which ->
                     dlg.dismiss()
                     val type = ZConditionEditor.TYPE_LABELS[which].first
-                    applyCondition(action, actionIndex, ZConditionEditor.changeType(condition, type))
+                    val next = ZConditionEditor.changeType(condition, type)
+                    applyCondition(action, actionIndex, next)
+                    // 换完立刻重新打开，用户能接着填新类型的字段
+                    showConditionEditor(action, actionIndex, next)
                 }
                 .setNegativeButton("取消", null)
                 .show()
             return
         }
 
+        // 预览命中位置。条件和动作共用同一套预览，判定完全一致。
+        if (row.field == "cond.preview") {
+            previewFor(condition.posData)
+            return
+        }
+
         val commit: (String) -> Unit = { value ->
             ZConditionEditor.apply(condition, row.field, value)?.let {
                 applyCondition(action, actionIndex, it)
+                // 改完回到列表：条件字段多，用户通常是连着改好几项
+                showConditionEditor(action, actionIndex, it)
             }
+        }
+
+        // 开关：拨一下就好，不再弹窗问一次
+        if (row.kind == ZActionDescriber.Kind.SWITCH) {
+            commit(if (row.value == "是") "否" else "是")
+            return
+        }
+
+        // 位置类：都在冻结画面上取，和动作的取点完全一样
+        when (row.kind) {
+            ZActionDescriber.Kind.COORD -> { pickConditionPoint(action, actionIndex, condition); return }
+            ZActionDescriber.Kind.AREA -> { pickConditionRect(action, actionIndex, condition); return }
+            ZActionDescriber.Kind.IMAGE -> { pickConditionTemplate(action, actionIndex, condition, row.field); return }
+            ZActionDescriber.Kind.PERCENT -> { conditionPercentDialog(action, actionIndex, condition, row); return }
+            else -> Unit
         }
 
         if (row.kind == ZActionDescriber.Kind.ENUM && row.options.isNotEmpty()) {
@@ -468,9 +495,7 @@ class ZjsEditorPage(
             setText(row.value)
             setSingleLine(false)
             setPadding(32, 24, 32, 24)
-            inputType = if (row.kind == ZActionDescriber.Kind.NUMBER ||
-                row.kind == ZActionDescriber.Kind.PERCENT
-            ) {
+            inputType = if (row.kind == ZActionDescriber.Kind.NUMBER || row.kind == ZActionDescriber.Kind.PERCENT) {
                 android.text.InputType.TYPE_CLASS_NUMBER
             } else {
                 android.text.InputType.TYPE_CLASS_TEXT
@@ -479,11 +504,164 @@ class ZjsEditorPage(
         androidx.appcompat.app.AlertDialog.Builder(host)
             .setTitle(row.label)
             .setView(input)
+            .setPositiveButton("确定") { _, _ -> commit(input.text?.toString().orEmpty()) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // ------------------------------------------------------------ 条件里的取点 / 框选 / 截模板
+
+    /** 条件里的坐标：准星在冻结画面上取。 */
+    private fun pickConditionPoint(action: Z.Action, actionIndex: Int, condition: Z.Condition) {
+        val pos = condition.posData
+        val ix = pos?.x?.raw?.toIntOrNull()
+        val iy = pos?.y?.raw?.toIntOrNull()
+        val initial = if (ix != null && iy != null) com.pvz2.auto.core.PreviewPicker.Point(ix, iy) else null
+
+        host.lifecycleScope.launch {
+            val deferred = host.lifecycleScope.async {
+                com.pvz2.auto.core.PreviewPicker.result.firstOrNull {
+                    it.mode == com.pvz2.auto.core.PreviewPicker.Mode.POINT
+                }
+            }
+            com.pvz2.auto.core.PreviewPicker.arm(
+                com.pvz2.auto.core.PreviewPicker.Mode.POINT,
+                initial = initial,
+                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
+            )
+            toast("按住画面拖动准星，位置对了点确定")
+
+            val r = deferred.await() ?: return@launch
+            var next = condition
+            ZConditionEditor.apply(next, "cond.x", "%.2f%%".format(100.0 * r.x / r.screenWidth))?.let { next = it }
+            ZConditionEditor.apply(next, "cond.y", "%.2f%%".format(100.0 * r.y / r.screenHeight))?.let { next = it }
+            applyCondition(action, actionIndex, next)
+            showConditionEditor(action, actionIndex, next)
+        }
+    }
+
+    /** 条件里的搜索范围：四角可拖的框。 */
+    private fun pickConditionRect(action: Z.Action, actionIndex: Int, condition: Z.Condition) {
+        host.lifecycleScope.launch {
+            val deferred = host.lifecycleScope.async {
+                com.pvz2.auto.core.PreviewPicker.result.firstOrNull {
+                    it.mode == com.pvz2.auto.core.PreviewPicker.Mode.RECT
+                }
+            }
+            val st = com.pvz2.auto.service.VirtualDisplaySession.sharedState.value
+            val iw = st.frameWidth.takeIf { it > 0 } ?: 1280
+            val ih = st.frameHeight.takeIf { it > 0 } ?: 720
+            com.pvz2.auto.core.PreviewPicker.arm(
+                com.pvz2.auto.core.PreviewPicker.Mode.RECT,
+                screenWidth = iw, screenHeight = ih,
+                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
+            )
+            toast("在画面上框出搜索范围，四角可拖")
+
+            val r = deferred.await() ?: return@launch
+            if (r.w <= 0 || r.h <= 0) return@launch
+            val area = areaText(r)
+            ZConditionEditor.apply(condition, "cond.limitArea", area)?.let {
+                applyCondition(action, actionIndex, it)
+                showConditionEditor(action, actionIndex, it)
+            }
+        }
+    }
+
+    /** 条件里的模板：截下来，并把这块同时设成搜索范围。 */
+    private fun pickConditionTemplate(
+        action: Z.Action,
+        actionIndex: Int,
+        condition: Z.Condition,
+        field: String
+    ) {
+        host.lifecycleScope.launch {
+            val deferred = host.lifecycleScope.async {
+                com.pvz2.auto.core.PreviewPicker.result.firstOrNull {
+                    it.mode == com.pvz2.auto.core.PreviewPicker.Mode.TEMPLATE
+                }
+            }
+            val st = com.pvz2.auto.service.VirtualDisplaySession.sharedState.value
+            val iw = st.frameWidth.takeIf { it > 0 } ?: 1280
+            val ih = st.frameHeight.takeIf { it > 0 } ?: 720
+            com.pvz2.auto.core.PreviewPicker.arm(
+                com.pvz2.auto.core.PreviewPicker.Mode.TEMPLATE,
+                screenWidth = iw, screenHeight = ih,
+                frozenFrame = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
+            )
+            toast("在画面上框住要识别的图案")
+
+            val r = deferred.await() ?: return@launch
+            val crop = r.crop ?: return@launch
+            if (crop.width <= 0 || crop.height <= 0) return@launch
+
+            val bytes = java.io.ByteArrayOutputStream()
+            crop.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bytes)
+            val b64 = android.util.Base64.encodeToString(bytes.toByteArray(), android.util.Base64.NO_WRAP)
+            val img = Z.ImageData(
+                data = b64, width = crop.width, height = crop.height,
+                left = r.x, top = r.y,
+                screenWidth = r.screenWidth, screenHeight = r.screenHeight
+            )
+
+            var next = ZConditionEditor.applyImage(condition, field, img) ?: condition
+            // 条件里的模板同样决定"在哪找"，范围一起设
+            if (field == "cond.image") {
+                ZConditionEditor.apply(next, "cond.limitArea", areaText(r))?.let { next = it }
+            }
+            applyCondition(action, actionIndex, next)
+            showConditionEditor(action, actionIndex, next)
+        }
+    }
+
+    /** 百分比用滑块，和动作字段一致。 */
+    private fun conditionPercentDialog(
+        action: Z.Action,
+        actionIndex: Int,
+        condition: Z.Condition,
+        row: ZActionDescriber.Row
+    ) {
+        val cur = row.value.removeSuffix("%").toIntOrNull() ?: 50
+        val box = android.widget.LinearLayout(host).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(48, 32, 48, 8)
+        }
+        val bar = android.widget.SeekBar(host).apply { max = 100; progress = cur.coerceIn(0, 100) }
+        val num = android.widget.TextView(host).apply {
+            text = "$cur%"; textSize = 18f; gravity = android.view.Gravity.CENTER
+        }
+        bar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
+                num.text = "$p%"
+            }
+            override fun onStartTrackingTouch(sb: android.widget.SeekBar?) = Unit
+            override fun onStopTrackingTouch(sb: android.widget.SeekBar?) = Unit
+        })
+        box.addView(num)
+        box.addView(bar)
+
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle(row.label)
+            .setView(box)
             .setPositiveButton("确定") { _, _ ->
-                commit(input.text?.toString().orEmpty())
+                ZConditionEditor.apply(condition, row.field, "${bar.progress}")?.let {
+                    applyCondition(action, actionIndex, it)
+                    showConditionEditor(action, actionIndex, it)
+                }
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    /** 虚拟屏坐标矩形 → 协议里的 `左 上 右 下` 百分比。 */
+    private fun areaText(r: com.pvz2.auto.core.PreviewPicker.Result): String {
+        val pct = { v: Int, total: Int -> "%.2f%%".format(100.0 * v / total) }
+        return "${pct(r.x, r.screenWidth)} ${pct(r.y, r.screenHeight)} " +
+            "${pct(r.x + r.w, r.screenWidth)} ${pct(r.y + r.h, r.screenHeight)}"
+    }
+
+    private fun toast(msg: String) {
+        android.widget.Toast.makeText(host, msg, android.widget.Toast.LENGTH_SHORT).show()
     }
 
     private fun applyCondition(action: Z.Action, actionIndex: Int, condition: Z.Condition) {
@@ -1060,6 +1238,11 @@ class ZjsEditorPage(
             "终点" -> action.endPos
             else -> action.posData
         }
+        previewFor(pos)
+    }
+
+    /** 预览命中位置。动作和条件共用 —— 判定必须和解算时完全一致。 */
+    private fun previewFor(pos: Z.PosData?) {
         if (pos == null) {
             android.widget.Toast.makeText(host, "这个位置还没设置", android.widget.Toast.LENGTH_SHORT).show()
             return
