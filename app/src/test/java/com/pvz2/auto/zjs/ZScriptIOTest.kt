@@ -124,4 +124,64 @@ class ZScriptIOTest {
         )!!
         assertEquals("控制执行·jumpTo", ZScriptIO.actionLabel(jump))
     }
+    // ------------------------------------------------------------ 校验的漏报
+
+    @Test
+    fun `位置类型与动作类型不匹配要报出来`() {
+        // FIELDS.md:443：点击图片只接受 image 位置。
+        // 不报的话界面上「位置 X 640」看着完全正常，运行起来永远匹配不到。
+        val s = Z.Script.parse(
+            JSONObject("""{"actions":[{"type":"点击图片","delayUnit":1,
+                "posData":{"type":"location","x":"100","y":"200"}}]}""")
+        )
+        val issues = ZScriptIO.validate(s)
+        assertTrue("应报类型不匹配：$issues", issues.any { it.contains("必须是 image") })
+    }
+
+    @Test
+    fun `滑动起点终点类型必须是坐标`() {
+        val s = Z.Script.parse(
+            JSONObject("""{"actions":[{"type":"滑动","delayUnit":1,
+                "startPos":{"type":"location","x":"1","y":"2"},
+                "endPos":{"type":"image","imageData":{"data":"AA"}}}]}""")
+        )
+        assertTrue(ZScriptIO.validate(s).any { it.contains("终点必须是坐标") })
+    }
+
+    @Test
+    fun `跳转缺目标要报出来`() {
+        // FIELDS.md:546。不给的话运行时一定报错。
+        val s = Z.Script.parse(
+            JSONObject("""{"actions":[{"type":"控制执行","controlRunType":"jumpTo","delayUnit":1}]}""")
+        )
+        assertTrue(ZScriptIO.validate(s).any { it.contains("缺跳转目标") })
+    }
+
+    @Test
+    fun `给了跳转目标就不报`() {
+        val s = Z.Script.parse(
+            JSONObject("""{"actions":[{"type":"控制执行","controlRunType":"jumpTo",
+                "jumpToPosition":"start","delayUnit":1}]}""")
+        )
+        assertTrue(ZScriptIO.validate(s).none { it.contains("跳转") })
+    }
+
+    @Test
+    fun `执行脚本缺路径要报出来`() {
+        val s = Z.Script.parse(JSONObject("""{"actions":[{"type":"执行脚本","delayUnit":1}]}"""))
+        assertTrue(ZScriptIO.validate(s).any { it.contains("缺脚本路径") })
+    }
+
+    @Test
+    fun `已禁用的不支持动作不进问题列表`() {
+        // 否则"⚠ 行"在真实脚本上常年不为空，用户学会忽略它
+        val s = Z.Script.parse(
+            JSONObject("""{"actions":[{"type":"多指手势","disabled":true,"delayUnit":1}]}""")
+        )
+        assertTrue(ZScriptIO.validate(s).none { it.contains("暂不支持") })
+
+        // 启用的才报
+        val on = Z.Script.parse(JSONObject("""{"actions":[{"type":"多指手势","delayUnit":1}]}"""))
+        assertTrue(ZScriptIO.validate(on).any { it.contains("暂不支持") })
+    }
 }

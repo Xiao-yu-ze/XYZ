@@ -12,6 +12,7 @@
     {
       "type": "点击",
       "desc": "点开始按钮",
+      "jumpId": "start",
       "delayUnit": 1,
       "delay": "1",
       "duration": "100",
@@ -66,9 +67,9 @@
     {
       "type": "控制执行",
       "controlRunType": "jumpTo",
-      "desc": "无条件跳回开头",
+      "desc": "跳到标了 start 的那一条",
       "delayUnit": 1,
-      "jumpId": "start"
+      "jumpToPosition": "start"
     },
     {
       "type": "多指手势",

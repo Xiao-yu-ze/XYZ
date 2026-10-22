@@ -103,7 +103,21 @@ object ZScriptIO {
     /**
      * 检查脚本，返回给用户看的问题列表。
      *
-     * 只报告**能确定**的问题（比如缺坐标），不猜语义。
+     * ## 只报告能确定的问题
+     *
+     * 不猜语义。但"能确定"的范围比想象中大 —— 协议里明确了哪些字段是必填的，
+     * 缺了动作一定跑不起来，那些都该报（见下面每个分支的依据）。
+     *
+     * ## 为什么按动作类型检查位置类型
+     *
+     * FIELDS.md:434 / 443：`点击` 只接受 `location`，`点击图片` 只接受 `image`……
+     * 所以「点击图片 + location 位置」是坏脚本。不报的话，界面上
+     * 「位置 X 640」看着完全正常，运行起来永远匹配不到。
+     *
+     * ## 已禁用 / 暂不支持的动作
+     *
+     * 暂不支持的动作**只在启用时才报**。一个 `disabled:true` 的多指手势
+     * 不该进问题列表 —— 否则"⚠ 行"在真实脚本上常年不为空，用户学会忽略它。
      */
     fun validate(script: Z.Script): List<String> {
         val issues = ArrayList<String>()
@@ -111,21 +125,58 @@ object ZScriptIO {
 
         script.actions.forEachIndexed { i, action ->
             val where = "第 ${i + 1} 个（${actionLabel(action)}）"
-            when (action.type) {
-                Z.ActionType.CLICK, Z.ActionType.CLICK_IMAGE,
-                Z.ActionType.CLICK_TEXT, Z.ActionType.CLICK_COLOR,
-                Z.ActionType.CLICK_NODE -> {
-                    if (action.posData == null) issues.add("$where 缺位置")
-                }
+            val wanted = ZFieldEditor.expectedPosType(action.type)
 
-                Z.ActionType.SWIPE -> {
-                    if (action.startPos == null) issues.add("$where 缺起点")
-                    if (action.endPos == null) issues.add("$where 缺终点")
-                }
+            // ---- 位置类动作
+            if (wanted != null) {
+                when (action.type) {
+                    Z.ActionType.SWIPE -> {
+                        // FIELDS.md:448-454：起点终点必填，且都必须是 location
+                        if (action.startPos == null) issues.add("$where 缺起点")
+                        else if (action.startPos.type != Z.PosType.LOCATION) {
+                            issues.add("$where 起点必须是坐标，现在是 ${action.startPos.type.wire}")
+                        }
+                        if (action.endPos == null) issues.add("$where 缺终点")
+                        else if (action.endPos.type != Z.PosType.LOCATION) {
+                            issues.add("$where 终点必须是坐标，现在是 ${action.endPos.type.wire}")
+                        }
+                    }
 
-                else -> Unit
+                    else -> {
+                        val pos = action.posData
+                        if (pos == null) {
+                            issues.add("$where 缺位置")
+                        } else if (pos.type != wanted) {
+                            issues.add("$where 位置类型必须是 ${wanted.wire}，现在是 ${pos.type.wire}")
+                        }
+                    }
+                }
             }
-            if (!action.type.executable) {
+
+            // ---- 控制执行：跳转目标 / 目标动作必填
+            // FIELDS.md:541-546 —— 缺了运行时一定报错
+            if (action.type == Z.ActionType.CONTROL_JUMP) {
+                if (action.extra["jumpToPosition"] == null) {
+                    issues.add("$where 缺跳转目标（jumpToPosition）")
+                }
+            }
+            if (action.type == Z.ActionType.CONTROL_RUN_AIM) {
+                if (action.extra["aimActionPosition"] == null) {
+                    issues.add("$where 缺目标动作（aimActionPosition）")
+                }
+            }
+
+            // ---- 执行脚本：文件路径必填
+            // FIELDS.md:522
+            if (action.type == Z.ActionType.RUN_SCRIPT) {
+                val p = action.extra["filePath"]
+                if (p == null || p.toString().isBlank()) {
+                    issues.add("$where 缺脚本路径（filePath）")
+                }
+            }
+
+            // ---- 暂不支持：只在启用时报
+            if (!action.type.executable && !action.common.disabled) {
                 issues.add("$where 安卓上暂不支持")
             }
         }
