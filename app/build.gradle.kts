@@ -14,6 +14,17 @@ android {
     namespace = "com.pvz2.auto"
     compileSdk = 35
 
+    /**
+     * 单测里允许调用 android.util.Log 等框架方法。
+     *
+     * 默认行为是抛 "Method e in android.util.Log not mocked" ——
+     * 于是任何在**失败路径**上打日志的代码都没法在 JVM 单测里跑，
+     * 而失败路径恰恰最需要测：坏 JSON、文件不存在、权限错误。
+     */
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     defaultConfig {
         applicationId = "com.pvz2.auto"
         minSdk = 26          // Android 8.0 as required
