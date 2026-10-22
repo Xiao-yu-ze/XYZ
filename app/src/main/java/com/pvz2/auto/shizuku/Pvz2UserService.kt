@@ -619,7 +619,7 @@ class Pvz2UserService : IPvz2Service.Stub() {
      * 上一个坐标）过来，光是序列化就够把手指动作拖成阶梯。所以状态留在这边，
      * App 只传坐标。
      */
-    private val gesture = GestureInjector()
+    private val gesture = GestureInjector { runShell(it) }
 
     override fun gestureDown(displayId: Int, x: Float, y: Float): Boolean =
         gesture.start(displayId, x, y)
@@ -630,40 +630,61 @@ class Pvz2UserService : IPvz2Service.Stub() {
 
     override fun gestureCancel() = gesture.cancel()
 
-    private class GestureInjector {
+    private class GestureInjector(
+        /** 执行 shell 命令并返回合并后的输出。由外层类提供。 */
+        private val exec: (String) -> String
+    ) {
 
-        private var active: InputInjector.Gesture? = null
-        private var lastX = 0f
-        private var lastY = 0f
+        private var displayId = 0
+        private var active = false
 
+        /**
+         * 开始手势。
+         *
+         * ## 为什么用 `input motionevent` 而不是 MotionEvent.obtain
+         *
+         * 自己构造 MotionEvent 需要 `InputEvent.setDisplayId(int)`，
+         * 而 **Android 16（SDK 36）把这个方法移除了** —— 真机上每个事件都报
+         * `NoSuchMethodException`，点击和拖动全部失效。
+         *
+         * `input -d N motionevent DOWN/MOVE/UP x y` 是系统自带的命令，
+         * 和一直能用的 `input -d N tap` 走同一套权限，不依赖任何隐藏 API。
+         * 代价是每次一条命令（fork 一个进程，约 10~20ms），
+         * 对 30fps 的跟手够了。
+         */
         fun start(displayId: Int, x: Float, y: Float): Boolean {
-            lastX = x
-            lastY = y
-            active = runCatching { InputInjector.beginGesture(displayId, x, y) }
-                .onFailure { Log.e(TAG, "手势开始失败", it) }
-                .getOrNull()
-            return active != null
+            this.displayId = displayId
+            active = send("DOWN", x, y)
+            return active
         }
 
         fun moveTo(x: Float, y: Float) {
-            val g = active ?: return
-            // 亚像素抖动过滤：手指"按住"时总在抖，每次都发会塞满输入队列。
-            if (kotlin.math.abs(x - lastX) < 0.8f && kotlin.math.abs(y - lastY) < 0.8f) return
-            lastX = x
-            lastY = y
-            g.moveTo(x, y)
+            if (!active) return
+            send("MOVE", x, y)
         }
 
         fun finish(x: Float, y: Float) {
-            val g = active ?: return
-            active = null
-            g.finish(x, y)
+            if (!active) return
+            active = false
+            send("UP", x, y)
         }
 
         fun cancel() {
-            val g = active ?: return
-            active = null
-            g.cancel()
+            if (!active) return
+            active = false
+            send("CANCEL", 0f, 0f)
+        }
+
+        private fun send(action: String, x: Float, y: Float): Boolean {
+            val out = runCatching {
+                exec("input -d $displayId motionevent $action ${x.toInt()} ${y.toInt()}")
+            }.getOrNull() ?: return false
+            // input 失败时往 stderr 写东西、退出码仍是 0 —— 判据是输出为空。
+            if (out.isNotBlank()) {
+                Log.w(TAG, "motionevent $action 输出：${out.trim().take(200)}")
+                return false
+            }
+            return true
         }
     }
 

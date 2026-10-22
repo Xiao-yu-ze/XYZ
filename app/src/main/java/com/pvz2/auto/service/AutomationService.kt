@@ -422,7 +422,16 @@ class AutomationService : Service() {
      * 现在第一次需要时把它建出来，之后复用。
      */
     private suspend fun ensureInjector(): TouchInjector? {
-        injector?.let { return it }
+        // ★ 早退分支也必须同步 sharedInjector。
+        //
+        //   原来写 `injector?.let { return it }` —— 注入器已存在时直接返回，
+        //   **不同步静态引用**。而预览手势读的是 sharedInjector，于是
+        //   "注入器明明建好了、手势却永远说没就绪"，而且这条路径上
+        //   一行日志都不打，看着像 ensureInjector 根本没被调用。
+        injector?.let {
+            sharedInjector = it
+            return it
+        }
 
         if (!ShizukuBridge.hasPermission()) {
             Log.w(TAG, "ensureInjector: 没有 Shizuku 权限")

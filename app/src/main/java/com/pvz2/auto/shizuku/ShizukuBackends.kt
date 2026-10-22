@@ -111,22 +111,39 @@ class ShizukuTouchInjector(
      * 直接在本进程调 `InputInjector`：既能用，每个 MOVE 还省一次 AIDL 往返。
      */
     override fun beginGesture(x: Float, y: Float): com.pvz2.auto.core.StreamingGesture? {
-        val target = displayIdProvider()
-        if (target <= 0) {
-            Log.w(TAG, "手势未开始：displayId=$target 无效")
+        // 走 AIDL 到 shell 进程，用 `input -d N motionevent` 注入。
+        //
+        //   本地 `InputInjector` 那条路走不通：它要 `InputEvent.setDisplayId(int)`，
+        //   而 Android 16 把这个方法删了，每个事件都抛 NoSuchMethodException。
+        //   `input` 命令是系统自带的，和一直能用的 `input -d N tap` 同一套权限。
+        val service = client.peek() ?: run {
+            Log.w(TAG, "手势失败：Shizuku 服务未连接")
             return null
         }
-        val inner = runCatching { InputInjector.beginGesture(target, x, y) }
-            .onFailure { Log.e(TAG, "手势开始失败 display=$target", it) }
-            .getOrNull()
-        if (inner == null) {
-            Log.w(TAG, "手势开始返回 null display=$target")
+        val target = displayIdProvider()
+        if (target <= 0) {
+            Log.w(TAG, "手势失败：displayId=$target 无效")
+            return null
+        }
+        val ok = runCatching { service.gestureDown(target, x, y) }
+            .onFailure { Log.e(TAG, "gestureDown 异常", it) }
+            .getOrDefault(false)
+        if (!ok) {
+            Log.w(TAG, "手势按下未被接受 display=$target ($x,$y)")
             return null
         }
         return object : com.pvz2.auto.core.StreamingGesture {
-            override fun moveTo(x: Float, y: Float) = inner.moveTo(x, y)
-            override fun finish(x: Float, y: Float) = inner.finish(x, y)
-            override fun cancel() = inner.cancel()
+            override fun moveTo(x: Float, y: Float) {
+                runCatching { service.gestureMove(x, y) }
+            }
+
+            override fun finish(x: Float, y: Float) {
+                runCatching { service.gestureUp(x, y) }
+            }
+
+            override fun cancel() {
+                runCatching { service.gestureCancel() }
+            }
         }
     }
 

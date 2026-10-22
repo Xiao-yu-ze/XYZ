@@ -1,6 +1,7 @@
 package com.pvz2.auto.shizuku
 
 import android.content.Context
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
@@ -10,6 +11,37 @@ import android.view.MotionEvent
 /**
  * 往指定 display 注入触摸。
  *
+ * ## ⚠️ 这个类在 Android 16 上已经不能用于**指定副屏**
+ *
+ * 真机（SDK 36）实测：`InputEvent.setDisplayId(int)` **被移除了**。
+ *
+ * ```
+ * java.lang.NoSuchMethodException: android.view.InputEvent.setDisplayId [int]
+ * ```
+ *
+ * 于是每一个事件都在设置目标屏这一步抛异常，`injectInputEvent` 根本走不到。
+ * 替代方案也都试过、都不成立：
+ *
+ * | 尝试 | 结果 |
+ * |---|---|
+ * | `InputEvent.setDisplayId(int)` | 方法不存在 |
+ * | `MotionEvent.nativeSetDisplayId(long,int)` | 存在，但取不到 native 指针 |
+ * | 反射字段 `mNativePtr` | 字段不存在 |
+ *
+ * **结论：SDK 36 上要往副屏注入，只能用 `input -d N motionevent`。**
+ * 手势走的是那条路（见 `Pvz2UserService.GestureInjector`）。
+ * 这个类的 `tap`/`swipe` 目前只对 display 0 有效（displayId 为 0 时不调
+ * `setDisplayId`，整条链路才成立）。
+ *
+ * ## 这段历史值得留着，因为踩过两次
+ *
+ * 第一次是 `injectInputEvent` 连主屏都被拒，照 scrcpy 逐行比对后修好了三处（见下）。
+ * 第二次是加手势时把触摸从 `input` 命令改到这条路上 —— 点击和拖动**同时失效**，
+ * 而点击此前一直是好的，因为点击走的是 `input -d tap`，从来没经过这里。
+ *
+ * **教训：一条一直能用的路径，不要因为"新功能看起来更直接"就换掉它。**
+ * 换之前先确认新路径在同一台设备上验证过。
+ *
  * ## 这份实现是照抄 scrcpy 的，不是推出来的
  *
  * 对照来源（都已读过源码）：
@@ -17,7 +49,7 @@ import android.view.MotionEvent
  *  - `server/.../device/Device.java` 的 `injectEvent()`
  *  - `server/.../control/Controller.java` 的 `injectTouch()`
  *
- * ## 之前为什么一直失败
+ * ## 第一次为什么一直失败
  *
  * 真机四路对比的结果是：`input -d 65 tap` 能通，而自己的 `injectInputEvent`
  * **连 display 0 都被拒**（所以不是权限、也不是副屏路由）。和 scrcpy 逐行比对后，
@@ -65,6 +97,9 @@ internal object InputInjector {
 
     @Volatile
     private var setDisplayIdMethod: java.lang.reflect.Method? = null
+
+    /** 缓存 MotionEvent 的 native 指针取值方法。 */
+    private var nativePtrMethod: java.lang.reflect.Method? = null
 
     /**
      * 取 `android.hardware.input.InputManager`。
@@ -135,14 +170,61 @@ internal object InputInjector {
 
     /** `InputEvent.setDisplayId(int)`。scrcpy 在 `InputEvent.class` 上取。 */
     internal fun setDisplayId(event: InputEvent, displayId: Int): Boolean = runCatching {
-        val method = setDisplayIdMethod
-            ?: InputEvent::class.java
-                .getMethod("setDisplayId", Int::class.javaPrimitiveType)
-                .also { setDisplayIdMethod = it }
-        method.invoke(event, displayId)
+        // ★ Android 16（SDK 36）移除了 InputEvent.setDisplayId(int)。
+        //
+        //   真机日志：`NoSuchMethodException: android.view.InputEvent.setDisplayId [int]`
+        //   —— 每个注入的事件都在这行失败，于是"点了没反应"。
+        //
+        //   现在只剩包内的 `MotionEvent.nativeSetDisplayId(long nativePtr, int)`。
+        //   所以按版本分派：旧版用公有方法，新版走 native。
+        if (Build.VERSION.SDK_INT >= 36 && event is MotionEvent) {
+            nativeSetDisplayId(event, displayId)
+        } else {
+            val method = setDisplayIdMethod
+                ?: InputEvent::class.java
+                    .getMethod("setDisplayId", Int::class.javaPrimitiveType)
+                    .also { setDisplayIdMethod = it }
+            method.invoke(event, displayId)
+        }
         true
     }.onFailure { Log.e(TAG, "setDisplayId 失败 display=$displayId", it) }
         .getOrDefault(false)
+
+    /**
+     * 走 `MotionEvent.nativeSetDisplayId(long, int)` 设置目标屏。
+     *
+     * 参数是 MotionEvent 的 native 指针，用 `nativeGetPtr` 那样的包内方法取 ——
+     * 但那个方法本身也是隐藏的，所以先试 `getNativePtr`，再退回字段读取。
+     */
+    private fun nativeSetDisplayId(event: MotionEvent, displayId: Int) {
+        val ptr = nativePtrOf(event)
+        if (ptr == 0L) throw IllegalStateException("取不到 MotionEvent 的 native 指针")
+        val m = MotionEvent::class.java.getDeclaredMethod(
+            "nativeSetDisplayId", Long::class.javaPrimitiveType, Int::class.javaPrimitiveType
+        )
+        m.isAccessible = true
+        m.invoke(null, ptr, displayId)
+    }
+
+    /** 取 MotionEvent 的 native 指针。 */
+    private fun nativePtrOf(event: MotionEvent): Long {
+        val cached = nativePtrMethod
+        if (cached != null) return cached.invoke(event) as Long
+        // 先试包内方法（名字在各版本上是 nativeGetPtr / getNativePtr 之一）
+        for (name in listOf("nativeGetPtr", "getNativePtr")) {
+            val m = runCatching {
+                MotionEvent::class.java.getDeclaredMethod(name).also { it.isAccessible = true }
+            }.getOrNull()
+            if (m != null) {
+                nativePtrMethod = m
+                return m.invoke(event) as Long
+            }
+        }
+        // 退回读字段
+        val f = MotionEvent::class.java.getDeclaredField("mNativePtr")
+        f.isAccessible = true
+        return f.getLong(event)
+    }
 
     /**
      * 注入一个事件。
