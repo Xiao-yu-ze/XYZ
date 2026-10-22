@@ -52,6 +52,8 @@ class ZjsEditorPage(
     private val adapter = ActionAdapter()
 
     /** 当前展开的动作下标。-1 = 全收起。 */
+    /** 当前打开的条件弹窗。改字段时要先关掉它再重开，否则会层层叠加。 */
+    private var conditionDialog: androidx.appcompat.app.AlertDialog? = null
     private var expandedIndex = -1
 
     /** 当前打开的脚本。编辑都改这一份，界面从它重绘。 */
@@ -391,6 +393,231 @@ class ZjsEditorPage(
     }
 
     /**
+     * 一行字段的渲染。动作卡片和条件弹窗**共用这一份**。
+     *
+     * ## 为什么要共用
+     *
+     * 条件弹窗原来是把行拼成一个字符串数组丢给 setItems —— 于是同一个
+     * 「模板」字段，在动作里是缩略图 + 剪刀，在条件里变成一行"模板：未设置"。
+     * 相似度也一样：动作里是滑块，条件里只能弹输入框。
+     * 用户会以为这是两个不相干的东西。
+     *
+     * 所以渲染只写一份，点击/开关/滑块各自传进来。
+     */
+    private fun buildRowView(
+        row: ZActionDescriber.Row,
+        imageData: Z.ImageData?,
+        onClick: () -> Unit,
+        onToggle: (Boolean) -> Unit,
+        onPercent: (Int) -> Unit
+    ): View {
+        val ctx = host
+
+        // ---- 小节标题：不是字段，只画一行淡字
+        if (row.kind == ZActionDescriber.Kind.SECTION) {
+            return TextView(ctx).apply {
+                text = row.label
+                textSize = 11f
+                setTextColor(ctx.getColor(R.color.ink_faint))
+                setPadding(0, dp(10), 0, dp(2))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+        }
+
+        val line = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            minimumHeight = dp(38)
+            setPadding(0, dp(2), 0, dp(2))
+        }
+
+        // 标签窄一点、淡一点。它是"这行是什么"，不是内容本身。
+        val label = TextView(ctx).apply {
+            text = row.label
+            textSize = 12f
+            setTextColor(ctx.getColor(R.color.ink_muted))
+            layoutParams = LinearLayout.LayoutParams(dp(84), LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        line.addView(label)
+
+        // ---- 开关：布尔值直接拨，不弹窗
+        if (row.kind == ZActionDescriber.Kind.SWITCH) {
+            val sw = com.google.android.material.switchmaterial.SwitchMaterial(ctx).apply {
+                isChecked = row.value == "是"
+                layoutParams = LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                )
+                text = ""
+            }
+            sw.setOnCheckedChangeListener { _, checked ->
+                onToggle(checked)
+            }
+            line.addView(sw)
+            return line
+        }
+
+        // ---- 百分比：滑块 + 可点的数字
+        if (row.kind == ZActionDescriber.Kind.PERCENT) {
+            val cur = row.value.removeSuffix("%").toIntOrNull() ?: 90
+            val bar = android.widget.SeekBar(ctx).apply {
+                max = 100
+                progress = cur.coerceIn(0, 100)
+                layoutParams = LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                )
+            }
+            // 拖动中只更新数字，松手才写回 —— 每动一下都写一次会把
+            // 整个列表重算几十遍，滑动卡成幻灯片。
+            val num = TextView(ctx).apply {
+                text = "$cur%"
+                textSize = 14f
+                setTextColor(ctx.getColor(R.color.ink))
+                gravity = android.view.Gravity.END
+                minWidth = dp(52)
+            }
+            bar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
+                    num.text = "$p%"
+                }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar?) = Unit
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {
+                    onPercent(sb?.progress ?: cur)
+                }
+            })
+            // 点数字可以填精确值：滑块拖不准 90 和 92 的差别
+            num.setOnClickListener { onClick() }
+            line.addView(bar)
+            line.addView(num)
+            return line
+        }
+
+        // ---- 模板：显示缩略图，不是「212×211，125352 字符」
+        //
+        // 那串字符数对用户没有任何意义 —— 他要知道的是"我截的是哪个图案"，
+        // 而这件事只能看图。
+        if (row.kind == ZActionDescriber.Kind.IMAGE) {
+            val img = imageData
+            if (img != null) {
+                val thumb = android.widget.ImageView(ctx).apply {
+                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                    setBackgroundColor(0x11000000)
+                    layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+                }
+                templateThumb(img.data)?.let { thumb.setImageBitmap(it) }
+                line.addView(thumb)
+            }
+            line.addView(TextView(ctx).apply {
+                text = if (img != null) "${img.width ?: 0}×${img.height ?: 0}" else "未设置"
+                textSize = 13f
+                setTextColor(ctx.getColor(R.color.ink_muted))
+                setPadding(dp(8), 0, 0, 0)
+                layoutParams = LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                )
+            })
+            if (row.field.isNotEmpty()) {
+                line.addView(glyphButton("✂", "在画面上截取模板") {
+                    onClick()
+                })
+            }
+            return line
+        }
+
+        val value = TextView(ctx).apply {
+            text = row.value.ifEmpty { "—" }
+            textSize = 14f
+            // 值比标签重要：标签是"这行是什么"，值才是用户要读的东西
+            setTextColor(
+                ctx.getColor(
+                    if (row.kind == ZActionDescriber.Kind.READONLY) R.color.ink_muted else R.color.ink
+                )
+            )
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setSingleLine(false)
+        }
+        line.addView(value)
+
+        // 可编辑字段点一下弹输入框。
+        // 只读字段不挂点击 —— 挂了会让人以为能改，点了没反应比不能点更糟。
+        // 坐标和模板**不给整行点击**：
+        //   坐标弹窗让用户手输像素，而他根本不知道那个按钮在第几像素 ——
+        //   必须用准星在画面上取。
+        //   模板弹窗只能改摘要字符串，里面的 base64 他改不了，纯耽误事。
+        val clickable = row.kind != ZActionDescriber.Kind.READONLY &&
+            row.kind != ZActionDescriber.Kind.COORD &&
+            row.kind != ZActionDescriber.Kind.IMAGE &&
+            row.field.isNotEmpty()
+        if (clickable) {
+            line.setBackgroundResource(android.R.drawable.list_selector_background)
+            line.setOnClickListener {
+                // ENTER 是"点进去看另一层"，不是改标量 ——
+                // 弹输入框只能改到摘要字符串，里面那层还是原样。
+                if (row.kind == ZActionDescriber.Kind.ENTER) {
+                    onClick()
+                } else {
+                    onClick()
+                }
+            }
+        }
+
+        // 坐标字段多一个取点按钮。
+        // 取 X 和 Y 是一次操作同时拿到的，所以 X 行放按钮、Y 行不放 ——
+        // 两个按钮会让人以为要分别取。
+        if (row.kind == ZActionDescriber.Kind.COORD && row.field.endsWith(".x")) {
+            val base = row.field.removeSuffix(".x")
+            line.addView(glyphButton("⊕", "在画面上取 $base 坐标") {
+                onClick()
+            })
+        }
+
+        // 识别范围（ROI）：在画面上框一块。
+        if (row.kind == ZActionDescriber.Kind.AREA && row.field.isNotEmpty()) {
+            line.addView(glyphButton("⊕", "在画面上框选识别范围") {
+                onClick()
+            })
+        }
+
+        // 模板图：在画面上框一块并直接裁下来。
+        if (row.kind == ZActionDescriber.Kind.IMAGE && row.field.isNotEmpty()) {
+            line.addView(glyphButton("✂", "在画面上截取模板") {
+                onClick()
+            })
+        }
+
+        // "进去另一层"的行给个 › ，和弹输入框的行区分开。
+        if (row.kind == ZActionDescriber.Kind.ENTER) {
+            line.addView(TextView(ctx).apply {
+                text = "›"
+                textSize = 18f
+                setTextColor(ctx.getColor(R.color.ink_faint))
+                setPadding(dp(4), 0, dp(2), 0)
+            })
+        }
+
+        return line
+    }
+
+    /** 行尾的小图标按钮。⊕ / ✂ 这类，统一尺寸和颜色。 */
+    private fun glyphButton(glyph: String, desc: String, onClick: () -> Unit): View =
+        TextView(host).apply {
+            text = glyph
+            textSize = 15f
+            setPadding(dp(10), 0, dp(2), 0)
+            setTextColor(host.getColor(R.color.ink_faint))
+            contentDescription = desc
+            setOnClickListener { onClick() }
+        }
+
+    private fun dp(v: Int): Int = (v * host.resources.displayMetrics.density).toInt()
+
+    /**
      * 编辑一个已存在的条件。
      *
      * 弹一个列表，把条件摊平成行 —— 和动作的字段行同一套结构，
@@ -401,15 +628,40 @@ class ZjsEditorPage(
         actionIndex: Int,
         condition: Z.Condition
     ) {
-        val rows = ZConditionEditor.describe(condition)
-        val labels = rows.map { "${it.label}：${it.value.ifEmpty { "—" }}" }.toTypedArray()
+        // 先关掉上一个，否则每次改字段都会在旧的上面再叠一个
+        conditionDialog?.dismiss()
 
-        androidx.appcompat.app.AlertDialog.Builder(host)
+        val rows = ZConditionEditor.describe(condition)
+        val box = LinearLayout(host).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+        }
+
+        for (row in rows) {
+            box.addView(
+                buildRowView(
+                    row = row,
+                    imageData = conditionImageData(condition, row.field),
+                    onClick = { editConditionRow(action, actionIndex, condition, row) },
+                    onToggle = { checked ->
+                        commitConditionField(action, actionIndex, condition, row, if (checked) "是" else "否")
+                    },
+                    onPercent = { p -> commitConditionField(action, actionIndex, condition, row, "$p") }
+                )
+            )
+        }
+
+        val scroll = android.widget.ScrollView(host).apply {
+            addView(box)
+            // 条件字段比屏幕高，必须能滚 —— 用 setItems 时是系统帮忙滚的
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(420)
+            )
+        }
+
+        conditionDialog = androidx.appcompat.app.AlertDialog.Builder(host)
             .setTitle("条件")
-            .setItems(labels) { dlg, which ->
-                dlg.dismiss()
-                editConditionRow(action, actionIndex, condition, rows[which])
-            }
+            .setView(scroll)
             .setNeutralButton("删除条件") { _, _ ->
                 val updated = action.copy(common = action.common.copy(condition = null))
                 val list = currentActions().toMutableList()
@@ -422,6 +674,30 @@ class ZjsEditorPage(
             .setNegativeButton("关闭", null)
             .show()
     }
+
+    /** 条件某个字段的值改掉，然后重开条件弹窗（行内容要跟着变）。 */
+    private fun commitConditionField(
+        action: Z.Action,
+        actionIndex: Int,
+        condition: Z.Condition,
+        row: ZActionDescriber.Row,
+        value: String
+    ) {
+        ZConditionEditor.apply(condition, row.field, value)?.let {
+            applyCondition(action, actionIndex, it)
+            showConditionEditor(action, actionIndex, it)
+        }
+    }
+
+    /** 条件里某个字段对应的模板图。动作的模板在 posData，AI 的三张图在 extra。 */
+    private fun conditionImageData(condition: Z.Condition, field: String): Z.ImageData? =
+        when (field) {
+            "cond.image" -> condition.posData?.imageData
+            "aiImage1" -> condition.extra["image1"] as? Z.ImageData
+            "aiImage2" -> condition.extra["image2"] as? Z.ImageData
+            "aiImage3" -> condition.extra["image3"] as? Z.ImageData
+            else -> null
+        }
 
     /** 改条件里的一个字段，然后回到条件编辑列表。 */
     private fun editConditionRow(
@@ -451,6 +727,10 @@ class ZjsEditorPage(
 
         // 预览命中位置。条件和动作共用同一套预览，判定完全一致。
         if (row.field == "cond.preview") {
+            // 必须先关掉条件弹窗：它盖在预览区上面，结果条的「取消」被它挡住，
+            // 用户会以为取消坏了。
+            conditionDialog?.dismiss()
+            conditionDialog = null
             previewFor(condition.posData)
             return
         }
@@ -994,199 +1274,28 @@ class ZjsEditorPage(
              * 现在：布尔给开关、百分比给滑块、枚举点开选、其余弹输入框。
              * 一眼就能看出这行是什么、该怎么动。
              */
-            private fun makeRow(row: ZActionDescriber.Row, actionIndex: Int): View {
-                val ctx = host
-
-                // ---- 小节标题：不是字段，只画一行淡字
-                if (row.kind == ZActionDescriber.Kind.SECTION) {
-                    return TextView(ctx).apply {
-                        text = row.label
-                        textSize = 11f
-                        setTextColor(ctx.getColor(R.color.ink_faint))
-                        setPadding(0, dp(10), 0, dp(2))
-                        layoutParams = LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT
-                        )
-                    }
-                }
-
-                val line = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = android.view.Gravity.CENTER_VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    )
-                    minimumHeight = dp(38)
-                    setPadding(0, dp(2), 0, dp(2))
-                }
-
-                // 标签窄一点、淡一点。它是"这行是什么"，不是内容本身。
-                val label = TextView(ctx).apply {
-                    text = row.label
-                    textSize = 12f
-                    setTextColor(ctx.getColor(R.color.ink_muted))
-                    layoutParams = LinearLayout.LayoutParams(dp(84), LinearLayout.LayoutParams.WRAP_CONTENT)
-                }
-                line.addView(label)
-
-                // ---- 开关：布尔值直接拨，不弹窗
-                if (row.kind == ZActionDescriber.Kind.SWITCH) {
-                    val sw = com.google.android.material.switchmaterial.SwitchMaterial(ctx).apply {
-                        isChecked = row.value == "是"
-                        layoutParams = LinearLayout.LayoutParams(
-                            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-                        )
-                        text = ""
-                    }
-                    sw.setOnCheckedChangeListener { _, checked ->
+            /**
+             * 动作卡片里的一行。渲染交给 [buildRowView]，这里只决定"点了做什么"。
+             */
+            private fun makeRow(row: ZActionDescriber.Row, actionIndex: Int): View =
+                buildRowView(
+                    row = row,
+                    imageData = imageDataFor(row.field, actionIndex),
+                    onClick = {
+                        when (row.kind) {
+                            ZActionDescriber.Kind.ENTER -> onEnter(row, actionIndex)
+                            ZActionDescriber.Kind.COORD ->
+                                onPickPoint(row.field.removeSuffix(".x"), actionIndex)
+                            ZActionDescriber.Kind.AREA -> onPickRect(row.field, actionIndex)
+                            ZActionDescriber.Kind.IMAGE -> onPickTemplate(row.field, actionIndex)
+                            else -> onEditRequested(row, actionIndex)
+                        }
+                    },
+                    onToggle = { checked ->
                         commitFieldValue(row, actionIndex, if (checked) "是" else "否")
-                    }
-                    line.addView(sw)
-                    return line
-                }
-
-                // ---- 百分比：滑块 + 可点的数字
-                if (row.kind == ZActionDescriber.Kind.PERCENT) {
-                    val cur = row.value.removeSuffix("%").toIntOrNull() ?: 90
-                    val bar = android.widget.SeekBar(ctx).apply {
-                        max = 100
-                        progress = cur.coerceIn(0, 100)
-                        layoutParams = LinearLayout.LayoutParams(
-                            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-                        )
-                    }
-                    // 拖动中只更新数字，松手才写回 —— 每动一下都写一次会把
-                    // 整个列表重算几十遍，滑动卡成幻灯片。
-                    val num = TextView(ctx).apply {
-                        text = "$cur%"
-                        textSize = 14f
-                        setTextColor(ctx.getColor(R.color.ink))
-                        gravity = android.view.Gravity.END
-                        minWidth = dp(52)
-                    }
-                    bar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
-                        override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
-                            num.text = "$p%"
-                        }
-                        override fun onStartTrackingTouch(sb: android.widget.SeekBar?) = Unit
-                        override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {
-                            commitFieldValue(row, actionIndex, "${sb?.progress ?: cur}")
-                        }
-                    })
-                    // 点数字可以填精确值：滑块拖不准 90 和 92 的差别
-                    num.setOnClickListener { onEditRequested(row, actionIndex) }
-                    line.addView(bar)
-                    line.addView(num)
-                    return line
-                }
-
-                // ---- 模板：显示缩略图，不是「212×211，125352 字符」
-                //
-                // 那串字符数对用户没有任何意义 —— 他要知道的是"我截的是哪个图案"，
-                // 而这件事只能看图。
-                if (row.kind == ZActionDescriber.Kind.IMAGE) {
-                    val img = imageDataFor(row.field, actionIndex)
-                    if (img != null) {
-                        val thumb = android.widget.ImageView(ctx).apply {
-                            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-                            setBackgroundColor(0x11000000)
-                            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
-                        }
-                        templateThumb(img.data)?.let { thumb.setImageBitmap(it) }
-                        line.addView(thumb)
-                    }
-                    line.addView(TextView(ctx).apply {
-                        text = if (img != null) "${img.width ?: 0}×${img.height ?: 0}" else "未设置"
-                        textSize = 13f
-                        setTextColor(ctx.getColor(R.color.ink_muted))
-                        setPadding(dp(8), 0, 0, 0)
-                        layoutParams = LinearLayout.LayoutParams(
-                            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-                        )
-                    })
-                    if (row.field.isNotEmpty()) {
-                        line.addView(glyphButton("✂", "在画面上截取模板") {
-                            onPickTemplate(row.field, actionIndex)
-                        })
-                    }
-                    return line
-                }
-
-                val value = TextView(ctx).apply {
-                    text = row.value.ifEmpty { "—" }
-                    textSize = 14f
-                    // 值比标签重要：标签是"这行是什么"，值才是用户要读的东西
-                    setTextColor(
-                        ctx.getColor(
-                            if (row.kind == ZActionDescriber.Kind.READONLY) R.color.ink_muted else R.color.ink
-                        )
-                    )
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                    setSingleLine(false)
-                }
-                line.addView(value)
-
-                // 可编辑字段点一下弹输入框。
-                // 只读字段不挂点击 —— 挂了会让人以为能改，点了没反应比不能点更糟。
-                // 坐标和模板**不给整行点击**：
-                //   坐标弹窗让用户手输像素，而他根本不知道那个按钮在第几像素 ——
-                //   必须用准星在画面上取。
-                //   模板弹窗只能改摘要字符串，里面的 base64 他改不了，纯耽误事。
-                val clickable = row.kind != ZActionDescriber.Kind.READONLY &&
-                    row.kind != ZActionDescriber.Kind.COORD &&
-                    row.kind != ZActionDescriber.Kind.IMAGE &&
-                    row.field.isNotEmpty()
-                if (clickable) {
-                    line.setBackgroundResource(android.R.drawable.list_selector_background)
-                    line.setOnClickListener {
-                        // ENTER 是"点进去看另一层"，不是改标量 ——
-                        // 弹输入框只能改到摘要字符串，里面那层还是原样。
-                        if (row.kind == ZActionDescriber.Kind.ENTER) {
-                            onEnter(row, actionIndex)
-                        } else {
-                            onEditRequested(row, actionIndex)
-                        }
-                    }
-                }
-
-                // 坐标字段多一个取点按钮。
-                // 取 X 和 Y 是一次操作同时拿到的，所以 X 行放按钮、Y 行不放 ——
-                // 两个按钮会让人以为要分别取。
-                if (row.kind == ZActionDescriber.Kind.COORD && row.field.endsWith(".x")) {
-                    val base = row.field.removeSuffix(".x")
-                    line.addView(glyphButton("⊕", "在画面上取 $base 坐标") {
-                        onPickPoint(base, actionIndex)
-                    })
-                }
-
-                // 识别范围（ROI）：在画面上框一块。
-                if (row.kind == ZActionDescriber.Kind.AREA && row.field.isNotEmpty()) {
-                    line.addView(glyphButton("⊕", "在画面上框选识别范围") {
-                        onPickRect(row.field, actionIndex)
-                    })
-                }
-
-                // 模板图：在画面上框一块并直接裁下来。
-                if (row.kind == ZActionDescriber.Kind.IMAGE && row.field.isNotEmpty()) {
-                    line.addView(glyphButton("✂", "在画面上截取模板") {
-                        onPickTemplate(row.field, actionIndex)
-                    })
-                }
-
-                // "进去另一层"的行给个 › ，和弹输入框的行区分开。
-                if (row.kind == ZActionDescriber.Kind.ENTER) {
-                    line.addView(TextView(ctx).apply {
-                        text = "›"
-                        textSize = 18f
-                        setTextColor(ctx.getColor(R.color.ink_faint))
-                        setPadding(dp(4), 0, dp(2), 0)
-                    })
-                }
-
-                return line
-            }
+                    },
+                    onPercent = { p -> commitFieldValue(row, actionIndex, "$p") }
+                )
 
             /** 行尾的小图标按钮。⊕ / ✂ 这类，统一尺寸和颜色。 */
             private fun glyphButton(glyph: String, desc: String, onClick: () -> Unit): View =

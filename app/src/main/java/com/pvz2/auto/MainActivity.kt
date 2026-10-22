@@ -229,6 +229,15 @@ class MainActivity : AppCompatActivity() {
         observePreview()
         setupPager()
 
+        // 预览查找结果的「取消」。
+        //
+        // 这个工具条在预览区（activity_main）里，和取点模式无关 ——
+        // 从编辑器点「预览」进来时没有准星，也必须能取消。
+        // 必须在这里用 Activity 自己的 findViewById：功能页的 root 里没有它。
+        findViewById<MaterialButton>(R.id.btnResultsStop)?.setOnClickListener {
+            com.pvz2.auto.core.PreviewResults.stop()
+        }
+
         // Shizuku can arrive or disappear while we are on screen, so track both edges.
         ShizukuBridge.addPermissionResultListener(shizukuPermissionListener)
         ShizukuBridge.addBinderReceivedListener(binderReceivedListener)
@@ -423,12 +432,11 @@ class MainActivity : AppCompatActivity() {
         root.findViewById<MaterialButton>(R.id.btnVdStop).setOnClickListener {
             AutomationService.vdStop(this)
         }
-        // 预览查找结果：取消就停止轮询、清掉覆盖层。
-        // 放在 onCreate 而不是取点流程里 —— 这个工具条和取点模式无关，
-        // 从编辑器点「预览」进来时没有准星，也要能取消。
-        root.findViewById<MaterialButton>(R.id.btnResultsStop).setOnClickListener {
-            com.pvz2.auto.core.PreviewResults.stop()
-        }
+        // ★ 结果条在 activity_main 里，不属于本页 —— 它的接线在 onCreate。
+        //
+        //   以前写在这里：`root.findViewById(R.id.btnResultsStop)` 返回 null，
+        //   抛 NPE，被 setupPager 的 runCatching 吞掉。后果不只是「取消」没接上，
+        //   这一行之后的导出日志、渠道选择、Shizuku 刷新**也全都没执行**。
         // 导出日志：真机上没电脑连着时，这是唯一能把现场发给别人的办法。
         root.findViewById<MaterialButton>(R.id.btnExportLog).setOnClickListener {
             exportLogs()
