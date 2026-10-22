@@ -242,12 +242,28 @@ object Z {
         val vars: Map<String, org.json.JSONObject> = emptyMap()
     )
 
-    /** 所有能被 `__vars` 覆盖的字段名。序列化时要跳过它们。 */
-    internal val ACTION_FIELD_NAMES = setOf(
-        "desc", "jumpId", "duration", "delay", "repeatCount",
-        "repeatDelayValue", "fastRepeatMode", "mouseButton", "posData",
-        "startPos", "endPos", "keyCode", "inputText"
-    )
+    /**
+     * 监听槽位。7 个，顺序与 FIELDS.md:288-289 一致。
+     *
+     * 触发时机（FIELDS.md:292-300）：
+     *  - 前三个只在动作**有 condition** 时才触发；
+     *  - `afterExecSuc` 每次重复成功都触发；
+     *  - `afterExecFail` 一旦设置，会忽略 `pauseOnFail` 与全局失败监听；
+     *  - `afterExecFinish` 所有重复结束后触发一次，但**跳转跳出时不触发**。
+     */
+    enum class CallbackSlot(val wire: String, val label: String) {
+        BEFORE_CONDITION("beforeCondition", "检查运行条件前"),
+        AFTER_CONDITION_SUC("afterConditionSuc", "运行条件满足后"),
+        AFTER_CONDITION_FAIL("afterConditionFail", "运行条件失败后"),
+        BEFORE_START_EXEC("beforeStartExec", "动作开始运行前"),
+        AFTER_EXEC_SUC("afterExecSuc", "动作运行成功后"),
+        AFTER_EXEC_FAIL("afterExecFail", "动作运行失败后"),
+        AFTER_EXEC_FINISH("afterExecFinish", "动作运行结束后");
+
+        companion object {
+            fun of(wire: String): CallbackSlot? = entries.firstOrNull { it.wire == wire }
+        }
+    }
 
     /**
      * 一个动作。
@@ -262,6 +278,20 @@ object Z {
         val posData: PosData? = null,
         val startPos: PosData? = null,
         val endPos: PosData? = null,
+        /**
+         * 监听动作。7 个槽位，每个槽位是**一个完整的动作**（不是数组）。
+         *
+         * 依据 FIELDS.md:285-303，槽位名见 [CallbackSlot]。
+         *
+         * ## 为什么必须建模，不能当未知字段扔进 extra
+         *
+         * 扔进 extra 的话 JSON 结构不会坏（`JSONObject.toString()` 照样输出），
+         * 但**用户在编辑器里看不到它** —— 一个挂了 7 段监听的动作展开后
+         * 干干净净，用户会以为没挂监听，而那些监听在自动精灵里是会真的跑的。
+         *
+         * 空 map 视为"未设置"（FIELDS.md:303 `hasValue()`），落盘时不写。
+         */
+        val callbacks: Map<CallbackSlot, Action> = emptyMap(),
         val extra: MutableMap<String, Any?> = LinkedHashMap()
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
@@ -283,6 +313,13 @@ object Z {
             endPos?.let { put("endPos", it.toJson()) }
             extra.forEach { (k, v) -> put(k, v) }
 
+            // scriptCallbacks：空 map 不写（FIELDS.md:303 `hasValue()` 的语义）。
+            if (callbacks.isNotEmpty()) {
+                put("scriptCallbacks", JSONObject().apply {
+                    callbacks.forEach { (slot, act) -> put(slot.wire, act.toJson()) }
+                })
+            }
+
             // ★ __vars 必须在最后处理，而且要把被变量化的字段从顶层删掉。
             //
             //   自动精灵的规则：某个字段改用变量后，原字段不落盘 ——
@@ -300,7 +337,8 @@ object Z {
             private val HANDLED = setOf(
                 "type", "controlRunType", "desc", "jumpId", "duration", "delay", "delayUnit",
                 "repeatCount", "repeatDelayValue", "repeatDelayUnit", "fastRepeatMode",
-                "disabled", "condition", "posData", "startPos", "endPos", "__vars"
+                "disabled", "condition", "posData", "startPos", "endPos", "__vars",
+                "scriptCallbacks"
             )
 
             fun parse(o: JSONObject): Action? {
@@ -332,8 +370,26 @@ object Z {
                     posData = o.optJSONObject("posData")?.let { PosData.parse(it) },
                     startPos = o.optJSONObject("startPos")?.let { PosData.parse(it) },
                     endPos = o.optJSONObject("endPos")?.let { PosData.parse(it) },
+                    callbacks = parseCallbacks(o.optJSONObject("scriptCallbacks")),
                     extra = o.collectUnhandled(HANDLED)
                 )
+            }
+
+            /**
+             * 解析 7 个监听槽位（FIELDS.md:285-303）。
+             *
+             * 每个槽位是一个**完整动作**，不是数组。
+             * 认不出的槽位名跳过 —— 将来版本可能加第 8 个，
+             * 但跳过之后它就落进 extra 被保留，不会丢。
+             */
+            private fun parseCallbacks(o: JSONObject?): Map<CallbackSlot, Action> {
+                if (o == null) return emptyMap()
+                val out = LinkedHashMap<CallbackSlot, Action>()
+                for (key in o.keys()) {
+                    val slot = CallbackSlot.of(key) ?: continue
+                    o.optJSONObject(key)?.let { Action.parse(it) }?.let { out[slot] = it }
+                }
+                return out
             }
         }
     }
@@ -376,11 +432,34 @@ object Z {
             if (checkBeforeDelay) put("checkBeforeDelay", true)
             desc?.let { put("desc", it) }
             posData?.let {
-                // 条件里的位置对象按协议直接内嵌，键名随类型不同
-                when (type) {
-                    ConditionType.IMAGE, ConditionType.COLOR -> put("image", it.toJson())
-                    else -> put("text", it.toJson())
+                // 条件里的位置对象按协议直接内嵌，**键名随条件类型变化**。
+                //
+                // 依据 FIELDS.md:266-269：
+                //
+                //   image      -> image
+                //   textFount  -> text
+                //   colorFound -> colorData     ← 不是 image
+                //   nodeFound  -> node          ← 不是 text
+                //
+                // ## 写错不报错，但条件会静默失效
+                //
+                // 键名错了 JSON 结构依然合法，导出的文件也不报任何异常。
+                // 但自动精灵按 type 去取对应的键，取不到就当作**条件恒为 false**
+                // （SPEC.md:1031-1035：条件异常被吞掉、按不成立处理）。
+                //
+                // 用户看到的是"这条动作本来有颜色条件，导出后条件没了"，
+                // 而界面上一切正常。所以下面用显式映射，不用 when-else 兜底 ——
+                // 将来加新类型时漏写会被编译器提醒，而不是默认塞成 text。
+                val key = when (type) {
+                    ConditionType.IMAGE -> "image"
+                    ConditionType.TEXT -> "text"
+                    ConditionType.COLOR -> "colorData"
+                    ConditionType.NODE -> "node"
+                    // 其余条件类型不内嵌位置对象（FIELDS.md:270-278
+                    // 都是别的形状：aiCloud 有 image1/2/3，conditionSet 有 conditions 数组……）
+                    else -> null
                 }
+                key?.let { put(it, posData.toJson()) }
             }
             extra.forEach { (k, v) -> put(k, v) }
         }
@@ -394,8 +473,25 @@ object Z {
 
             fun parse(o: JSONObject): Condition? {
                 val type = ConditionType.of(o.optString("type")) ?: return null
-                val posObj = o.optJSONObject("image") ?: o.optJSONObject("text")
-                    ?: o.optJSONObject("colorData") ?: o.optJSONObject("node")
+
+                // 按类型取对应的内嵌位置键（FIELDS.md:266-269）。
+                //
+                // 先按本类型应有的键取，取不到再依次试其余三个 ——
+                // 兼顾两种情况：老文件键名不规范、以及别人手写的脚本。
+                // 但**首选**永远是协议规定的那一个，避免把 image 条件
+                // 误读成 text 条件。
+                val primary = when (type) {
+                    ConditionType.IMAGE -> "image"
+                    ConditionType.TEXT -> "text"
+                    ConditionType.COLOR -> "colorData"
+                    ConditionType.NODE -> "node"
+                    else -> null
+                }
+                val posObj = primary?.let { o.optJSONObject(it) }
+                    ?: o.optJSONObject("image")
+                    ?: o.optJSONObject("text")
+                    ?: o.optJSONObject("colorData")
+                    ?: o.optJSONObject("node")
                 return Condition(
                     type = type,
                     runWhenFalse = o.optBoolean("runWhenFalse", false),

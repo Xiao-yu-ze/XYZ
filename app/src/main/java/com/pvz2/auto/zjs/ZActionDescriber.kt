@@ -162,6 +162,28 @@ object ZActionDescriber {
             Kind.READONLY
         )
 
+        // ---- 监听（scriptCallbacks）
+        //
+        // 7 个槽位，每个槽位本身是一段完整动作。
+        //
+        // ## 为什么必须显示
+        //
+        // 一个挂了监听的动作用户展开后如果什么都看不到，他会以为没挂 ——
+        // 而那些监听在自动精灵里是会真的跑的。这里每个槽位一行，
+        // 显示槽位名 + 里面那个动作的标签，至少让用户知道"这里有事"。
+        if (action.callbacks.isNotEmpty()) {
+            // 按固定顺序列，不按 Map 的遍历顺序 —— 用户要能对照着看
+            Z.CallbackSlot.entries.forEach { slot ->
+                action.callbacks[slot]?.let { cb ->
+                    rows += Row(
+                        "监听·${slot.label}",
+                        ZScriptIO.actionLabel(cb),
+                        Kind.READONLY
+                    )
+                }
+            }
+        }
+
         // ---- 变量覆盖
         //
         // 列出来用户才知道哪些字段是运行时算的。这些行只读：
