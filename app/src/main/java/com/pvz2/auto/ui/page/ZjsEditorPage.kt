@@ -70,6 +70,26 @@ class ZjsEditorPage(
         val cur = script ?: return
         val action = cur.actions.getOrNull(actionIndex) ?: return
 
+        // 有限选项的字段直接列出来让用户选。
+        //
+        // ## 为什么不让用户手输
+        //
+        // 「快速重复」只能是否，「等待单位」只能是 ms/s/min/h。
+        // 让用户打字的话，打错了（"是的"、"毫秒"、"1s"）程序只能拒收
+        // 或者静默当默认值 —— 两种都不好。列出来点一下，不可能输错。
+        if (row.kind == ZActionDescriber.Kind.ENUM && row.options.isNotEmpty()) {
+            val current = row.options.indexOfFirst { it == row.value }.coerceAtLeast(0)
+            androidx.appcompat.app.AlertDialog.Builder(host)
+                .setTitle(row.label)
+                .setSingleChoiceItems(row.options.toTypedArray(), current) { dlg, which ->
+                    dlg.dismiss()
+                    commitField(cur, action, actionIndex, row, row.options[which])
+                }
+                .setNegativeButton("取消", null)
+                .show()
+            return
+        }
+
         val input = android.widget.EditText(host).apply {
             setText(row.value)
             setSingleLine(false)
@@ -87,26 +107,41 @@ class ZjsEditorPage(
             .setTitle(row.label)
             .setView(input)
             .setPositiveButton("确定") { _, _ ->
-                val newValue = input.text?.toString().orEmpty()
-                val updated = ZFieldEditor.apply(action, row.field, newValue)
-                if (updated == null) {
-                    // 值不合法（比如区域格式不对）。明确告诉用户，
-                    // 不要静默丢弃 —— 他会以为自己改成功了。
-                    android.widget.Toast.makeText(
-                        host, "「${row.label}」的值不合法，未保存", android.widget.Toast.LENGTH_SHORT
-                    ).show()
-                    return@setPositiveButton
-                }
-                val list = cur.actions.toMutableList()
-                list[actionIndex] = updated
-                script = cur.copy(actions = list)
-                adapter.submit(script!!.actions)
-                // 保持展开，用户接着改别的字段
-                expandedIndex = actionIndex
-                adapter.notifyItemChanged(actionIndex)
+                commitField(cur, action, actionIndex, row, input.text?.toString().orEmpty())
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    /**
+     * 把一个字段的新值写回模型并重绘这一条。
+     *
+     * 下拉选择和文本输入都走这里 —— 两条路径共用一份写回逻辑，
+     * 免得将来只有一条被改对。
+     */
+    private fun commitField(
+        cur: Z.Script,
+        action: Z.Action,
+        actionIndex: Int,
+        row: ZActionDescriber.Row,
+        newValue: String
+    ) {
+        val updated = ZFieldEditor.apply(action, row.field, newValue)
+        if (updated == null) {
+            // 值不合法（比如区域格式不对）。明确告诉用户，
+            // 不要静默丢弃 —— 他会以为自己改成功了。
+            android.widget.Toast.makeText(
+                host, "「${row.label}」的值不合法，未保存", android.widget.Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        val list = cur.actions.toMutableList()
+        list[actionIndex] = updated
+        script = cur.copy(actions = list)
+        adapter.submit(script!!.actions)
+        // 保持展开，用户接着改别的字段
+        expandedIndex = actionIndex
+        adapter.notifyItemChanged(actionIndex)
     }
 
     fun bind() {
