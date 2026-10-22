@@ -233,7 +233,14 @@ class ZExecutor(
                     skipped.add(Result.Skip(index, label, "缺 keyCode"))
                     return null
                 }
-                inject.key(kc, hold)
+                // 单条失败不该中断整个脚本 —— 一条按不了键，
+                // 后面几十条点击还是该照跑。
+                try {
+                    inject.key(kc, hold)
+                } catch (e: Throwable) {
+                    skipped.add(Result.Skip(index, label, "按键失败：${e.message}"))
+                    return null
+                }
                 Outcome()
             }
 
@@ -244,7 +251,12 @@ class ZExecutor(
                     skipped.add(Result.Skip(index, label, "没有要输入的内容"))
                     return null
                 }
-                inject.inputText(t)
+                try {
+                    inject.inputText(t)
+                } catch (e: Throwable) {
+                    skipped.add(Result.Skip(index, label, "输入失败：${e.message}"))
+                    return null
+                }
                 Outcome()
             }
 
