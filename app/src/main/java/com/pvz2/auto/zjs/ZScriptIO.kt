@@ -43,9 +43,22 @@ object ZScriptIO {
             val text = file.readText()
             if (text.isBlank()) return Loaded(error = "文件是空的", path = path)
 
-            val json = JSONObject(text)
-            val script = Z.Script.parse(json)
-            Log.i(TAG, "已读取 $path：${script.actions.size} 个动作")
+            // ★ 走真实的 .zjs 格式（NDJSON + CRLF），不是单个 JSON 对象。
+            //
+            //   以前这里 `JSONObject(text)` —— 拿真的 .zjs 喂进来直接抛
+            //   JSONException，用户看到"读不出 xxx.zjs"，而真实原因是我们
+            //   只认自己编的容器格式。
+            val result = ZjsFileFormat.parse(text)
+            if (result.error != null) return Loaded(error = result.error, path = path)
+
+            val script = result.script!!
+            if (result.badLines.isNotEmpty()) {
+                Log.w(TAG, "$path 有 ${result.badLines.size} 行解析失败：${result.badLines}")
+            }
+            if (result.linkedFiles.isNotEmpty()) {
+                Log.i(TAG, "$path 含 ${result.linkedFiles.size} 个内嵌子脚本（暂不解析，已保留）")
+            }
+            Log.i(TAG, "已读取 $path：${script.actions.size} 个动作，${result.badLines.size} 行失败")
             Loaded(script = script, path = path)
         } catch (t: Throwable) {
             Log.e(TAG, "读取失败 $path", t)
@@ -54,16 +67,33 @@ object ZScriptIO {
     }
 
     /**
-     * 写回脚本。
+     * 写回脚本，格式为真实的 `.zjs`（NDJSON + CRLF + baseInfo 注入字段）。
      *
-     * 用 `toString(2)` 缩进 —— 自动精灵自己也这么存，方便用户 diff
-     * 和手工检查。压成一行省几 KB 不值得。
+     * ## 以前为什么不对
+     *
+     * 原来是 `script.toJson().toString(2)` —— 一个缩进过的**单个** JSON 对象。
+     * 那个文件自动精灵**打不开**：它期望 NDJSON，第 1 行 baseInfo、
+     * 之后每行一个动作，且 baseInfo 里要有 minVerName/count 等字段。
+     *
+     * 当时没暴露是因为 save() 从没被调用过（编辑只在内存里）。
+     * 一旦接上保存按钮，用户拿到的就是坏文件。
+     *
+     * @param screenWidth / screenHeight / screenDpi 保存时的屏幕参数，
+     *        自动精灵靠它判断坐标是否需要换算
      */
-    fun save(script: Z.Script, path: String): Boolean = try {
+    fun save(
+        script: Z.Script,
+        path: String,
+        screenWidth: Int = 0,
+        screenHeight: Int = 0,
+        screenDpi: Float = 0f
+    ): Boolean = try {
         val file = File(path)
         file.parentFile?.mkdirs()
-        file.writeText(script.toJson().toString(2))
-        Log.i(TAG, "已保存 $path：${script.actions.size} 个动作")
+        // ★ UTF-8 无 BOM。writeText 默认就是 UTF-8 且不带 BOM ——
+        //   不能手工加 BOM，自动精灵会读不出来。
+        file.writeText(ZjsFileFormat.stringify(script, screenWidth, screenHeight, screenDpi))
+        Log.i(TAG, "已保存 $path：${script.actions.size} 个动作（${file.length()} 字节）")
         true
     } catch (t: Throwable) {
         Log.e(TAG, "保存失败 $path", t)
