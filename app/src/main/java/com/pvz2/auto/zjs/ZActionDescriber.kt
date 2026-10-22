@@ -98,25 +98,35 @@ object ZActionDescriber {
 
         // ---- 14 个通用字段，**缺省也显示**
         //
-        // 以前是"有什么显示什么"，于是没设过 delay 的动作就看不到这一行，
-        // 用户没法判断"这个字段不存在"还是"它等于默认值"。
-        // 自动精灵的编辑界面也是全部列出来的。
+        // ## 顺序照抄自动精灵
+        //
+        // 取自 SPEC.md 第 181 行（基类 m26622 的属性声明顺序，也就是 UI 绑定的顺序）：
+        //
+        //   type, desc, jumpId, duration, delay, delayUnit,
+        //   repeatCount, repeatDelayValue, repeatDelayUnit,
+        //   fastRepeatMode, disabled, condition, scriptCallbacks, __vars
+        //
+        // 顺序一致，用户在两个程序之间对照着看时不用重新找位置。
+        //
+        // ## 为什么缺省也显示
+        //
+        // 以前是"有什么显示什么"，没设过 delay 的动作就没有那一行，
+        // 用户分不清"字段不存在"和"它等于默认值"。
         rows += Row("备注", c.desc.orEmpty(), editKind("desc", c), field = "desc")
         rows += Row("跳转标识", c.jumpId.orEmpty(), editKind("jumpId", c), field = "jumpId")
         rows += Row("持续(ms)", c.duration.orEmpty(), numberKind("duration", c), field = "duration")
+
+        // 等待时间：**值和单位放同一行**。
+        //
+        // 分成两行（"等待" + "等待单位"）会让用户先看数字再看单位，
+        // 而这两个必须一起读才有意义 —— "2" 单独看不知道是 2 秒还是 2 毫秒。
         rows += Row(
-            "等待(${unitLabel(c.delayUnit)})",
-            c.delay.orEmpty(),
+            "等待",
+            "${c.delay.orEmpty()} ${unitLabel(c.delayUnit)}".trim(),
             editKind("delay", c),
             field = "delay"
         )
-        rows += Row(
-            "等待单位",
-            unitLabel(c.delayUnit),
-            if (c.vars.containsKey("delay")) Kind.READONLY else Kind.ENUM,
-            options = UNITS,
-            field = "delayUnit"
-        )
+
         rows += Row(
             "重复次数",
             when (val n = c.repeatCount) {
@@ -127,19 +137,15 @@ object ZActionDescriber {
             numberKind("repeatCount", c),
             field = "repeatCount"
         )
+
+        // 重复间隔同理，值和单位同一行。
         rows += Row(
-            "重复间隔(${unitLabel(c.repeatDelayUnit)})",
-            c.repeatDelayValue.orEmpty(),
+            "重复间隔",
+            "${c.repeatDelayValue.orEmpty()} ${unitLabel(c.repeatDelayUnit)}".trim(),
             numberKind("repeatDelayValue", c),
             field = "repeatDelayValue"
         )
-        // 单位不一致时才单列，否则显得啰嗦
-        if (c.repeatDelayUnit != c.delayUnit) {
-            rows += Row(
-                "重复单位", unitLabel(c.repeatDelayUnit), Kind.ENUM,
-                options = UNITS, field = "repeatDelayUnit"
-            )
-        }
+
         rows += Row(
             "快速重复", if (c.fastRepeatMode) "是" else "否", Kind.ENUM,
             options = YES_NO, field = "fastRepeatMode"

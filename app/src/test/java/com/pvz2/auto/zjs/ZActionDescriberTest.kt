@@ -74,11 +74,13 @@ class ZActionDescriberTest {
     }
 
     @Test
-    fun `时间单位会写进标签，避免把秒当毫秒`() {
-        val r = row("""{"type":"点击","delay":"2","delayUnit":1}""", "等待(s)")
-        assertTrue("应按秒显示：$r", r != null)
-        val ms = row("""{"type":"点击","delay":"200","delayUnit":0}""", "等待(ms)")
-        assertTrue("应按毫秒显示：$ms", ms != null)
+    fun `等待的值和单位在同一行`() {
+        // 分开两行的话，"2" 单独看不知道是 2 秒还是 2 毫秒 —— 必须一起读。
+        val sec = row("""{"type":"点击","delay":"2","delayUnit":1}""", "等待")!!
+        assertEquals("2 s", sec.value)
+
+        val ms = row("""{"type":"点击","delay":"200","delayUnit":0}""", "等待")!!
+        assertEquals("200 ms", ms.value)
     }
 
     @Test
@@ -127,7 +129,7 @@ class ZActionDescriberTest {
         // 以前是"有什么显示什么"，用户分不清"字段不存在"和"它等于默认值"。
         val labels = rows("""{"type":"点击","delayUnit":1}""").map { it.label }
         for (must in listOf(
-            "备注", "跳转标识", "持续(ms)", "等待单位", "重复次数",
+            "备注", "跳转标识", "持续(ms)", "等待", "重复次数", "重复间隔",
             "快速重复", "禁用", "条件"
         )) {
             assertTrue("缺 [$must]：$labels", labels.any { it.startsWith(must) })
