@@ -152,18 +152,31 @@ object ZActionDescriber {
         action.startPos?.let { rows += posRows("起点", it) }
         action.endPos?.let { rows += posRows("终点", it) }
 
-        // ---- 多指滑动：每根手指一组起终点
+        // ---- 多指滑动
         //
-        // 手指按 1、2、3 编号，而不用"第几个" ——
+        // 管理入口放在**每根手指的详情之前** —— 用户展开这个动作，
+        // 第一眼该看到"有几根手指、怎么加"，而不是先滚过一堆坐标。
+        //
+        // ★ 必须给 field，否则 UI 不会挂点击。只给 Kind.ENTER 是不够的：
+        //   makeRow 的判断是 `kind != READONLY && field.isNotEmpty()`，
+        //   field 空着就永远点不动。
+        if (action.type == Z.ActionType.MULTI_SWIPE) {
+            rows += Row(
+                "手指",
+                if (action.fingers.isEmpty()) "（还没有手指，点击添加）"
+                else "共 ${action.fingers.size} 根，点击管理",
+                Kind.ENTER,
+                field = "fingers"
+            )
+        }
+
+        // 每根手指一组起终点。按 1、2、3 编号而不用"第几个" ——
         // 多指滑动时用户想的是"食指在哪、中指在哪"，
         // 编号比序号更接近那个心智模型。
         action.fingers.forEachIndexed { i, finger ->
             val n = i + 1
             finger.startPos?.let { rows += posRows("手指$n 起点", it) }
             finger.endPos?.let { rows += posRows("手指$n 终点", it) }
-        }
-        if (action.type == Z.ActionType.MULTI_SWIPE && action.fingers.isEmpty()) {
-            rows += Row("手指", "（还没有手指，点击添加）", Kind.READONLY)
         }
 
         // ---- 14 个通用字段，**缺省也显示**

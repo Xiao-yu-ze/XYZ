@@ -216,4 +216,22 @@ class ZModelTest {
         )!!
         assertEquals(0, a.common.vars.size)
     }
+    // ------------------------------------------------------------ 旧名字兼容
+
+    @Test
+    fun `旧的 多指手势 名字还能读进来`() {
+        // 我们把它改名成「多指滑动」了，但用户旧脚本里写的是旧名字。
+        // 不认旧名字的话那条动作会被静默丢弃 —— 用户打开脚本发现少一条，
+        // 而界面上什么提示都没有。
+        val a = Z.Action.parse(JSONObject("""{"type":"多指手势","delayUnit":1}"""))
+        assertTrue("旧名字应该还认得", a != null)
+        assertEquals(Z.ActionType.MULTI_SWIPE, a!!.type)
+    }
+
+    @Test
+    fun `旧名字存出去时写成新名字`() {
+        // 读一次存一次就自动升级，用户不用手工改文件
+        val a = Z.Action.parse(JSONObject("""{"type":"多指手势","delayUnit":1}"""))!!
+        assertEquals("多指滑动", a.toJson().getString("type"))
+    }
 }

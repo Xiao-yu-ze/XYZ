@@ -235,4 +235,61 @@ class ZActionDescriberTest {
         assertEquals(ZActionDescriber.Kind.ENTER, cb!!.kind)
         assertEquals("callbacks", cb.field)
     }
+    // ------------------------------------------------------------ 多指滑动
+
+    @Test
+    fun `多指滑动的手指行必须可点`() {
+        // ★ 这条钉住一个真实的 bug：手指行一度是 READONLY 且没有 field，
+        //   于是 UI 不挂点击，用户点了没反应。
+        //   只设 Kind.ENTER 不够 —— makeRow 还要求 field 非空。
+        val r = rows("""{"type":"多指滑动","delayUnit":1}""")
+        val row = r.firstOrNull { it.label == "手指" }
+        assertTrue("应有手指行：${r.map { it.label }}", row != null)
+        assertEquals(ZActionDescriber.Kind.ENTER, row!!.kind)
+        assertTrue("field 不能为空，否则挂不上点击", row.field.isNotEmpty())
+        assertEquals("fingers", row.field)
+    }
+
+    @Test
+    fun `手指行显示根数`() {
+        val r = rows(
+            """{"type":"多指滑动","delayUnit":1,
+               "multiSwipe":[
+                 {"startPos":{"type":"location","x":"1","y":"2"},
+                  "endPos":{"type":"location","x":"3","y":"4"}},
+                 {"startPos":{"type":"location","x":"5","y":"6"},
+                  "endPos":{"type":"location","x":"7","y":"8"}}]}"""
+        )
+        val row = r.firstOrNull { it.label == "手指" }!!
+        assertTrue("应显示 2 根：${row.value}", row.value.contains("2"))
+    }
+
+    @Test
+    fun `手指行排在每根手指详情之前`() {
+        // 用户展开后第一眼该看到"怎么加"，而不是先滚过一堆坐标
+        val r = rows(
+            """{"type":"多指滑动","delayUnit":1,
+               "multiSwipe":[
+                 {"startPos":{"type":"location","x":"1","y":"2"},
+                  "endPos":{"type":"location","x":"3","y":"4"}}]}"""
+        )
+        val mgr = r.indexOfFirst { it.label == "手指" }
+        val detail = r.indexOfFirst { it.label.startsWith("手指1") }
+        assertTrue("管理行应在详情之前：mgr=$mgr detail=$detail", mgr in 0 until detail)
+    }
+
+    @Test
+    fun `每根手指都摊出起终点`() {
+        val labels = rows(
+            """{"type":"多指滑动","delayUnit":1,
+               "multiSwipe":[
+                 {"startPos":{"type":"location","x":"1","y":"2"},
+                  "endPos":{"type":"location","x":"3","y":"4"}},
+                 {"startPos":{"type":"location","x":"5","y":"6"},
+                  "endPos":{"type":"location","x":"7","y":"8"}}]}"""
+        ).map { it.label }
+        for (must in listOf("手指1 起点 X", "手指1 终点 Y", "手指2 起点 X", "手指2 终点 Y")) {
+            assertTrue("缺 [$must]：$labels", labels.any { it == must })
+        }
+    }
 }

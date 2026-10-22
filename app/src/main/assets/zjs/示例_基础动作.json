@@ -72,9 +72,20 @@
       "jumpToPosition": "start"
     },
     {
-      "type": "多指手势",
-      "desc": "双指缩放（安卓暂不支持，验证提示）",
-      "delayUnit": 1
+      "type": "多指滑动",
+      "desc": "双指下滑（两根手指同时）",
+      "delayUnit": 0,
+      "duration": "400",
+      "multiSwipe": [
+        {
+          "startPos": { "type": "location", "x": "40.00%", "y": "70.00%" },
+          "endPos": { "type": "location", "x": "40.00%", "y": "30.00%" }
+        },
+        {
+          "startPos": { "type": "location", "x": "60.00%", "y": "70.00%" },
+          "endPos": { "type": "location", "x": "60.00%", "y": "30.00%" }
+        }
+      ]
     }
   ]
 }

@@ -197,11 +197,28 @@ object Z {
         ENCRYPTED("加密动作");
 
         companion object {
+            /**
+             * 旧名字 → 新名字。
+             *
+             * ## 为什么必须留着
+             *
+             * 「多指手势」改成「多指滑动」是我们自己的重命名，但**用户的旧脚本里
+             * 写的是旧名字**。不认旧名字的话，那条动作在读取时会被静默丢弃 ——
+             * 用户打开脚本发现少了一条，而界面上什么提示都没有。
+             *
+             * 落盘时写成新名字（[ActionType.wire]），所以旧脚本读一次存一次
+             * 就自动升级了。
+             */
+            private val LEGACY_ALIASES = mapOf(
+                "多指手势" to MULTI_SWIPE
+            )
+
             fun ofWire(type: String, controlRunType: String?): ActionType? {
                 if (type == "控制执行") {
                     return entries.firstOrNull { it.controlRunType != null && it.controlRunType == controlRunType }
                         ?: CONTROL_WAIT
                 }
+                LEGACY_ALIASES[type]?.let { return it }
                 return entries.firstOrNull { it.controlRunType == null && it.wire == type }
             }
         }
