@@ -120,4 +120,52 @@ class ZActionDescriberTest {
         val c = Z.Condition.parse(JSONObject("""{"type":"random","percent":30}"""))!!
         assertTrue(ZConditionDescriber.summary(c).contains("30"))
     }
+    // ------------------------------------------------------------ 通用字段齐全
+
+    @Test
+    fun `14 个通用字段即使缺省也要列出来`() {
+        // 以前是"有什么显示什么"，用户分不清"字段不存在"和"它等于默认值"。
+        val labels = rows("""{"type":"点击","delayUnit":1}""").map { it.label }
+        for (must in listOf(
+            "备注", "跳转标识", "持续(ms)", "等待单位", "重复次数",
+            "快速重复", "禁用", "条件"
+        )) {
+            assertTrue("缺 [$must]：$labels", labels.any { it.startsWith(must) })
+        }
+    }
+
+    @Test
+    fun `起点终点不再单列"类型"行`() {
+        // 坐标类型对用户是格式细节，单列一行只占地方。
+        val labels = rows(
+            """{"type":"滑动","delayUnit":1,
+               "startPos":{"type":"location","x":"640","y":"520"},
+               "endPos":{"type":"location","x":"640","y":"300"}}"""
+        ).map { it.label }
+        assertTrue("不该有 [起点 类型]：$labels", labels.none { it == "起点 类型" })
+        assertTrue("不该有 [终点 类型]：$labels", labels.none { it == "终点 类型" })
+        // 但坐标本身必须在
+        assertTrue(labels.contains("起点 X"))
+        assertTrue(labels.contains("终点 Y"))
+    }
+
+    @Test
+    fun `非坐标类型仍然提示类型`() {
+        // 图片/文字/颜色要告诉用户"这一条是按什么找的"
+        val labels = rows(
+            """{"type":"点击文字","delayUnit":1,"posData":{"type":"text","text":"开始"}}"""
+        ).map { it.label }
+        assertTrue("应提示文字类型：$labels", labels.contains("位置 类型"))
+    }
+
+    @Test
+    fun `变量覆盖会单独列出来`() {
+        val rows = rows(
+            """{"type":"点击","delayUnit":1,
+               "__vars":{"duration":{"varType":"number","valueExp":"500"}}}"""
+        )
+        val v = rows.firstOrNull { it.label.contains("变量") }
+        assertTrue("应列出变量：$rows", v != null)
+        assertTrue("应显示表达式：${v!!.value}", v.value.contains("500"))
+    }
 }

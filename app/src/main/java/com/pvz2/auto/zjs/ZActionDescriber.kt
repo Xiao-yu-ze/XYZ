@@ -54,6 +54,23 @@ object ZActionDescriber {
         val field: String = ""
     )
 
+    /** 时间单位的显示名，与 [Z.TimeUnit] 一一对应。 */
+    val UNITS = listOf("ms", "s", "min", "h")
+
+    private val YES_NO = listOf("否", "是")
+
+    /**
+     * 这个字段能不能编辑。
+     *
+     * 被 `__vars` 覆盖的字段一律只读 —— 改了也会被变量算出的值盖掉，
+     * 让用户改等于骗他。
+     */
+    private fun editKind(field: String, c: Z.ActionCommon): Kind =
+        if (c.vars.containsKey(field)) Kind.READONLY else Kind.TEXT
+
+    /** 纯数字字段。UI 要弹数字键盘，所以单独区分。 */
+    private fun numberKind(field: String, c: Z.ActionCommon): Kind =
+        if (c.vars.containsKey(field)) Kind.READONLY else Kind.NUMBER
     /** 动作标题，如「点击」「控制执行·jumpTo」。 */
     fun title(action: Z.Action): String = ZScriptIO.actionLabel(action)
 
@@ -65,6 +82,7 @@ object ZActionDescriber {
      */
     fun describe(action: Z.Action): List<Row> {
         val rows = ArrayList<Row>()
+        val c = action.common
 
         // ---- 身份
         rows += Row("类型", action.type.wire)
@@ -74,38 +92,82 @@ object ZActionDescriber {
         }
 
         // ---- 位置
-        action.posData?.let { rows += posRows("位置", it, editable = true) }
-        action.startPos?.let { rows += posRows("起点", it, editable = true) }
-        action.endPos?.let { rows += posRows("终点", it, editable = true) }
+        action.posData?.let { rows += posRows("位置", it) }
+        action.startPos?.let { rows += posRows("起点", it) }
+        action.endPos?.let { rows += posRows("终点", it) }
 
-        // ---- 备注与跳转
+        // ---- 14 个通用字段，**缺省也显示**
+        //
+        // 以前是"有什么显示什么"，于是没设过 delay 的动作就看不到这一行，
+        // 用户没法判断"这个字段不存在"还是"它等于默认值"。
+        // 自动精灵的编辑界面也是全部列出来的。
+        rows += Row("备注", c.desc.orEmpty(), editKind("desc", c), field = "desc")
+        rows += Row("跳转标识", c.jumpId.orEmpty(), editKind("jumpId", c), field = "jumpId")
+        rows += Row("持续(ms)", c.duration.orEmpty(), numberKind("duration", c), field = "duration")
         rows += Row(
-            "备注",
-            action.common.desc.orEmpty(),
-            if (action.common.vars.containsKey("desc")) Kind.READONLY else Kind.TEXT,
-            field = "desc"
+            "等待(${unitLabel(c.delayUnit)})",
+            c.delay.orEmpty(),
+            editKind("delay", c),
+            field = "delay"
         )
-        action.common.jumpId?.let { rows += Row("跳转标识", it, Kind.TEXT, field = "jumpId") }
+        rows += Row(
+            "等待单位",
+            unitLabel(c.delayUnit),
+            if (c.vars.containsKey("delay")) Kind.READONLY else Kind.ENUM,
+            options = UNITS,
+            field = "delayUnit"
+        )
+        rows += Row(
+            "重复次数",
+            when (val n = c.repeatCount) {
+                null -> ""
+                0 -> "无限"
+                else -> n.toString()
+            },
+            numberKind("repeatCount", c),
+            field = "repeatCount"
+        )
+        rows += Row(
+            "重复间隔(${unitLabel(c.repeatDelayUnit)})",
+            c.repeatDelayValue.orEmpty(),
+            numberKind("repeatDelayValue", c),
+            field = "repeatDelayValue"
+        )
+        // 单位不一致时才单列，否则显得啰嗦
+        if (c.repeatDelayUnit != c.delayUnit) {
+            rows += Row(
+                "重复单位", unitLabel(c.repeatDelayUnit), Kind.ENUM,
+                options = UNITS, field = "repeatDelayUnit"
+            )
+        }
+        rows += Row(
+            "快速重复", if (c.fastRepeatMode) "是" else "否", Kind.ENUM,
+            options = YES_NO, field = "fastRepeatMode"
+        )
+        rows += Row(
+            "禁用", if (c.disabled) "是" else "否", Kind.ENUM,
+            options = YES_NO, field = "disabled"
+        )
 
-        // ---- 时序
-        action.common.duration?.let {
-            rows += Row("持续(ms)", it, editable("duration", action), field = "duration")
-        }
-        action.common.delay?.let {
-            rows += Row("等待(${unitLabel(action.common.delayUnit)})", it, editable("delay", action), field = "delay")
-        }
-        action.common.repeatCount?.let {
-            rows += Row("重复次数", if (it == 0) "无限" else it.toString(), editable("repeatCount", action), field = "repeatCount")
-        }
-        action.common.repeatDelayValue?.let {
-            rows += Row("重复间隔(${unitLabel(action.common.repeatDelayUnit)})", it, editable("repeatDelayValue", action), field = "repeatDelayValue")
-        }
-        if (action.common.fastRepeatMode) rows += Row("快速重复", "是")
+        // ---- 条件
+        rows += Row(
+            "条件",
+            c.condition?.let { ZConditionDescriber.summary(it) }.orEmpty(),
+            Kind.READONLY
+        )
 
-        // ---- 其它
-        if (action.common.disabled) rows += Row("状态", "已禁用")
-        action.common.condition?.let { c ->
-            rows += Row("条件", ZConditionDescriber.summary(c))
+        // ---- 变量覆盖
+        //
+        // 列出来用户才知道哪些字段是运行时算的。这些行只读：
+        // 改固定值也会被变量算出来的值盖掉。
+        c.vars.forEach { (field, def) ->
+            val t = def.optString("varType").ifEmpty { "?" }
+            val exp = def.optString("valueExp")
+            rows += Row(
+                "变量·$field",
+                if (exp.isBlank()) t else "$t = $exp",
+                Kind.READONLY
+            )
         }
 
         // ---- 未知字段：让用户看得见，避免"导入后凭空少了东西"
@@ -135,24 +197,35 @@ object ZActionDescriber {
      * `x`/`y` 用 [Kind.COORD]，编辑时能挂取点按钮；
      * `limitArea` 用 [Kind.AREA]，能挂框选按钮。
      */
-    private fun posRows(prefix: String, pos: Z.PosData, editable: Boolean): List<Row> {
+    private fun posRows(prefix: String, pos: Z.PosData): List<Row> {
         val rows = ArrayList<Row>()
-        val typeLabel = when (pos.type) {
-            Z.PosType.LOCATION -> "坐标"
-            Z.PosType.IMAGE -> "图片"
-            Z.PosType.TEXT -> "文字"
-            Z.PosType.COLOR -> "颜色"
-            Z.PosType.NODE -> "节点"
-            Z.PosType.AI_LOC -> "AI位置"
+
+        // ★ 坐标类型不单列"类型"行。
+        //
+        //   滑动/点击的位置对用户来说就是一对 (x,y)，类型是格式细节。
+        //   单列一行"类型 坐标"只占地方、不提供任何操作 —— 用户要改的
+        //   永远是那个坐标本身。
+        //
+        //   其它类型（图片/文字/颜色/节点）才需要提示，因为用户会想知道
+        //   "这一条是按什么找的"。
+        if (pos.type != Z.PosType.LOCATION) {
+            val typeLabel = when (pos.type) {
+                Z.PosType.IMAGE -> "图片"
+                Z.PosType.TEXT -> "文字"
+                Z.PosType.COLOR -> "颜色"
+                Z.PosType.NODE -> "节点"
+                Z.PosType.AI_LOC -> "AI位置"
+                Z.PosType.LOCATION -> "坐标"
+            }
+            rows += Row("$prefix 类型", typeLabel)
         }
-        rows += Row("$prefix 类型", typeLabel)
 
         when (pos.type) {
             Z.PosType.LOCATION -> {
                 val x = pos.x?.raw.orEmpty()
                 val y = pos.y?.raw.orEmpty()
-                rows += Row("$prefix X", x, if (editable) Kind.COORD else Kind.READONLY, field = "$prefix.x")
-                rows += Row("$prefix Y", y, if (editable) Kind.COORD else Kind.READONLY, field = "$prefix.y")
+                rows += Row("$prefix X", x, Kind.COORD, field = "$prefix.x")
+                rows += Row("$prefix Y", y, Kind.COORD, field = "$prefix.y")
             }
 
             Z.PosType.IMAGE -> {
@@ -164,12 +237,12 @@ object ZActionDescriber {
             }
 
             Z.PosType.TEXT -> {
-                rows += Row("$prefix 文字", pos.text.orEmpty(), if (editable) Kind.TEXT else Kind.READONLY, field = "$prefix.text")
+                rows += Row("$prefix 文字", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
                 pos.similarPercent?.let { rows += Row("$prefix 相似度", "$it%") }
             }
 
             Z.PosType.COLOR -> {
-                rows += Row("$prefix 颜色", pos.color.orEmpty(), if (editable) Kind.TEXT else Kind.READONLY, field = "$prefix.color")
+                rows += Row("$prefix 颜色", pos.color.orEmpty(), Kind.TEXT, field = "$prefix.color")
                 pos.similarPercent?.let { rows += Row("$prefix 相似度", "$it%") }
             }
 
@@ -183,7 +256,7 @@ object ZActionDescriber {
         }
 
         // 通用字段
-        pos.limitArea?.let { rows += Row("$prefix 范围", it.toString(), if (editable) Kind.AREA else Kind.READONLY, field = "$prefix.limitArea") }
+        pos.limitArea?.let { rows += Row("$prefix 范围", it.toString(), Kind.AREA, field = "$prefix.limitArea") }
         pos.indexNum?.let { rows += Row("$prefix 选第几个", it) }
         pos.xOffset?.let { rows += Row("$prefix X偏移", it.raw) }
         pos.yOffset?.let { rows += Row("$prefix Y偏移", it.raw) }
