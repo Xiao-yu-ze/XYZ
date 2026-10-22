@@ -12,6 +12,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.pvz2.auto.R
 import com.pvz2.auto.zjs.Z
 import com.pvz2.auto.zjs.ZActionDescriber
+import com.pvz2.auto.zjs.ZFieldEditor
 import com.pvz2.auto.zjs.ZScriptIO
 import com.pvz2.auto.zjs.ZjsRunner
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +48,65 @@ class ZjsEditorPage(
     /** 当前展开的动作下标。-1 = 全收起。 */
     private var expandedIndex = -1
 
+    /** 当前打开的脚本。编辑都改这一份，界面从它重绘。 */
+    private var script: Z.Script? = null
+
+    /** 当前脚本文件名，保存时用。 */
+    private var fileName: String = ""
+
+    /**
+     * 某一行被点了「编辑」。
+     *
+     * 弹一个单行输入框，确认后按 [row] 的路径写回模型并重绘这一条。
+     *
+     * ## 为什么不做成内嵌输入框
+     *
+     * 一个动作十几行，每行一个 EditText 会带来十几套焦点/键盘/光标状态，
+     * 而且展开收起时全要重建。弹窗一次只处理一个字段，简单且不会出错。
+     */
+    private fun onEditRequested(row: ZActionDescriber.Row, actionIndex: Int) {
+        val cur = script ?: return
+        val action = cur.actions.getOrNull(actionIndex) ?: return
+
+        val input = android.widget.EditText(host).apply {
+            setText(row.value)
+            setSingleLine(false)
+            setPadding(32, 24, 32, 24)
+            // 数字类字段弹数字键盘
+            inputType = if (row.kind == ZActionDescriber.Kind.NUMBER) {
+                android.text.InputType.TYPE_CLASS_NUMBER or
+                    android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            } else {
+                android.text.InputType.TYPE_CLASS_TEXT
+            }
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle(row.label)
+            .setView(input)
+            .setPositiveButton("确定") { _, _ ->
+                val newValue = input.text?.toString().orEmpty()
+                val updated = ZFieldEditor.apply(action, row.field, newValue)
+                if (updated == null) {
+                    // 值不合法（比如区域格式不对）。明确告诉用户，
+                    // 不要静默丢弃 —— 他会以为自己改成功了。
+                    android.widget.Toast.makeText(
+                        host, "「${row.label}」的值不合法，未保存", android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    return@setPositiveButton
+                }
+                val list = cur.actions.toMutableList()
+                list[actionIndex] = updated
+                script = cur.copy(actions = list)
+                adapter.submit(script!!.actions)
+                // 保持展开，用户接着改别的字段
+                expandedIndex = actionIndex
+                adapter.notifyItemChanged(actionIndex)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     fun bind() {
         rvActions.layoutManager = LinearLayoutManager(host)
         rvActions.adapter = adapter
@@ -78,7 +138,9 @@ class ZjsEditorPage(
         }
     }
 
-    private fun showScript(fileName: String, script: Z.Script) {
+    private fun showScript(name: String, script: Z.Script) {
+        this.script = script
+        this.fileName = name
         val issues = ZScriptIO.validate(script)
         val size = script.actions.size
         tvSummary.text = buildString {
@@ -144,7 +206,7 @@ class ZjsEditorPage(
 
                 if (expanded) {
                     ZActionDescriber.describe(action).forEach { row ->
-                        llFields.addView(makeRow(row))
+                        llFields.addView(makeRow(row, index))
                     }
                 }
 
@@ -162,7 +224,7 @@ class ZjsEditorPage(
              * 用两个 TextView 而不是 RecyclerView：一个动作最多十几行，
              * 嵌一层 RecyclerView 得不偿失。
              */
-            private fun makeRow(row: ZActionDescriber.Row): View {
+            private fun makeRow(row: ZActionDescriber.Row, actionIndex: Int): View {
                 val ctx = host
                 val line = LinearLayout(ctx).apply {
                     orientation = LinearLayout.HORIZONTAL
@@ -186,6 +248,14 @@ class ZjsEditorPage(
                 }
                 line.addView(label)
                 line.addView(value)
+
+                // 可编辑字段点一下弹输入框。
+                //
+                // 只读字段不挂点击 —— 挂了会让人以为能改，点了没反应比不能点更糟。
+                if (row.kind != ZActionDescriber.Kind.READONLY && row.field.isNotEmpty()) {
+                    line.setBackgroundResource(android.R.drawable.list_selector_background)
+                    line.setOnClickListener { onEditRequested(row, actionIndex) }
+                }
                 return line
             }
 
