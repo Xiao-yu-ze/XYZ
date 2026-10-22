@@ -66,6 +66,15 @@ class ZExecutor(
 
         /** 找节点（无障碍）。 */
         fun findNode(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit>
+
+        /**
+         * 上一次查找没命中的**具体原因**。null = 就是没找到。
+         *
+         * 区分这两件事很重要：「没找到」该去调阈值或换模板；
+         * 「我们做不了」（比如节点查找、OCR 模型缺失）调什么都没用。
+         * 混成一句"没有匹配到目标"，用户会把时间花在错的方向上。
+         */
+        fun lastReason(): String? = null
     }
 
     /** 一次执行的结果。 */
@@ -357,7 +366,10 @@ class ZExecutor(
         }
 
         if (hits.isEmpty()) {
-            skipped.add(Result.Skip(index, label, "没有匹配到目标"))
+            val why = matcher.lastReason()
+            val msg = if (why != null) "没有匹配到目标：$why" else "没有匹配到目标"
+            skipped.add(Result.Skip(index, label, msg))
+            log("[动作 $index] $label — $msg")
             return null
         }
 

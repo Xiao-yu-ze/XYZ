@@ -1372,7 +1372,9 @@ class ZjsEditorPage(
         // 匹配器用真实的：预览必须和运行时的判定一致，否则调好的阈值跑起来又是另一个结果
         val matcher = com.pvz2.auto.zjs.ZRealMatcher(
             com.pvz2.auto.core.TemplateMatcher().also { it.load(host) },
-            frame = { com.pvz2.auto.service.VirtualDisplaySession.snapshotForMatch() }
+            frame = { com.pvz2.auto.service.VirtualDisplaySession.snapshotForMatch() },
+            // Context 给 OCR 读 assets/ocr 模型用；预览必须和运行时同一套判定
+            context = host
         )
         matcher.cacheDirProvider = { java.io.File(host.cacheDir, "zjs_templates").absolutePath }
 

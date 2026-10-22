@@ -584,7 +584,9 @@ class AutomationService : Service() {
 
         val matcher = ZRealMatcher(
             TemplateMatcher().also { it.load(this) },
-            frame = { VirtualDisplaySession.snapshotForMatch() }
+            frame = { VirtualDisplaySession.snapshotForMatch() },
+            // Context 给 OCR 读 assets/ocr 模型用
+            context = this
         )
         matcher.cacheDirProvider = { java.io.File(cacheDir, "zjs_templates").absolutePath }
 

@@ -129,7 +129,7 @@ object PreviewResults {
         // 拿不到帧时说清楚 —— "没找到"和"没画面"是两回事，
         // 混成一句会让用户去调阈值，而问题在虚拟屏没起来。
         if (frame() == null) {
-            return Outcome(rect, emptyList(), "拿不到画面（虚拟屏没在跑？）")
+            return Outcome(rect, emptyList(), "虚拟屏没在运行：先回第 1 页点「在虚拟屏启动游戏」")
         }
 
         val hits = when (pos.type) {
