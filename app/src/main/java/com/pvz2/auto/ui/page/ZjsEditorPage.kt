@@ -761,7 +761,7 @@ class ZjsEditorPage(
                 initial = initial
             )
             android.widget.Toast.makeText(
-                host, "拖动准星到目标位置，然后点确定", android.widget.Toast.LENGTH_SHORT
+                host, "按住画面拖动准星，位置对了点确定", android.widget.Toast.LENGTH_SHORT
             ).show()
 
             val r = deferred.await() ?: return@launch

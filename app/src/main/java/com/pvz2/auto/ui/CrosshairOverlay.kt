@@ -108,19 +108,54 @@ class CrosshairOverlay @JvmOverloads constructor(
         canvas.drawCircle(cx, cy, 1.6f * resources.displayMetrics.density, dot)
     }
 
+    /**
+     * 按下时的触点，用来算位移。
+     *
+     * ## 为什么准星不能跳到手指下面
+     *
+     * 手指按在屏幕上，它盖住的地方就是用户最想看的那个点 ——
+     * 直接跳到手指位置的话，准星被手挡着，等于没画。
+     *
+     * 所以改成**相对移动**：按下时记住触点，之后准星按手指的**位移量**
+     * 走。手指往右拖 10px，准星往右挪 10px，但准星始终在手指上方
+     * （或任意它当时所在的地方），用户看得见。
+     *
+     * 这也顺带解决了另一个问题：手指按下去的那一下不会让准星跳一下。
+     */
+    private var downTouchX = 0f
+    private var downTouchY = 0f
+
+    /** 按下时准星在哪，相对移动的起点。 */
+    private var downCrossX = 0f
+    private var downCrossY = 0f
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!visible) return false
 
-        // 只认画面矩形内的触摸。落在黑边上的忽略 —— 换算过去会是负坐标。
-        if (!imageRect.contains(event.x, event.y)) return false
-
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                cx = event.x
-                cy = event.y
+            MotionEvent.ACTION_DOWN -> {
+                // 按下点必须在画面内。但准星可以不在按下点 ——
+                // 用户可以从任何地方开始拖。
+                if (!imageRect.contains(event.x, event.y)) return false
+                downTouchX = event.x
+                downTouchY = event.y
+                downCrossX = cx
+                downCrossY = cy
+                return true
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                // 相对位移。手指拖多远，准星走多远。
+                val nx = downCrossX + (event.x - downTouchX)
+                val ny = downCrossY + (event.y - downTouchY)
+
+                // 夹在画面矩形内 —— 拖出边界时准星贴边停住，
+                // 而不是跑到黑边上（换算过去是负坐标）。
+                cx = nx.coerceIn(imageRect.left, imageRect.right)
+                cy = ny.coerceIn(imageRect.top, imageRect.bottom)
                 invalidate()
-                onDrag?.invoke(event.x, event.y)
+                onDrag?.invoke(cx, cy)
                 return true
             }
         }

@@ -167,7 +167,7 @@ object PreviewPicker {
 
     /** 给界面显示用的一句话提示。 */
     fun hintText(mode: Mode): String = when (mode) {
-        Mode.POINT -> "拖动准星到要点击的位置，然后点确定"
+        Mode.POINT -> "按住画面拖动，准星跟着走；位置对了点确定"
         Mode.RECT -> "请在画面上拖出要识别的区域"
         Mode.TEMPLATE -> "请在画面上框住要识别的图案"
     }
