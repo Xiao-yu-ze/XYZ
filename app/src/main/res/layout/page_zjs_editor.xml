@@ -1,94 +1,59 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  第 3 页：自动精灵格式的脚本浏览。
+  第 3 页：脚本编辑器。
 
-  和 MaaFramework 那套分开放：两套格式完全不通，
-  混在一个列表里会让人分不清手上这个脚本到底是哪种。
+  只做一件事 —— **改**。运行在第 2 页，看画面在第 1 页。
+  原来这一页同时塞了保存/另存为/运行/停止/添加五个按钮，光按钮就占掉
+  半屏，字段全被挤到看不见。现在只留「保存」和「添加动作」并排一行。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:paddingHorizontal="12dp"
+    android:paddingTop="10dp">
 
-    <TextView
-        style="@style/Text.Section"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/zjs_editor_title" />
-
-    <TextView
-        android:id="@+id/tvZjsSummary"
-        style="@style/Text.Hint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="@string/zjs_loading" />
-
-    <!-- 保存 / 另存为。改了不保存等于白改，所以放在列表上方一直可见。 -->
+    <!-- 一行：保存 + 添加动作。
+         保存不设成主色，因为它是"顺手做一下"的动作；主色留给列表里的运行。 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
         android:orientation="horizontal">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnZjsSave"
-            style="@style/AppButton.Primary"
+            style="@style/AppButton.Outline"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="@string/zjs_save" />
 
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnZjsSaveAs"
-            style="@style/AppButton.Outline"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
-            android:text="@string/zjs_save_as" />
-    </LinearLayout>
-
-    <!-- 运行 / 停止。脚本能编辑不能跑等于半截。 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:orientation="horizontal">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnZjsRun"
+            android:id="@+id/btnZjsAddAction"
             style="@style/AppButton.Primary"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/zjs_run" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnZjsStop"
-            style="@style/AppButton.Outline"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
             android:layout_weight="1"
-            android:text="@string/zjs_stop" />
+            android:text="@string/zjs_add_action" />
     </LinearLayout>
 
-    <!-- 添加动作。没有这个，用户只能改现有动作，不能新增 —— 编辑器就不完整。 -->
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnZjsAddAction"
-        style="@style/AppButton.Outline"
+    <!-- 当前脚本名 + 动作数 + 校验提示。
+         原来的「脚本动作（自动精灵格式）」大标题去掉了 —— 这一页只干这一件事，
+         标题只是占地方；这行摘要反而有信息。 -->
+    <TextView
+        android:id="@+id/tvZjsSummary"
+        style="@style/Text.Hint"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
-        android:text="@string/zjs_add_action" />
+        android:text="@string/zjs_loading" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvZjsActions"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="6dp"
         android:layout_weight="1"
         android:clipToPadding="false"
         android:paddingBottom="8dp" />

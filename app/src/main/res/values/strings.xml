@@ -153,4 +153,26 @@
     <string name="zjs_stop">停止</string>
     <string name="results_waiting">正在查找…</string>
     <string name="results_preview">预览查找结果</string>
+    <string name="library_title">脚本</string>
+    <string name="library_run">运行</string>
+    <string name="library_stop">停止</string>
+    <string name="library_loading">读取中…</string>
+    <string name="library_empty">还没有脚本。去第三页点「保存」，存下来的会出现在这里。</string>
+    <string name="library_load_failed">这个脚本读不出来</string>
+    <string name="library_delete_title">删除「%1$s」？</string>
+    <string name="library_delete_message">删除后无法恢复。</string>
+    <string name="library_delete_ok">删除</string>
+    <string name="library_delete_failed">删除失败</string>
+    <string name="zjs_save_title">保存脚本</string>
+    <string name="zjs_save_name_hint">脚本名字</string>
+    <string name="zjs_save_name_empty">名字不能为空</string>
+    <string name="zjs_save_dir">保存到</string>
+    <string name="library_import">导入</string>
+    <string name="library_export">导出</string>
+    <string name="library_import_ok">已导入</string>
+    <string name="library_import_failed">导入失败：不是有效的脚本文件</string>
+    <string name="library_export_ok">已导出</string>
+    <string name="library_export_failed">导出失败</string>
+    <string name="library_export_pick">导出哪一个？</string>
+    <string name="library_export_empty">还没有脚本可导出</string>
 </resources>

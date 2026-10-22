@@ -10,16 +10,16 @@ import com.pvz2.auto.core.PreviewPicker
 import com.pvz2.auto.core.PreviewTouchMapper
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.viewpager2.widget.ViewPager2
 import com.pvz2.auto.ui.page.ZjsEditorPage
-import com.pvz2.auto.ui.page.ScriptPage
+import com.pvz2.auto.ui.page.LibraryPage
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -134,6 +134,92 @@ class MainActivity : AppCompatActivity() {
         refreshShizukuState()
     }
 
+    // ------------------------------------------------------------ 脚本导入 / 导出
+
+    /**
+     * 导出时待写入的内容。
+     *
+     * ## 为什么先记住文本再等用户选位置
+     *
+     * SAF 的「创建文档」是异步的：用户可能选任何目录、也可能中途取消。
+     * 内容必须在发起之前就准备好，回来时只做"写字节"这一件事。
+     */
+    private var pendingExportText: String? = null
+
+    /**
+     * 导入：让用户选一个 .zjs 文件。
+     *
+     * 用「任意类型」而不是 application/json —— .zjs 不是系统认识的扩展名，
+     * 按 JSON 过滤的话文件在选择器里是灰的，用户会以为选不了。
+     */
+    private val importLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val text = runCatching {
+            contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+        }.getOrNull()
+        if (text.isNullOrBlank()) {
+            toast(getString(R.string.library_import_failed))
+            return@registerForActivityResult
+        }
+        // 名字取原文件名，解析不了就当失败 —— 存一个读不出来的文件
+        // 比直接说失败更糟，用户会在列表里看到一个点不开的条目。
+        val raw = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':').orEmpty()
+        val base = raw.substringBeforeLast('.').ifBlank { "导入的脚本" }
+        val ok = runCatching {
+            val script = com.pvz2.auto.zjs.Z.Script.parse(org.json.JSONObject(text))
+            val dir = com.pvz2.auto.zjs.ZjsRunner.savedDir(this)
+            // 重名就加序号，不覆盖已有的 —— 导入不该悄悄毁掉旧脚本
+            var target = java.io.File(dir, "$base.zjs")
+            var i = 2
+            while (target.exists()) {
+                target = java.io.File(dir, "$base ($i).zjs")
+                i++
+            }
+            com.pvz2.auto.zjs.ZjsRunner.saveSaved(target, script)
+        }.getOrDefault(false)
+
+        if (ok) {
+            com.pvz2.auto.ui.page.ZjsEditState.markSaved()
+            toast(getString(R.string.library_import_ok))
+        } else {
+            toast(getString(R.string.library_import_failed))
+        }
+    }
+
+    /** 导出：让用户选保存位置，然后把脚本写进去。 */
+    private val exportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        val text = pendingExportText
+        pendingExportText = null
+        if (uri == null || text == null) return@registerForActivityResult
+        val ok = runCatching {
+            contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+        }.isSuccess
+        toast(getString(if (ok) R.string.library_export_ok else R.string.library_export_failed))
+    }
+
+    /** 给功能页调用：发起一次导入。 */
+    fun importScript() {
+        runCatching { importLauncher.launch(arrayOf("*/*")) }
+            .onFailure { toast(getString(R.string.library_import_failed)) }
+    }
+
+    /** 给功能页调用：发起一次导出。 */
+    fun exportScript(name: String, text: String) {
+        pendingExportText = text
+        runCatching { exportLauncher.launch("$name.zjs") }
+            .onFailure {
+                pendingExportText = null
+                toast(getString(R.string.library_export_failed))
+            }
+    }
+
+    private fun toast(msg: String) {
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -270,7 +356,7 @@ class MainActivity : AppCompatActivity() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
             val layout = when (viewType) {
                 PAGE_SCREEN -> R.layout.page_screen
-                PAGE_SCRIPT -> R.layout.activity_script
+                PAGE_SCRIPT -> R.layout.page_library
                 PAGE_ZJS -> R.layout.page_zjs_editor
                 // 兜底：viewType 超出页数说明常量没同步。用第一页的布局
                 // 至少能起来，比崩在启动好。
@@ -291,7 +377,7 @@ class MainActivity : AppCompatActivity() {
             runCatching {
                 when (position) {
                     PAGE_SCREEN -> bindScreenPage(holder.itemView)
-                    PAGE_SCRIPT -> ScriptPage(this@MainActivity, holder.itemView).bind()
+                    PAGE_SCRIPT -> LibraryPage(this@MainActivity, holder.itemView).bind()
                     PAGE_ZJS -> ZjsEditorPage(this@MainActivity, holder.itemView).bind()
                 }
             }.onFailure {

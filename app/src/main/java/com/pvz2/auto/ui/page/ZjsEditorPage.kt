@@ -141,6 +141,18 @@ class ZjsEditorPage(
      * 一个动作十几行，每行一个 EditText 会带来十几套焦点/键盘/光标状态，
      * 而且展开收起时全要重建。弹窗一次只处理一个字段，简单且不会出错。
      */
+    /**
+     * 直接把一个字段改成 [value]，不走弹窗。
+     *
+     * 开关和滑块用这条路径 —— 它们的值已经由控件本身确定了，
+     * 再弹一次输入框等于让用户做两遍。
+     */
+    private fun commitFieldValue(row: ZActionDescriber.Row, actionIndex: Int, value: String) {
+        val cur = script ?: return
+        val action = currentActions().getOrNull(actionIndex) ?: return
+        commitField(cur, action, actionIndex, row, value)
+    }
+
     private fun onEditRequested(row: ZActionDescriber.Row, actionIndex: Int) {
         val cur = script ?: return
         val action = currentActions().getOrNull(actionIndex) ?: return
@@ -170,7 +182,9 @@ class ZjsEditorPage(
             setSingleLine(false)
             setPadding(32, 24, 32, 24)
             // 数字类字段弹数字键盘
-            inputType = if (row.kind == ZActionDescriber.Kind.NUMBER) {
+            inputType = if (row.kind == ZActionDescriber.Kind.NUMBER ||
+                row.kind == ZActionDescriber.Kind.PERCENT
+            ) {
                 android.text.InputType.TYPE_CLASS_NUMBER or
                     android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
             } else {
@@ -419,7 +433,9 @@ class ZjsEditorPage(
             setText(row.value)
             setSingleLine(false)
             setPadding(32, 24, 32, 24)
-            inputType = if (row.kind == ZActionDescriber.Kind.NUMBER) {
+            inputType = if (row.kind == ZActionDescriber.Kind.NUMBER ||
+                row.kind == ZActionDescriber.Kind.PERCENT
+            ) {
                 android.text.InputType.TYPE_CLASS_NUMBER
             } else {
                 android.text.InputType.TYPE_CLASS_TEXT
@@ -448,84 +464,16 @@ class ZjsEditorPage(
         rvActions.layoutManager = LinearLayoutManager(host)
         rvActions.adapter = adapter
         rvActions.itemAnimator = null
+        // 保存：弹窗里能看到保存到哪、并自己起名字。
+        //
+        // 不在这里直接存 —— 用户第一次保存时文件名还是"示例_基础动作"，
+        // 直接存等于把他做的东西命名成别人的示例。让他起个名字，
+        // 才认得出第 2 页列表里哪个是自己的。
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsSave)
-            .setOnClickListener { saveTo(defaultSavePath()) }
-        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsSaveAs)
-            .setOnClickListener { promptSaveAs() }
+            .setOnClickListener { promptSave() }
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsAddAction)
             .setOnClickListener { promptAddAction() }
-        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsRun)
-            .setOnClickListener { runCurrent() }
-        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsStop)
-            .setOnClickListener {
-                com.pvz2.auto.service.AutomationService.zjsStop(host)
-            }
         load()
-    }
-
-    /**
-     * 运行当前脚本。
-     *
-     * ## 先检查再跑
-     *
-     * [ZScriptIO.validate] 报的问题不阻止运行 —— 有些是"暂不支持"这类
-     * 提示，用户可能就是只跑其中几条。但**必须让他看见**再决定。
-     *
-     * ## 保存到文件再跑
-     *
-     * 执行器读的是文件，不是内存里的对象。内存里改了不保存的话，
-     * 跑的还是改之前的版本 —— 这种"我明明改了"的困惑最难查。
-     * 所以先写盘再通知服务运行。
-     */
-    private fun runCurrent() {
-        val script = this.script ?: return
-        if (script.actions.isEmpty()) {
-            android.widget.Toast.makeText(host, "脚本里没有动作", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val path = defaultSavePath()
-        android.util.Log.i("ZjsEditor", "即将保存到 $path")
-        if (!ZScriptIO.save(script, path)) {
-            android.widget.Toast.makeText(
-                host, "保存失败，无法运行", android.widget.Toast.LENGTH_LONG
-            ).show()
-            return
-        }
-
-        val issues = ZScriptIO.validate(script)
-        android.util.Log.i("ZjsEditor", "validate -> ${issues.size}")
-        if (issues.isNotEmpty()) android.util.Log.i("ZjsEditor", "问题：${issues}")
-        if (issues.isEmpty()) {
-            startRun(path)
-            return
-        }
-
-        androidx.appcompat.app.AlertDialog.Builder(host)
-            .setTitle("有 ${issues.size} 个问题")
-            .setMessage(issues.take(8).joinToString("\n") +
-                if (issues.size > 8) "\n…" else "")
-            .setPositiveButton("仍然运行") { _, _ -> startRun(path) }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun startRun(path: String) {
-        android.util.Log.i("ZjsEditor", "startRun path=$path")
-        try {
-            com.pvz2.auto.service.AutomationService.zjsRun(host, path)
-        } catch (t: Throwable) {
-            // 前台服务启动失败会抛 SecurityException / ForegroundServiceStartNotAllowed
-            // 之类。静默吞掉的话用户点了没反应、日志里也没有 —— 最难查的一类。
-            android.util.Log.e("ZjsEditor", "zjsRun 失败", t)
-            android.widget.Toast.makeText(
-                host, "启动失败：${t.message}", android.widget.Toast.LENGTH_LONG
-            ).show()
-            return
-        }
-        android.widget.Toast.makeText(
-            host, "已开始运行", android.widget.Toast.LENGTH_SHORT
-        ).show()
     }
 
     /**
@@ -591,41 +539,51 @@ class ZjsEditorPage(
         ).show()
     }
 
-    /**
-     * 默认保存路径。
-     *
-     * 放在 App 自己的外部目录 —— 不需要任何存储权限，而且用户能用文件管理器
-     * 找得到。写到 assets 里是不行的（只读），写到 /sdcard 根目录在
-     * Android 11+ 要 MANAGE_EXTERNAL_STORAGE。
-     */
-    private fun defaultSavePath(): String {
-        val dir = java.io.File(host.getExternalFilesDir(null), "zjs")
-        dir.mkdirs()
-        val base = fileName.substringBeforeLast('.').ifBlank { "script" }
-        return java.io.File(dir, "$base.zjs").absolutePath
-    }
 
-    /** 另存为：弹输入框填文件名。 */
-    private fun promptSaveAs() {
-        val dir = java.io.File(host.getExternalFilesDir(null), "zjs")
-        dir.mkdirs()
-        val base = fileName.substringBeforeLast('.').ifBlank { "script" }
+    /**
+     * 保存弹窗：显示存到哪、并让用户起名字。
+     *
+     * ## 为什么必须让用户起名
+     *
+     * 从示例或别人的脚本改出来的东西，文件名还是原来的。直接存下去，
+     * 第 2 页列表里会出现两个看不出区别的条目，用户不知道哪个是自己的。
+     *
+     * ## 为什么把目录也显示出来
+     *
+     * 文件在应用私有目录（`Android/data/.../files/zjs`），用户在文件管理器里
+     * 找不到。不写出来，他会以为存到了某个能找到的地方，然后找不到就以为没存上。
+     * 要拿出去，第 2 页有「导出」。
+     */
+    private fun promptSave() {
+        val dir = com.pvz2.auto.zjs.ZjsRunner.savedDir(host)
+        val base = fileName.substringBeforeLast('.').ifBlank { "" }
 
         val input = android.widget.EditText(host).apply {
-            setText("${base}_已编辑.zjs")
+            setText(base)
             setSingleLine(true)
-            setPadding(32, 24, 32, 24)
+            hint = host.getString(R.string.zjs_save_name_hint)
+            setPadding(40, 28, 40, 28)
         }
+
         androidx.appcompat.app.AlertDialog.Builder(host)
-            .setTitle("另存为")
-            .setMessage(dir.absolutePath)
+            .setTitle(R.string.zjs_save_title)
+            .setMessage(host.getString(R.string.zjs_save_dir) + "：" + dir.absolutePath)
             .setView(input)
-            .setPositiveButton("保存") { _, _ ->
+            .setPositiveButton(R.string.zjs_save) { _, _ ->
                 val name = input.text?.toString().orEmpty().trim()
-                if (name.isBlank()) return@setPositiveButton
-                saveTo(java.io.File(dir, name).absolutePath)
+                if (name.isBlank()) {
+                    android.widget.Toast.makeText(
+                        host, host.getString(R.string.zjs_save_name_empty),
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    return@setPositiveButton
+                }
+                // 名字里不能有路径分隔符 —— 用户可能顺手打个 "/"，
+                // 那会写到别的目录去（或者直接失败）。
+                val safe = name.replace('/', '_').replace('\\', '_')
+                saveTo(java.io.File(dir, "$safe.zjs").absolutePath, displayName = safe)
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(R.string.picker_cancel, null)
             .show()
     }
 
@@ -637,18 +595,38 @@ class ZjsEditorPage(
      * 保存是最怕"看起来成功了"的操作。写失败（路径不可写、磁盘满）时
      * 静默返回，用户会关掉 App 然后发现改动没了。
      */
-    private fun saveTo(path: String) {
+    private fun saveTo(path: String, displayName: String? = null) {
         val script = this.script ?: return
         val ok = ZScriptIO.save(script, path)
         if (ok) {
+            // 记住新名字 —— 否则下次保存又回到旧名字，用户改的名白改了。
+            displayName?.let {
+                fileName = "$it.zjs"
+                ZjsEditState.fileName = "$it.zjs"
+            }
+            // 通知第 2 页重列：刚存的东西要立刻出现在脚本库里，
+            // 不然用户会以为保存失败了。
+            ZjsEditState.markSaved()
+            refreshSummary()
             android.widget.Toast.makeText(
-                host, host.getString(R.string.zjs_saved, path), android.widget.Toast.LENGTH_LONG
+                host, host.getString(R.string.zjs_saved, fileName), android.widget.Toast.LENGTH_SHORT
             ).show()
         } else {
             android.widget.Toast.makeText(
                 host, host.getString(R.string.zjs_save_failed, "写入失败，看日志"), android.widget.Toast.LENGTH_LONG
             ).show()
         }
+    }
+
+    /**
+     * 摘要行（名字 + 动作数）重画。
+     *
+     * 只改这一行文本，不重跑 [showScript] —— 那会把列表重新提交一遍，
+     * 用户刚展开的卡片会全部收起，看起来像"保存把我的手劳动没了"。
+     */
+    private fun refreshSummary() {
+        val s = script ?: return
+        tvSummary.text = "${fileName} · ${s.actions.size} 个动作"
     }
 
     private fun load() {
@@ -778,33 +756,120 @@ class ZjsEditorPage(
              * 用两个 TextView 而不是 RecyclerView：一个动作最多十几行，
              * 嵌一层 RecyclerView 得不偿失。
              */
+            /**
+             * 一行字段。
+             *
+             * ## 控件形状跟着数据形状走
+             *
+             * 原来十几行长得一模一样：灰标签 + 灰文字 + 弹窗。用户看不出
+             * 「相似度」能拖、「禁用」是个开关、「模板」能截 —— 全都得点一下才知道。
+             *
+             * 现在：布尔给开关、百分比给滑块、枚举点开选、其余弹输入框。
+             * 一眼就能看出这行是什么、该怎么动。
+             */
             private fun makeRow(row: ZActionDescriber.Row, actionIndex: Int): View {
                 val ctx = host
+
+                // ---- 小节标题：不是字段，只画一行淡字
+                if (row.kind == ZActionDescriber.Kind.SECTION) {
+                    return TextView(ctx).apply {
+                        text = row.label
+                        textSize = 11f
+                        setTextColor(ctx.getColor(R.color.ink_faint))
+                        setPadding(0, dp(10), 0, dp(2))
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        )
+                    }
+                }
+
                 val line = LinearLayout(ctx).apply {
                     orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
                     layoutParams = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         LinearLayout.LayoutParams.WRAP_CONTENT
                     )
-                    setPadding(0, dp(3), 0, dp(3))
+                    minimumHeight = dp(38)
+                    setPadding(0, dp(2), 0, dp(2))
                 }
+
+                // 标签窄一点、淡一点。它是"这行是什么"，不是内容本身。
                 val label = TextView(ctx).apply {
                     text = row.label
-                    setTextAppearance(R.style.Text_Hint)
-                    layoutParams = LinearLayout.LayoutParams(dp(96), LinearLayout.LayoutParams.WRAP_CONTENT)
-                }
-                val value = TextView(ctx).apply {
-                    text = row.value.ifEmpty { "—" }
-                    setTextAppearance(R.style.Text_Hint)
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                    // 字段值可能很长（比如 base64），让它能换行而不是被截断
-                    setSingleLine(false)
+                    textSize = 12f
+                    setTextColor(ctx.getColor(R.color.ink_muted))
+                    layoutParams = LinearLayout.LayoutParams(dp(84), LinearLayout.LayoutParams.WRAP_CONTENT)
                 }
                 line.addView(label)
+
+                // ---- 开关：布尔值直接拨，不弹窗
+                if (row.kind == ZActionDescriber.Kind.SWITCH) {
+                    val sw = com.google.android.material.switchmaterial.SwitchMaterial(ctx).apply {
+                        isChecked = row.value == "是"
+                        layoutParams = LinearLayout.LayoutParams(
+                            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                        )
+                        text = ""
+                    }
+                    sw.setOnCheckedChangeListener { _, checked ->
+                        commitFieldValue(row, actionIndex, if (checked) "是" else "否")
+                    }
+                    line.addView(sw)
+                    return line
+                }
+
+                // ---- 百分比：滑块 + 可点的数字
+                if (row.kind == ZActionDescriber.Kind.PERCENT) {
+                    val cur = row.value.removeSuffix("%").toIntOrNull() ?: 90
+                    val bar = android.widget.SeekBar(ctx).apply {
+                        max = 100
+                        progress = cur.coerceIn(0, 100)
+                        layoutParams = LinearLayout.LayoutParams(
+                            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                        )
+                    }
+                    // 拖动中只更新数字，松手才写回 —— 每动一下都写一次会把
+                    // 整个列表重算几十遍，滑动卡成幻灯片。
+                    val num = TextView(ctx).apply {
+                        text = "$cur%"
+                        textSize = 14f
+                        setTextColor(ctx.getColor(R.color.ink))
+                        gravity = android.view.Gravity.END
+                        minWidth = dp(52)
+                    }
+                    bar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
+                            num.text = "$p%"
+                        }
+                        override fun onStartTrackingTouch(sb: android.widget.SeekBar?) = Unit
+                        override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {
+                            commitFieldValue(row, actionIndex, "${sb?.progress ?: cur}")
+                        }
+                    })
+                    // 点数字可以填精确值：滑块拖不准 90 和 92 的差别
+                    num.setOnClickListener { onEditRequested(row, actionIndex) }
+                    line.addView(bar)
+                    line.addView(num)
+                    return line
+                }
+
+                val value = TextView(ctx).apply {
+                    text = row.value.ifEmpty { "—" }
+                    textSize = 14f
+                    // 值比标签重要：标签是"这行是什么"，值才是用户要读的东西
+                    setTextColor(
+                        ctx.getColor(
+                            if (row.kind == ZActionDescriber.Kind.READONLY) R.color.ink_muted else R.color.ink
+                        )
+                    )
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    setSingleLine(false)
+                }
                 line.addView(value)
 
                 // 可编辑字段点一下弹输入框。
-                //
                 // 只读字段不挂点击 —— 挂了会让人以为能改，点了没反应比不能点更糟。
                 if (row.kind != ZActionDescriber.Kind.READONLY && row.field.isNotEmpty()) {
                     line.setBackgroundResource(android.R.drawable.list_selector_background)
@@ -820,59 +885,52 @@ class ZjsEditorPage(
                 }
 
                 // 坐标字段多一个取点按钮。
-                //
-                // 手输坐标是不现实的 —— 用户既不知道游戏里某按钮是第几像素，
-                // 也没法从画面上读出来。自动精灵的做法也是让用户在画面上指。
-                // 取 X 和 Y 是一次操作同时拿到的，所以 X 行放按钮，
-                // Y 行不放 —— 两个按钮会让人以为要分别取。
+                // 取 X 和 Y 是一次操作同时拿到的，所以 X 行放按钮、Y 行不放 ——
+                // 两个按钮会让人以为要分别取。
                 if (row.kind == ZActionDescriber.Kind.COORD && row.field.endsWith(".x")) {
-                    val base = row.field.removeSuffix(".x")   // "位置" / "起点" / "终点"
-                    val pick = android.widget.TextView(host).apply {
-                        text = "⊕"
-                        textSize = 15f
-                        setPadding(dp(10), 0, dp(2), 0)
-                        setTextColor(host.getColor(R.color.ink_faint))
-                        contentDescription = "在画面上取 $base 坐标"
-                    }
-                    pick.setOnClickListener { onPickPoint(base, actionIndex) }
-                    line.addView(pick)
+                    val base = row.field.removeSuffix(".x")
+                    line.addView(glyphButton("⊕", "在画面上取 $base 坐标") {
+                        onPickPoint(base, actionIndex)
+                    })
                 }
 
                 // 识别范围（ROI）：在画面上框一块。
-                //
-                // 和取点同一套交互 —— 用户已经知道"点 ⊕ 然后在画面上操作"，
-                // 范围只是把"点一下"换成"拖一个框"。另起一套手势只会增加学习成本。
                 if (row.kind == ZActionDescriber.Kind.AREA && row.field.isNotEmpty()) {
-                    val pick = android.widget.TextView(host).apply {
-                        text = "⊕"
-                        textSize = 15f
-                        setPadding(dp(10), 0, dp(2), 0)
-                        setTextColor(host.getColor(R.color.ink_faint))
-                        contentDescription = "在画面上框选识别范围"
-                    }
-                    pick.setOnClickListener { onPickRect(row.field, actionIndex) }
-                    line.addView(pick)
+                    line.addView(glyphButton("⊕", "在画面上框选识别范围") {
+                        onPickRect(row.field, actionIndex)
+                    })
                 }
 
                 // 模板图：在画面上框一块并直接裁下来。
-                //
-                // 这是模板匹配唯一的正经来源 —— 让用户从相册选一张图，
-                // 尺寸和缩放都对不上，匹配阈值再调也没用。
                 if (row.kind == ZActionDescriber.Kind.IMAGE && row.field.isNotEmpty()) {
-                    val pick = android.widget.TextView(host).apply {
-                        text = "✂"
-                        textSize = 15f
-                        setPadding(dp(10), 0, dp(2), 0)
-                        setTextColor(host.getColor(R.color.ink_faint))
-                        contentDescription = "在画面上截取模板"
-                    }
-                    pick.setOnClickListener { onPickTemplate(row.field, actionIndex) }
-                    line.addView(pick)
+                    line.addView(glyphButton("✂", "在画面上截取模板") {
+                        onPickTemplate(row.field, actionIndex)
+                    })
+                }
+
+                // "进去另一层"的行给个 › ，和弹输入框的行区分开。
+                if (row.kind == ZActionDescriber.Kind.ENTER) {
+                    line.addView(TextView(ctx).apply {
+                        text = "›"
+                        textSize = 18f
+                        setTextColor(ctx.getColor(R.color.ink_faint))
+                        setPadding(dp(4), 0, dp(2), 0)
+                    })
                 }
 
                 return line
             }
 
+            /** 行尾的小图标按钮。⊕ / ✂ 这类，统一尺寸和颜色。 */
+            private fun glyphButton(glyph: String, desc: String, onClick: () -> Unit): View =
+                TextView(host).apply {
+                    text = glyph
+                    textSize = 15f
+                    setPadding(dp(10), 0, dp(2), 0)
+                    setTextColor(host.getColor(R.color.ink_faint))
+                    contentDescription = desc
+                    setOnClickListener { onClick() }
+                }
             private fun dp(v: Int): Int =
                 (v * host.resources.displayMetrics.density).toInt()
         }

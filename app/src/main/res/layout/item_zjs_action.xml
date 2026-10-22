@@ -50,13 +50,18 @@
                 android:text="" />
         </LinearLayout>
 
-        <!-- 展开区：字段行 -->
+        <!-- 展开区：字段行。
+             淡底 + 内缩，让「卡片头」和「字段身」在视觉上分开 ——
+             原来全白一片，十几行看不出结构。 -->
         <LinearLayout
             android:id="@+id/llActionFields"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="#F7FAF6"
             android:orientation="vertical"
-            android:paddingTop="6dp"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="4dp"
             android:visibility="gone" />
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

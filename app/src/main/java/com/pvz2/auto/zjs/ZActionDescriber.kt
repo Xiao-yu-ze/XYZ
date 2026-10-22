@@ -24,11 +24,34 @@ object ZActionDescriber {
         /** 不可编辑，只显示。 */
         READONLY,
 
+        /**
+         * 小标题，不是字段。
+         *
+         * 用来把一长串字段切成「识别 / 触发 / 时机」几段 —— 十几个行
+         * 平铺在一起时，用户找不到「相似度」在哪，因为没有任何结构。
+         */
+        SECTION,
+
         /** 自由文本（备注、表达式）。 */
         TEXT,
 
         /** 数字或数值区间，如 `100`、`1-3`。 */
         NUMBER,
+
+        /**
+         * 0~100 的百分比。用滑块。
+         *
+         * 相似度这类值用户的思考方式是"大概八成"，而不是"87"。
+         * 滑块能把整个区间摆在眼前，还能量出"我现在的模板实际能到多少"。
+         */
+        PERCENT,
+
+        /**
+         * 布尔值。用开关。
+         *
+         * 「禁用：否」这种用弹窗填的布尔值是纯浪费 —— 一次点击变成三次。
+         */
+        SWITCH,
 
         /** 从固定选项里选。 */
         ENUM,
@@ -73,6 +96,8 @@ object ZActionDescriber {
      * 被 `__vars` 覆盖的字段一律只读 —— 改了也会被变量算出的值盖掉，
      * 让用户改等于骗他。
      */
+    /** 小节标题。不是字段 —— UI 只画一行淡字，不挂点击、不显示值。 */
+    private fun section(label: String) = Row(label, "", Kind.SECTION)
     private fun editKind(field: String, c: Z.ActionCommon): Kind =
         if (c.vars.containsKey(field)) Kind.READONLY else Kind.TEXT
 
@@ -98,6 +123,8 @@ object ZActionDescriber {
         if (!action.type.executable) {
             rows += Row("⚠ 执行", "安卓上暂不支持", Kind.READONLY)
         }
+
+        rows += section("触发")
 
         // ---- 条件
         //
@@ -148,6 +175,7 @@ object ZActionDescriber {
         }
 
         // ---- 位置
+        rows += section("识别")
         action.posData?.let { rows += posRows("位置", it) }
         action.startPos?.let { rows += posRows("起点", it) }
         action.endPos?.let { rows += posRows("终点", it) }
@@ -195,8 +223,10 @@ object ZActionDescriber {
         //
         // 以前是"有什么显示什么"，没设过 delay 的动作就没有那一行，
         // 用户分不清"字段不存在"和"它等于默认值"。
+        rows += section("其他")
         rows += Row("备注", c.desc.orEmpty(), editKind("desc", c), field = "desc")
         rows += Row("跳转标识", c.jumpId.orEmpty(), editKind("jumpId", c), field = "jumpId")
+        rows += section("时机")
         rows += Row("持续(ms)", c.duration.orEmpty(), numberKind("duration", c), field = "duration")
 
         // 等待时间：**值和单位放同一行**。
@@ -229,13 +259,14 @@ object ZActionDescriber {
             field = "repeatDelayValue"
         )
 
+        // 布尔值用开关，不用弹窗：一次点击 vs 三次点击，而且状态一直可见。
         rows += Row(
-            "快速重复", if (c.fastRepeatMode) "是" else "否", Kind.ENUM,
-            options = YES_NO, field = "fastRepeatMode"
+            "快速重复", if (c.fastRepeatMode) "是" else "否", Kind.SWITCH,
+            field = "fastRepeatMode"
         )
         rows += Row(
-            "禁用", if (c.disabled) "是" else "否", Kind.ENUM,
-            options = YES_NO, field = "disabled"
+            "禁用", if (c.disabled) "是" else "否", Kind.SWITCH,
+            field = "disabled"
         )
 
         // ---- 变量覆盖
@@ -319,7 +350,7 @@ object ZActionDescriber {
                 rows += Row(
                     "$prefix 相似度",
                     pos.minSimilarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
-                    Kind.NUMBER, field = "$prefix.minSimilarPercent"
+                    Kind.PERCENT, field = "$prefix.minSimilarPercent"
                 )
             }
 
@@ -328,7 +359,7 @@ object ZActionDescriber {
                 rows += Row(
                     "$prefix 相似度",
                     pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
-                    Kind.NUMBER, field = "$prefix.similarPercent"
+                    Kind.PERCENT, field = "$prefix.similarPercent"
                 )
             }
 
@@ -337,7 +368,7 @@ object ZActionDescriber {
                 rows += Row(
                     "$prefix 相似度",
                     pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
-                    Kind.NUMBER, field = "$prefix.similarPercent"
+                    Kind.PERCENT, field = "$prefix.similarPercent"
                 )
             }
 

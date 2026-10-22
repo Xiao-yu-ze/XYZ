@@ -195,13 +195,6 @@
         android:layout_height="wrap_content"
         android:text="" />
 
-    <!-- 说明预览可点。没有这句，用户根本不会想到去点画面。 -->
-    <TextView
-        style="@style/Text.Hint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="@string/vd_preview_tap_hint" />
-
     <!-- ==================== 下段：功能页（可滑动） ==================== -->
 
     <!-- ★ 必须写完整包名。LayoutInflater 对没有包名的标签会套上 `android.view.`
