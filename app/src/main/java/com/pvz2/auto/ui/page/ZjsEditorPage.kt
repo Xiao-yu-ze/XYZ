@@ -812,6 +812,38 @@ class ZjsEditorPage(
                     line.addView(pick)
                 }
 
+                // 识别范围（ROI）：在画面上框一块。
+                //
+                // 和取点同一套交互 —— 用户已经知道"点 ⊕ 然后在画面上操作"，
+                // 范围只是把"点一下"换成"拖一个框"。另起一套手势只会增加学习成本。
+                if (row.kind == ZActionDescriber.Kind.AREA && row.field.isNotEmpty()) {
+                    val pick = android.widget.TextView(host).apply {
+                        text = "⊕"
+                        textSize = 15f
+                        setPadding(dp(10), 0, dp(2), 0)
+                        setTextColor(host.getColor(R.color.ink_faint))
+                        contentDescription = "在画面上框选识别范围"
+                    }
+                    pick.setOnClickListener { onPickRect(row.field, actionIndex) }
+                    line.addView(pick)
+                }
+
+                // 模板图：在画面上框一块并直接裁下来。
+                //
+                // 这是模板匹配唯一的正经来源 —— 让用户从相册选一张图，
+                // 尺寸和缩放都对不上，匹配阈值再调也没用。
+                if (row.kind == ZActionDescriber.Kind.IMAGE && row.field.isNotEmpty()) {
+                    val pick = android.widget.TextView(host).apply {
+                        text = "✂"
+                        textSize = 15f
+                        setPadding(dp(10), 0, dp(2), 0)
+                        setTextColor(host.getColor(R.color.ink_faint))
+                        contentDescription = "在画面上截取模板"
+                    }
+                    pick.setOnClickListener { onPickTemplate(row.field, actionIndex) }
+                    line.addView(pick)
+                }
+
                 return line
             }
 
@@ -1012,6 +1044,149 @@ class ZjsEditorPage(
             fingers[fingerIndex] = if (isStart) cur.copy(startPos = newPos)
             else cur.copy(endPos = newPos)
             applyFingers(action, actionIndex, fingers)
+        }
+    }
+
+    /**
+     * 在预览上框选识别范围（ROI），写回 `limitArea`。
+     *
+     * ## 为什么框选而不用四个数字框
+     *
+     * 自动精灵 两种都有：四个数字输入框（左/右/上/下）+ 画面上拖框
+     * （见反编译的 `renderer-xm` 里 `defaultArea` 那个组件）。
+     *
+     * 但用户在实时画面上根本判断不出"左边该填 320 还是 340"。
+     * 拖一个框是零成本的，数字框留着手调（界面上那行本身可点编辑）。
+     *
+     * ## 存百分比
+     *
+     * `"25.00% 25.00% 75.00% 75.00%"`，换分辨率不会失效。
+     * 存像素的话在别的设备上整片范围就偏了。
+     */
+    private fun onPickRect(field: String, actionIndex: Int) {
+        val action = currentActions().getOrNull(actionIndex) ?: return
+        val pos = when {
+            field.startsWith("起点") -> action.startPos
+            field.startsWith("终点") -> action.endPos
+            else -> action.posData
+        }
+
+        host.lifecycleScope.launch {
+            val st = com.pvz2.auto.service.VirtualDisplaySession.sharedState.value
+            val iw = st.frameWidth.takeIf { it > 0 } ?: 1280
+            val ih = st.frameHeight.takeIf { it > 0 } ?: 720
+
+            val deferred = host.lifecycleScope.async {
+                com.pvz2.auto.core.PreviewPicker.result.firstOrNull {
+                    it.mode == com.pvz2.auto.core.PreviewPicker.Mode.RECT
+                }
+            }
+            com.pvz2.auto.core.PreviewPicker.arm(
+                com.pvz2.auto.core.PreviewPicker.Mode.RECT,
+                screenWidth = iw, screenHeight = ih
+            )
+            android.widget.Toast.makeText(
+                host, "请在画面上拖出识别范围", android.widget.Toast.LENGTH_SHORT
+            ).show()
+
+            val r = deferred.await() ?: return@launch
+            if (r.w <= 0 || r.h <= 0) {
+                android.widget.Toast.makeText(
+                    host, "框选范围太小，没有写回", android.widget.Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
+
+            val l = "%.2f%%".format(100.0 * r.x / r.screenWidth)
+            val t = "%.2f%%".format(100.0 * r.y / r.screenHeight)
+            val rr = "%.2f%%".format(100.0 * (r.x + r.w) / r.screenWidth)
+            val bb = "%.2f%%".format(100.0 * (r.y + r.h) / r.screenHeight)
+
+            val updated = com.pvz2.auto.zjs.ZFieldEditor
+                .apply(action, field, "$l $t $rr $bb") ?: action
+            val list = currentActions().toMutableList()
+            list[actionIndex] = updated
+            commitActions(list)
+            adapter.submit(currentActions())
+            expandedIndex = actionIndex
+            adapter.notifyItemChanged(actionIndex)
+        }
+    }
+
+    /**
+     * 在预览上截取模板图，写回 `imageData`。
+     *
+     * ## 必须从实时画面裁
+     *
+     * 模板要和运行时看到的东西**逐像素一致**才有意义。让用户从相册
+     * 选一张图，尺寸、缩放、抗锯齿全都对不上，阈值调到 50% 都没用。
+     *
+     * ## 六个字段一起写
+     *
+     * 协议里 `imageData` 除了 base64 还有 imageWidth/Height/Left/Top 和
+     * screenWidth/Height —— 它们用来在别的分辨率下按比例还原位置。
+     * 只写 base64 的话，自动精灵打开这张图位置是错的。
+     */
+    private fun onPickTemplate(field: String, actionIndex: Int) {
+        val action = currentActions().getOrNull(actionIndex) ?: return
+
+        host.lifecycleScope.launch {
+            val st = com.pvz2.auto.service.VirtualDisplaySession.sharedState.value
+            val iw = st.frameWidth.takeIf { it > 0 } ?: 1280
+            val ih = st.frameHeight.takeIf { it > 0 } ?: 720
+
+            val deferred = host.lifecycleScope.async {
+                com.pvz2.auto.core.PreviewPicker.result.firstOrNull {
+                    it.mode == com.pvz2.auto.core.PreviewPicker.Mode.TEMPLATE
+                }
+            }
+            com.pvz2.auto.core.PreviewPicker.arm(
+                com.pvz2.auto.core.PreviewPicker.Mode.TEMPLATE,
+                screenWidth = iw, screenHeight = ih
+            )
+            android.widget.Toast.makeText(
+                host, "请在画面上框住要识别的图案", android.widget.Toast.LENGTH_SHORT
+            ).show()
+
+            val r = deferred.await() ?: return@launch
+            val crop = r.crop
+            if (crop == null || crop.width <= 0 || crop.height <= 0) {
+                android.widget.Toast.makeText(
+                    host, "没截到图（虚拟屏还没画面？）", android.widget.Toast.LENGTH_LONG
+                ).show()
+                return@launch
+            }
+
+            // 压成 PNG 存 base64。协议里 data 就是去掉前缀的 base64。
+            val bytes = java.io.ByteArrayOutputStream()
+            crop.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bytes)
+            val b64 = android.util.Base64.encodeToString(
+                bytes.toByteArray(), android.util.Base64.NO_WRAP
+            )
+
+            val img = com.pvz2.auto.zjs.Z.ImageData(
+                data = b64,
+                width = crop.width,
+                height = crop.height,
+                left = r.x,
+                top = r.y,
+                screenWidth = r.screenWidth,
+                screenHeight = r.screenHeight
+            )
+
+            val updated = com.pvz2.auto.zjs.ZFieldEditor
+                .applyImage(action, field, img) ?: action
+            val list = currentActions().toMutableList()
+            list[actionIndex] = updated
+            commitActions(list)
+            adapter.submit(currentActions())
+            expandedIndex = actionIndex
+            adapter.notifyItemChanged(actionIndex)
+
+            android.widget.Toast.makeText(
+                host, "已截取 ${crop.width}×${crop.height} 的模板",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
         }
     }
 

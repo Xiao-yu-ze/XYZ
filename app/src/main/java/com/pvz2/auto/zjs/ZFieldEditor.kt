@@ -33,6 +33,34 @@ object ZFieldEditor {
     private enum class PosSlot { MAIN, START, END }
 
     /**
+     * 写模板图。
+     *
+     * ## 为什么单独一个方法而不是走 [apply] 的字符串
+     *
+     * 模板是一整块 base64 加六个尺寸字段，塞进 String 再解析一遍
+     * 既浪费又容易在转义上出错。这里直接收结构体。
+     *
+     * @param field 描述器给的路径，如 `"位置.image"`；`null` 表示清空模板
+     */
+    fun applyImage(action: Z.Action, field: String, image: Z.ImageData?): Z.Action? {
+        val dot = field.indexOf('.')
+        if (dot <= 0) return null
+        val slot = POS_PREFIXES[field.substring(0, dot)] ?: return null
+        val pos = when (slot) {
+            PosSlot.MAIN -> action.posData
+            PosSlot.START -> action.startPos
+            PosSlot.END -> action.endPos
+        } ?: return null
+
+        val updated = pos.copy(imageData = image)
+        return when (slot) {
+            PosSlot.MAIN -> action.copy(posData = updated)
+            PosSlot.START -> action.copy(startPos = updated)
+            PosSlot.END -> action.copy(endPos = updated)
+        }
+    }
+
+    /**
      * 把一个字段改成 [value]。
      *
      * @param action 原动作

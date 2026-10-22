@@ -146,4 +146,54 @@ class ZFieldEditorTest {
         // 也接受协议写法
         assertEquals(true, ZFieldEditor.apply(a, "disabled", "true")!!.common.disabled)
     }
+    // ------------------------------------------------------------ 模板图
+
+    @Test
+    fun `写模板图会带上全部尺寸字段`() {
+        // 只写 base64、不写 imageWidth/Left/screenWidth 的话，
+        // 自动精灵打开这张图位置是错的 —— 而这些字段界面上看不到。
+        val a = action(
+            """{"type":"点击图片","delayUnit":0,
+                "posData":{"type":"image","imageData":{"data":"AA"}}}"""
+        )
+        val img = Z.ImageData(
+            data = "BB",
+            width = 40, height = 30, left = 100, top = 200,
+            screenWidth = 1280, screenHeight = 720
+        )
+        val out = ZFieldEditor.applyImage(a, "位置.image", img)!!
+        val json = out.posData!!.imageData!!.toJson()
+        assertEquals("BB", json.getString("data"))
+        assertEquals(40, json.getInt("imageWidth"))
+        assertEquals(30, json.getInt("imageHeight"))
+        assertEquals(100, json.getInt("imageLeft"))
+        assertEquals(200, json.getInt("imageTop"))
+        assertEquals(1280, json.getInt("screenWidth"))
+        assertEquals(720, json.getInt("screenHeight"))
+    }
+
+    @Test
+    fun `清空模板图`() {
+        val a = action(
+            """{"type":"点击图片","delayUnit":0,
+                "posData":{"type":"image","imageData":{"data":"AA","imageWidth":10}}}"""
+        )
+        val out = ZFieldEditor.applyImage(a, "位置.image", null)!!
+        assertNull(out.posData!!.imageData)
+    }
+
+    @Test
+    fun `框选范围存成百分比`() {
+        val a = action(
+            """{"type":"点击图片","delayUnit":0,
+                "posData":{"type":"image","imageData":{"data":"AA"}}}"""
+        )
+        val out = ZFieldEditor.apply(a, "位置.limitArea", "25.00% 25.00% 75.00% 75.00%")!!
+        val area = out.posData!!.limitArea!!
+        // 存的是百分比，换分辨率不失效
+        assertEquals("25.00%", area.left.raw)
+        assertEquals("75.00%", area.right.raw)
+        assertEquals("25.00%", area.top.raw)
+        assertEquals("75.00%", area.bottom.raw)
+    }
 }

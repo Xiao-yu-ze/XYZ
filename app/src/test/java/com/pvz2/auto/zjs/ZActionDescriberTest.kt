@@ -292,4 +292,24 @@ class ZActionDescriberTest {
             assertTrue("缺 [$must]：$labels", labels.any { it == must })
         }
     }
+    // ------------------------------------------------------------ 取点/框选按钮
+
+    @Test
+    fun `范围和模板行必须带 field 才挂得上按钮`() {
+        // 同手指行那次教训：只给 kind 不够，field 空着 UI 就不挂按钮，
+        // 用户看到一行字但点不动。
+        val r = rows(
+            """{"type":"点击图片","delayUnit":1,
+               "posData":{"type":"image",
+                 "imageData":{"data":"AA","imageWidth":10,"imageHeight":10},
+                 "limitArea":"10% 20% 30% 40%"}}"""
+        )
+        val area = r.firstOrNull { it.kind == ZActionDescriber.Kind.AREA }
+        assertTrue("应有范围行", area != null)
+        assertEquals("位置.limitArea", area!!.field)
+
+        val img = r.firstOrNull { it.kind == ZActionDescriber.Kind.IMAGE }
+        assertTrue("应有模板行", img != null)
+        assertEquals("位置.image", img!!.field)
+    }
 }
