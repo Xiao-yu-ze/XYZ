@@ -219,4 +219,20 @@ class ZActionDescriberTest {
         val c = Z.Condition.parse(JSONObject("""{"type":"random"}"""))!!
         assertTrue(ZConditionDescriber.summary(c).contains("50"))
     }
+    @Test
+    fun `没有条件时也要有一行入口`() {
+        val labels = rows("""{"type":"点击","delayUnit":1}""").map { it.label }
+        assertTrue("应无条件行：$labels", labels.contains("条件"))
+    }
+
+    @Test
+    fun `条件和监听行都是可进入的`() {
+        val r = rows("""{"type":"点击","delayUnit":1}""")
+        val cond = r.firstOrNull { it.label == "条件" }
+        val cb = r.firstOrNull { it.label == "监听" }
+        assertTrue("应有条件行", cond != null)
+        assertTrue("应有监听行", cb != null)
+        assertEquals(ZActionDescriber.Kind.ENTER, cb!!.kind)
+        assertEquals("callbacks", cb.field)
+    }
 }

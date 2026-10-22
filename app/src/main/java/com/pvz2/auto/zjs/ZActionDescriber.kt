@@ -40,7 +40,15 @@ object ZActionDescriber {
         AREA,
 
         /** 模板图：可以用截取按钮。 */
-        IMAGE
+        IMAGE,
+
+        /**
+         * 点进去是**另一层**东西（条件、监听），不是一个标量字段。
+         *
+         * UI 见到这个不要弹输入框 —— 弹了也只能改个摘要字符串，
+         * 而里面那层有自己的类型和一堆参数。要打开嵌套编辑。
+         */
+        ENTER
     }
 
     /** 一行。 */
@@ -89,6 +97,54 @@ object ZActionDescriber {
         action.type.controlRunType?.let { rows += Row("控制方式", it) }
         if (!action.type.executable) {
             rows += Row("⚠ 执行", "安卓上暂不支持", Kind.READONLY)
+        }
+
+        // ---- 条件
+        //
+        // 用 ENTER 表示"这一行点进去是另一层东西"，不是标量字段。
+        // UI 据此打开嵌套编辑而不是弹输入框 —— 条件本身有 13 种类型、
+        // 自己还有一堆参数，用输入框改不了。
+        rows += Row(
+            "条件",
+            c.condition?.let { ZConditionDescriber.summary(it) }
+                // 空条件也要能点 —— 用户看到"—"会以为这里没救，
+                // 而实际上点一下就能加。写清楚"点了是去加"。
+                ?: "（未设置，点击添加）",
+            Kind.ENTER,
+            field = "condition"
+        )
+
+        // ---- 监听（scriptCallbacks）
+        //
+        // 7 个槽位，每个槽位本身是一段完整动作。
+        //
+        // ## 为什么必须显示
+        //
+        // 一个挂了监听的动作用户展开后如果什么都看不到，他会以为没挂 ——
+        // 而那些监听在自动精灵里是会真的跑的。这里每个槽位一行，
+        // 显示槽位名 + 里面那个动作的标签，至少让用户知道"这里有事"。
+        if (action.callbacks.isNotEmpty()) {
+            // 按固定顺序列，不按 Map 的遍历顺序 —— 用户要能对照着看
+            Z.CallbackSlot.entries.forEach { slot ->
+                action.callbacks[slot]?.let { cb ->
+                    rows += Row(
+                        "监听·${slot.label}",
+                        ZScriptIO.actionLabel(cb),
+                        // 点进去编辑那段监听动作本身
+                        Kind.ENTER,
+                        field = "callbacks"
+                    )
+                }
+            }
+        } else {
+            // 没挂监听时也给一行入口，否则用户根本不知道有这个功能。
+            // 文案要说清楚"点了是去加"，不是"这里有东西"。
+            rows += Row(
+                "监听",
+                "（未设置，点击添加）",
+                Kind.ENTER,
+                field = "callbacks"
+            )
         }
 
         // ---- 位置
@@ -154,35 +210,6 @@ object ZActionDescriber {
             "禁用", if (c.disabled) "是" else "否", Kind.ENUM,
             options = YES_NO, field = "disabled"
         )
-
-        // ---- 条件
-        rows += Row(
-            "条件",
-            c.condition?.let { ZConditionDescriber.summary(it) }.orEmpty(),
-            Kind.READONLY
-        )
-
-        // ---- 监听（scriptCallbacks）
-        //
-        // 7 个槽位，每个槽位本身是一段完整动作。
-        //
-        // ## 为什么必须显示
-        //
-        // 一个挂了监听的动作用户展开后如果什么都看不到，他会以为没挂 ——
-        // 而那些监听在自动精灵里是会真的跑的。这里每个槽位一行，
-        // 显示槽位名 + 里面那个动作的标签，至少让用户知道"这里有事"。
-        if (action.callbacks.isNotEmpty()) {
-            // 按固定顺序列，不按 Map 的遍历顺序 —— 用户要能对照着看
-            Z.CallbackSlot.entries.forEach { slot ->
-                action.callbacks[slot]?.let { cb ->
-                    rows += Row(
-                        "监听·${slot.label}",
-                        ZScriptIO.actionLabel(cb),
-                        Kind.READONLY
-                    )
-                }
-            }
-        }
 
         // ---- 变量覆盖
         //

@@ -12,6 +12,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.pvz2.auto.R
 import com.pvz2.auto.zjs.Z
 import com.pvz2.auto.zjs.ZActionDescriber
+import com.pvz2.auto.zjs.ZConditionEditor
 import com.pvz2.auto.zjs.ZFieldEditor
 import com.pvz2.auto.zjs.ZScriptIO
 import com.pvz2.auto.zjs.ZjsRunner
@@ -57,6 +58,73 @@ class ZjsEditorPage(
     private var fileName: String = ""
 
     /**
+     * 嵌套编辑的路径栈。
+     *
+     * ## 为什么用栈而不是树
+     *
+     * 条件和监听里装着完整的动作。一次只显示一层、退回去看上一层，
+     * 比把所有层同时在屏幕上摊开容易读 —— 平板屏幕也不大，
+     * 三层缩进后每行只剩几个字。
+     *
+     * 空栈 = 在编辑脚本的顶层动作列表。
+     */
+    private val navStack = ArrayList<Frame>()
+
+    /** 栈帧：正在编辑哪个动作的哪个监听槽位。 */
+    private data class Frame(val actionIndex: Int, val slot: Z.CallbackSlot)
+
+    /** 当前层要显示的动作列表。 */
+    private fun currentActions(): List<Z.Action> {
+        val s = script ?: return emptyList()
+        val f = navStack.lastOrNull() ?: return s.actions
+        return s.actions.getOrNull(f.actionIndex)?.callbacks?.get(f.slot)
+            ?.let { listOf(it) } ?: emptyList()
+    }
+
+    /** 把当前层的列表写回脚本。监听层要沿栈塞回去。 */
+    private fun commitActions(newList: List<Z.Action>) {
+        val s = script ?: return
+        val f = navStack.lastOrNull()
+        if (f == null) {
+            script = s.copy(actions = newList)
+            return
+        }
+        val owner = s.actions.getOrNull(f.actionIndex) ?: return
+        val inner = newList.firstOrNull() ?: return
+        val newCallbacks = LinkedHashMap(owner.callbacks)
+        newCallbacks[f.slot] = inner
+        val newActions = s.actions.toMutableList()
+        newActions[f.actionIndex] = owner.copy(callbacks = newCallbacks)
+        script = s.copy(actions = newActions)
+    }
+
+    /** 进入某个监听槽位。空槽位先放一个占位动作。 */
+    private fun enterSlot(actionIndex: Int, slot: Z.CallbackSlot) {
+        val cur = script ?: return
+        val owner = currentActions().getOrNull(actionIndex) ?: return
+        if (!owner.callbacks.containsKey(slot)) {
+            val placeholder = Z.Action(type = Z.ActionType.CLICK)
+            val newCb = LinkedHashMap(owner.callbacks)
+            newCb[slot] = placeholder
+            val list = currentActions().toMutableList()
+            list[actionIndex] = owner.copy(callbacks = newCb)
+            commitActions(list)
+        }
+        navStack.add(Frame(actionIndex, slot))
+        expandedIndex = -1
+        adapter.submit(currentActions())
+    }
+
+    /** 返回上一层。 */
+    private fun popNav(): Boolean {
+        if (navStack.isEmpty()) return false
+        navStack.removeAt(navStack.size - 1)
+        expandedIndex = -1
+        adapter.submit(currentActions())
+        return true
+    }
+
+    /**
      * 某一行被点了「编辑」。
      *
      * 弹一个单行输入框，确认后按 [row] 的路径写回模型并重绘这一条。
@@ -68,7 +136,7 @@ class ZjsEditorPage(
      */
     private fun onEditRequested(row: ZActionDescriber.Row, actionIndex: Int) {
         val cur = script ?: return
-        val action = cur.actions.getOrNull(actionIndex) ?: return
+        val action = currentActions().getOrNull(actionIndex) ?: return
 
         // 有限选项的字段直接列出来让用户选。
         //
@@ -135,10 +203,10 @@ class ZjsEditorPage(
             ).show()
             return
         }
-        val list = cur.actions.toMutableList()
+        val list = currentActions().toMutableList()
         list[actionIndex] = updated
-        script = cur.copy(actions = list)
-        adapter.submit(script!!.actions)
+        commitActions(list)
+        adapter.submit(currentActions())
         // 保持展开，用户接着改别的字段
         expandedIndex = actionIndex
         adapter.notifyItemChanged(actionIndex)
@@ -152,16 +220,16 @@ class ZjsEditorPage(
      */
     private fun onDeleteRequested(index: Int) {
         val cur = script ?: return
-        val action = cur.actions.getOrNull(index) ?: return
+        val action = currentActions().getOrNull(index) ?: return
 
         androidx.appcompat.app.AlertDialog.Builder(host)
             .setTitle("删除这一条？")
             .setMessage("第 ${index + 1} 个：${ZScriptIO.actionLabel(action)}")
             .setPositiveButton("删除") { _, _ ->
-                val list = cur.actions.toMutableList()
+                val list = currentActions().toMutableList()
                 list.removeAt(index)
-                script = cur.copy(actions = list)
-                adapter.submit(script!!.actions)
+                commitActions(list)
+                adapter.submit(currentActions())
                 expandedIndex = -1
                 android.widget.Toast.makeText(
                     host, "已删除", android.widget.Toast.LENGTH_SHORT
@@ -169,6 +237,170 @@ class ZjsEditorPage(
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+    /**
+     * 点了「条件」或「监听」那种可以进去的行。
+     *
+     * ## 条件只有一个，监听有七个
+     *
+     * 动作的 `condition` 是单个对象（FIELDS.md:280），所以点条件就直接
+     * 编辑它；监听槽位有 7 个，得先让用户选进哪一个。
+     */
+    private fun onEnter(row: ZActionDescriber.Row, actionIndex: Int) {
+        val cur = script ?: return
+        val action = currentActions().getOrNull(actionIndex) ?: return
+
+        when {
+            // ---- 条件
+            row.field == "condition" -> {
+                val existing = action.common.condition
+                if (existing != null) {
+                    showConditionEditor(action, actionIndex, existing)
+                } else {
+                    // 还没有条件：先选类型
+                    val labels = ZConditionEditor.TYPE_LABELS.map { it.second }.toTypedArray()
+                    androidx.appcompat.app.AlertDialog.Builder(host)
+                        .setTitle("添加什么条件")
+                        .setItems(labels) { dlg, which ->
+                            dlg.dismiss()
+                            val type = ZConditionEditor.TYPE_LABELS[which].first
+                            val fresh = ZConditionEditor.create(type)
+                            val updated = action.copy(
+                                common = action.common.copy(condition = fresh)
+                            )
+                            val list = currentActions().toMutableList()
+                            list[actionIndex] = updated
+                            commitActions(list)
+                            adapter.submit(currentActions())
+                            expandedIndex = actionIndex
+                            adapter.notifyItemChanged(actionIndex)
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
+            }
+
+            // ---- 监听
+            row.field == "callbacks" -> {
+                val slots = Z.CallbackSlot.entries
+                val labels = slots.map {
+                    val has = action.callbacks.containsKey(it)
+                    "${it.label}${if (has) "（已设置）" else ""}"
+                }.toTypedArray()
+                androidx.appcompat.app.AlertDialog.Builder(host)
+                    .setTitle("编辑哪个监听")
+                    .setItems(labels) { dlg, which ->
+                        dlg.dismiss()
+                        enterSlot(actionIndex, slots[which])
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+        }
+    }
+
+    /**
+     * 编辑一个已存在的条件。
+     *
+     * 弹一个列表，把条件摊平成行 —— 和动作的字段行同一套结构，
+     * 所以下拉、数字键盘这些行为完全一致，不用另写一套。
+     */
+    private fun showConditionEditor(
+        action: Z.Action,
+        actionIndex: Int,
+        condition: Z.Condition
+    ) {
+        val rows = ZConditionEditor.describe(condition)
+        val labels = rows.map { "${it.label}：${it.value.ifEmpty { "—" }}" }.toTypedArray()
+
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle("条件")
+            .setItems(labels) { dlg, which ->
+                dlg.dismiss()
+                editConditionRow(action, actionIndex, condition, rows[which])
+            }
+            .setNeutralButton("删除条件") { _, _ ->
+                val updated = action.copy(common = action.common.copy(condition = null))
+                val list = currentActions().toMutableList()
+                list[actionIndex] = updated
+                commitActions(list)
+                adapter.submit(currentActions())
+                expandedIndex = actionIndex
+                adapter.notifyItemChanged(actionIndex)
+            }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+    /** 改条件里的一个字段，然后回到条件编辑列表。 */
+    private fun editConditionRow(
+        action: Z.Action,
+        actionIndex: Int,
+        condition: Z.Condition,
+        row: ZActionDescriber.Row
+    ) {
+        // 换类型要单独处理 —— 位置对象和专属参数都得跟着换
+        if (row.label == "条件类型") {
+            val labels = ZConditionEditor.TYPE_LABELS.map { it.second }.toTypedArray()
+            androidx.appcompat.app.AlertDialog.Builder(host)
+                .setTitle("条件类型")
+                .setItems(labels) { dlg, which ->
+                    dlg.dismiss()
+                    val type = ZConditionEditor.TYPE_LABELS[which].first
+                    applyCondition(action, actionIndex, ZConditionEditor.changeType(condition, type))
+                }
+                .setNegativeButton("取消", null)
+                .show()
+            return
+        }
+
+        val commit: (String) -> Unit = { value ->
+            ZConditionEditor.apply(condition, row.field, value)?.let {
+                applyCondition(action, actionIndex, it)
+            }
+        }
+
+        if (row.kind == ZActionDescriber.Kind.ENUM && row.options.isNotEmpty()) {
+            val cur = row.options.indexOfFirst { it == row.value }.coerceAtLeast(0)
+            androidx.appcompat.app.AlertDialog.Builder(host)
+                .setTitle(row.label)
+                .setSingleChoiceItems(row.options.toTypedArray(), cur) { dlg, which ->
+                    dlg.dismiss()
+                    commit(row.options[which])
+                }
+                .setNegativeButton("取消", null)
+                .show()
+            return
+        }
+
+        val input = android.widget.EditText(host).apply {
+            setText(row.value)
+            setSingleLine(false)
+            setPadding(32, 24, 32, 24)
+            inputType = if (row.kind == ZActionDescriber.Kind.NUMBER) {
+                android.text.InputType.TYPE_CLASS_NUMBER
+            } else {
+                android.text.InputType.TYPE_CLASS_TEXT
+            }
+        }
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle(row.label)
+            .setView(input)
+            .setPositiveButton("确定") { _, _ ->
+                commit(input.text?.toString().orEmpty())
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun applyCondition(action: Z.Action, actionIndex: Int, condition: Z.Condition) {
+        val updated = action.copy(common = action.common.copy(condition = condition))
+        val list = currentActions().toMutableList()
+        list[actionIndex] = updated
+        commitActions(list)
+        adapter.submit(currentActions())
+        expandedIndex = actionIndex
+        adapter.notifyItemChanged(actionIndex)
     }
     fun bind() {
         rvActions.layoutManager = LinearLayoutManager(host)
@@ -234,11 +466,11 @@ class ZjsEditorPage(
 
         // 加在当前展开的那一条后面。全收起时加到末尾 ——
         // 用户刚看完某条就想在它后面加一条，比滚到底部合理。
-        val at = if (expandedIndex >= 0) expandedIndex + 1 else cur.actions.size
-        val list = cur.actions.toMutableList()
+        val at = if (expandedIndex >= 0) expandedIndex + 1 else currentActions().size
+        val list = currentActions().toMutableList()
         list.add(at, newAction)
-        script = cur.copy(actions = list)
-        adapter.submit(script!!.actions)
+        commitActions(list)
+        adapter.submit(currentActions())
         expandedIndex = at
         adapter.notifyItemChanged(at)
         android.widget.Toast.makeText(
@@ -453,7 +685,15 @@ class ZjsEditorPage(
                 // 只读字段不挂点击 —— 挂了会让人以为能改，点了没反应比不能点更糟。
                 if (row.kind != ZActionDescriber.Kind.READONLY && row.field.isNotEmpty()) {
                     line.setBackgroundResource(android.R.drawable.list_selector_background)
-                    line.setOnClickListener { onEditRequested(row, actionIndex) }
+                    line.setOnClickListener {
+                        // ENTER 是"点进去看另一层"，不是改标量 ——
+                        // 弹输入框只能改到摘要字符串，里面那层还是原样。
+                        if (row.kind == ZActionDescriber.Kind.ENTER) {
+                            onEnter(row, actionIndex)
+                        } else {
+                            onEditRequested(row, actionIndex)
+                        }
+                    }
                 }
 
                 // 坐标字段多一个取点按钮。
@@ -495,7 +735,7 @@ class ZjsEditorPage(
      */
     private fun onPickPoint(prefix: String, actionIndex: Int) {
         val cur = script ?: return
-        val action = cur.actions.getOrNull(actionIndex) ?: return
+        val action = currentActions().getOrNull(actionIndex) ?: return
 
         // 初始值：当前位置，没有就交给准星走默认（画面正中）
         val pos = when (prefix) {
@@ -533,10 +773,10 @@ class ZjsEditorPage(
             var updated = ZFieldEditor.apply(action, "$prefix.x", px) ?: action
             updated = ZFieldEditor.apply(updated, "$prefix.y", py) ?: updated
 
-            val list = cur.actions.toMutableList()
+            val list = currentActions().toMutableList()
             list[actionIndex] = updated
-            script = cur.copy(actions = list)
-            adapter.submit(script!!.actions)
+            commitActions(list)
+            adapter.submit(currentActions())
             expandedIndex = actionIndex
             adapter.notifyItemChanged(actionIndex)
         }
