@@ -412,7 +412,67 @@ class ZjsEditorPage(
             .setOnClickListener { promptSaveAs() }
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsAddAction)
             .setOnClickListener { promptAddAction() }
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsRun)
+            .setOnClickListener { runCurrent() }
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsStop)
+            .setOnClickListener {
+                com.pvz2.auto.service.AutomationService.zjsStop(host)
+            }
         load()
+    }
+
+    /**
+     * 运行当前脚本。
+     *
+     * ## 先检查再跑
+     *
+     * [ZScriptIO.validate] 报的问题不阻止运行 —— 有些是"暂不支持"这类
+     * 提示，用户可能就是只跑其中几条。但**必须让他看见**再决定。
+     *
+     * ## 保存到文件再跑
+     *
+     * 执行器读的是文件，不是内存里的对象。内存里改了不保存的话，
+     * 跑的还是改之前的版本 —— 这种"我明明改了"的困惑最难查。
+     * 所以先写盘再通知服务运行。
+     */
+    private fun runCurrent() {
+        val script = this.script ?: return
+        if (script.actions.isEmpty()) {
+            android.widget.Toast.makeText(host, "脚本里没有动作", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val path = defaultSavePath()
+        android.util.Log.i("ZjsEditor", "即将保存到 $path")
+        if (!ZScriptIO.save(script, path)) {
+            android.widget.Toast.makeText(
+                host, "保存失败，无法运行", android.widget.Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        val issues = ZScriptIO.validate(script)
+        android.util.Log.i("ZjsEditor", "validate -> ${issues.size}")
+        if (issues.isNotEmpty()) android.util.Log.i("ZjsEditor", "问题：${issues}")
+        if (issues.isEmpty()) {
+            startRun(path)
+            return
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle("有 ${issues.size} 个问题")
+            .setMessage(issues.take(8).joinToString("\n") +
+                if (issues.size > 8) "\n…" else "")
+            .setPositiveButton("仍然运行") { _, _ -> startRun(path) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun startRun(path: String) {
+        com.pvz2.auto.service.AutomationService.zjsRun(host, path)
+        android.widget.Toast.makeText(
+            host, "已开始运行（$path）", android.widget.Toast.LENGTH_SHORT
+        ).show()
     }
 
     /**

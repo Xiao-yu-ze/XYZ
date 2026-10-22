@@ -184,4 +184,14 @@ class ZScriptIOTest {
         val on = Z.Script.parse(JSONObject("""{"actions":[{"type":"多指手势","delayUnit":1}]}"""))
         assertTrue(ZScriptIO.validate(on).any { it.contains("暂不支持") })
     }
+    @Test
+    fun `示例脚本的 validate 不抛异常且返回空`() {
+        // 这是运行按钮走的路径。抛异常的话按钮点了没反应，
+        // 而异常被外层 runCatching 吞掉，界面上什么都看不到。
+        val json = java.io.File("app/src/main/assets/zjs/示例_基础动作.json")
+        org.junit.Assume.assumeTrue(json.isFile)
+        val script = ZjsFileFormat.parse(json.readText()).script!!
+        val issues = ZScriptIO.validate(script)
+        assertTrue("示例脚本应该没问题：$issues", issues.isEmpty())
+    }
 }

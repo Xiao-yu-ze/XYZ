@@ -819,7 +819,7 @@ class VirtualDisplaySession(
             service.setPendingFramePath(path)
 
             frameRing = ring
-
+            publishRing(ring)
             Log.i(TAG, "共享帧环就绪 ${w}x$h：$path")
 
             true
@@ -844,6 +844,7 @@ class VirtualDisplaySession(
 
         frameRing = null
 
+        publishRing(null)
     }
 
 
@@ -857,6 +858,43 @@ class VirtualDisplaySession(
      * @return 帧 Mat；没有新帧时返回 null（调用方据此决定是等下一轮还是重试）
 
      */
+
+    /**
+     * 给脚本执行器拿一帧当前画面。
+     *
+     * ## 为什么要单独一个公开方法
+     *
+     * [readFrameFromRing] 是采集循环内部用的，带一堆缓冲区复用逻辑。
+     * 执行器只需要"给我一帧能匹配的图"，每次重新读一次最省心 ——
+     * 复用同一个 Mat 会踩到"匹配期间画面已经变了"的坑，
+     * 而识别耗时几十毫秒，画面早就换了。
+     *
+     * 返回 null 表示还没有画面（虚拟屏没启动，或者这一帧没读到）。
+     */
+    fun snapshotForMatch(): Mat? = runCatching { readFrameFromRing2() }.getOrNull()
+
+    /**
+     * 与 [readFrameFromRing] 等价，但每次返回**独立**的 Mat。
+     *
+     * 采集循环那份会复用缓冲区，脚本执行不能和它抢。
+     */
+    private fun readFrameFromRing2(): Mat? {
+        val ring = frameRing ?: return null
+        val w = ring.width
+        val h = ring.height
+        if (w <= 0 || h <= 0) return null
+
+        val direct = java.nio.ByteBuffer.allocateDirect(w * h * 4)
+        if (!ring.readLatest(direct)) return null
+
+        val bytes = ByteArray(w * h * 4)
+        direct.position(0)
+        direct.get(bytes)
+
+        return Mat(h, w, org.opencv.core.CvType.CV_8UC4).apply {
+            put(0, 0, bytes)
+        }
+    }
 
     private fun readFrameFromRing(): Mat? {
         val ring = frameRing ?: return null
@@ -2075,6 +2113,47 @@ class VirtualDisplaySession(
          */
 
         val shared = MutableStateFlow(VirtualDisplaySession.State())
+
+        /**
+         * 当前帧环，静态引用一份，给脚本执行器读帧用。
+         *
+         * 执行器在另一个协程里跑，拿不到 session 实例 ——
+         * 而判断"有没有画面"只需要这个环。
+         */
+        @Volatile
+        private var sharedRing: com.pvz2.auto.core.FrameRing? = null
+
+        /** 采集循环启动/停止时同步这一份。 */
+        internal fun publishRing(ring: com.pvz2.auto.core.FrameRing?) {
+            sharedRing = ring
+        }
+
+        /**
+         * 给脚本执行器拿一帧当前画面。
+         *
+         * ## 为什么每次新分配
+         *
+         * 采集循环复用缓冲区，执行器不能和它抢同一个 Mat ——
+         * 匹配耗时几十毫秒，期间画面已经换了，复用会读到撕裂的像素。
+         * 一帧 1280×720×4 是 3.7MB，一次分配不算贵。
+         *
+         * 返回 null 表示还没有画面（虚拟屏没启动）。
+         */
+        fun snapshotForMatch(): Mat? = runCatching {
+            val ring = sharedRing ?: return null
+            val w = ring.width
+            val h = ring.height
+            if (w <= 0 || h <= 0) return null
+
+            val direct = java.nio.ByteBuffer.allocateDirect(w * h * 4)
+            if (!ring.readLatest(direct)) return null
+
+            val bytes = ByteArray(w * h * 4)
+            direct.position(0)
+            direct.get(bytes)
+
+            Mat(h, w, org.opencv.core.CvType.CV_8UC4).apply { put(0, 0, bytes) }
+        }.getOrNull()
 
 
 

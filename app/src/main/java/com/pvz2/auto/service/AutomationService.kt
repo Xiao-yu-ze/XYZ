@@ -25,6 +25,13 @@ import com.pvz2.auto.core.BotState
 import com.pvz2.auto.core.ScreenCapturer
 import com.pvz2.auto.core.TemplateMatcher
 import com.pvz2.auto.core.TouchInjector
+import com.pvz2.auto.zjs.ZExecutor
+import com.pvz2.auto.zjs.ZPosResolver
+import com.pvz2.auto.zjs.ZRealMatcher
+import com.pvz2.auto.zjs.ZScriptIO
+import com.pvz2.auto.zjs.ZTouchInjectorAdapter
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import com.pvz2.auto.maa.OcrEngine
 import com.pvz2.auto.maa.PipelineRunner
 import com.pvz2.auto.maa.ProbeTargets
@@ -41,7 +48,6 @@ import com.pvz2.auto.task.Pvz2Bot
 import com.pvz2.auto.task.Pvz2Tasks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -83,6 +89,9 @@ class AutomationService : Service() {
 
     private var capturer: ScreenCapturer? = null
     private var injector: TouchInjector? = null
+
+    /** 正在跑的自动精灵执行器。停止时用它打断 sleep。 */
+    private var zjsExecutor: com.pvz2.auto.zjs.ZExecutor? = null
 
     /** 注入器就绪/销毁时同步到静态引用，供预览手势使用。 */
     private fun publishInjector(v: TouchInjector?) {
@@ -214,6 +223,32 @@ class AutomationService : Service() {
 
             ACTION_SCRIPT_STOP -> {
                 startForegroundCompat()
+                scriptJob?.cancel()
+                scriptJob = null
+                ScriptRunState.finish("已停止")
+            }
+
+            // ---- 自动精灵格式
+            ACTION_ZJS_RUN -> {
+                startForegroundCompat()
+                val path = intent.getStringExtra(EXTRA_ZJS_PATH)
+                if (path.isNullOrBlank()) {
+                    ScriptRunState.finish("没有指定脚本文件")
+                } else {
+                    // 和上面一样：等旧任务真正结束再起新的，
+                    // 否则两个 job 共用注入器会两边同时点。
+                    val previous = scriptJob
+                    scriptJob = scope.launch {
+                        previous?.cancelAndJoin()
+                        runZjs(path)
+                    }
+                }
+            }
+
+            ACTION_ZJS_STOP -> {
+                startForegroundCompat()
+                zjsExecutor?.stop()
+                zjsExecutor = null
                 scriptJob?.cancel()
                 scriptJob = null
                 ScriptRunState.finish("已停止")
@@ -519,6 +554,94 @@ class AutomationService : Service() {
      *
      * 流程：绑定 Shizuku → 准备采集器/注入器 → 建 Recognizer → 交给 PipelineRunner。
      */
+    /**
+     * 跑一个自动精灵脚本。
+     *
+     * ## 为什么在 Dispatchers.IO 之外还要自己起线程
+     *
+     * [ZExecutor.run] 是**阻塞**的（里面有 Thread.sleep 等待、同步的 OpenCV 匹配）。
+     * 放在协程里跑，中途要停只能靠 cancel —— 但 sleep 期间 cancel 不生效，
+     * 用户点了「停止」要等当前那条的等待跑完。所以执行器自己维护
+     * `stopped` 标志，停止时置位，等待里检测到就退。
+     */
+    private suspend fun runZjs(path: String) {
+        val loaded = withContext(Dispatchers.IO) { ZScriptIO.load(path) }
+        if (loaded.error != null) {
+            ScriptRunState.finish("读不出脚本：${loaded.error}")
+            return
+        }
+        val script = loaded.script!!
+        if (script.actions.isEmpty()) {
+            ScriptRunState.finish("脚本里没有动作")
+            return
+        }
+
+        val touch = ensureInjector()
+        if (touch == null) {
+            ScriptRunState.finish("注入器没准备好（Shizuku 未就绪？）")
+            return
+        }
+
+        // 屏幕参数从当前虚拟屏状态取 —— 用的是实际帧尺寸，
+        // 不是硬编码的 1280×720，换分辨率不用改代码。
+        val st = VirtualDisplaySession.sharedState.value
+        val w = st.frameWidth.takeIf { it > 0 } ?: 1280
+        val h = st.frameHeight.takeIf { it > 0 } ?: 720
+        val screen = ZPosResolver.Screen(w, h, resources.displayMetrics.density)
+
+        val adapter = ZTouchInjectorAdapter(touch)
+        // 按键和文字走 Shizuku 侧的另一条通道
+        adapter.delegateKey = { code: Int, hold: Int ->
+            runCatching {
+                val svc = shizukuClient.peek() ?: error("Shizuku 服务不在")
+                if (hold > 120) svc.exec("input keyevent --longpress $code")
+                else svc.exec("input keyevent $code")
+            }
+        }
+        adapter.delegateText = { text: String ->
+            runCatching {
+                val svc = shizukuClient.peek() ?: error("Shizuku 服务不在")
+                // 单引号包裹并转义内部单引号，否则空格会被当成参数分隔
+                svc.exec("input text '${text.replace("'", "'\\''")}'")
+            }
+        }
+
+        val matcher = ZRealMatcher(
+            TemplateMatcher().also { it.load(this) },
+            frame = { VirtualDisplaySession.snapshotForMatch() }
+        )
+        matcher.cacheDirProvider = { java.io.File(cacheDir, "zjs_templates").absolutePath }
+
+        val executor = ZExecutor(
+            inject = adapter,
+            screen = screen,
+            matcher = matcher,
+            log = { Log.i(TAG, "[zjs] $it") }
+        )
+        zjsExecutor = executor
+        ScriptRunState.begin("zjs", "${script.actions.size} 个动作")
+
+        val result = withContext(Dispatchers.IO) {
+            runCatching { executor.run(script) }
+        }
+
+        zjsExecutor = null
+        result.onSuccess { r ->
+            val msg = buildString {
+                append("完成：执行 ${r.executed} 条")
+                if (r.skipped.isNotEmpty()) append("，跳过 ${r.skipped.size} 条")
+                r.error?.let { append("；$it") }
+            }
+            // 跳过明细写日志 —— 界面上放不下几十条，但排查时必须有。
+            r.skipped.take(20).forEach {
+                Log.w(TAG, "[zjs] 跳过第 ${it.index + 1} 个（${it.label}）：${it.reason}")
+            }
+            ScriptRunState.finish(msg)
+        }.onFailure { t ->
+            Log.e(TAG, "[zjs] 执行异常", t)
+            ScriptRunState.finish("执行异常：${t.message}")
+        }
+    }
     private suspend fun runScript(scriptDir: String, entry: String?, dryRun: Boolean) {
         if (!OpenCVLoader.initLocal()) {
             ScriptRunState.finish("OpenCV 原生库加载失败")
@@ -667,6 +790,9 @@ class AutomationService : Service() {
         /** 持有式虚拟屏：start 之后屏一直在，直到 stop。 */
         private const val ACTION_VD_START = "com.pvz2.auto.VD_START"
         private const val ACTION_VD_STOP = "com.pvz2.auto.VD_STOP"
+    private const val ACTION_ZJS_RUN = "com.pvz2.auto.ZJS_RUN"
+    private const val ACTION_ZJS_STOP = "com.pvz2.auto.ZJS_STOP"
+    private const val EXTRA_ZJS_PATH = "zjs_path"
     private const val ACTION_SCRIPT_RUN = "com.pvz2.auto.SCRIPT_RUN"
     private const val ACTION_SCRIPT_STOP = "com.pvz2.auto.SCRIPT_STOP"
     private const val EXTRA_SCRIPT_DIR = "script_dir"
@@ -745,6 +871,26 @@ class AutomationService : Service() {
             ContextCompat.startForegroundService(context, i)
         }
 
+        /**
+         * 运行一个**自动精灵格式**的脚本。
+         *
+         * ## 为什么和 [scriptRun] 分开
+         *
+         * 那条路径跑的是 MaaFramework 格式（一个节点一个文件、靠 next 连边）。
+         * 自动精灵是一串线性动作，执行模型完全不同，混在一起两边都难懂。
+         *
+         * @param path   `.zjs` 文件路径
+         */
+        fun zjsRun(context: Context, path: String) {
+            val i = intent(context, ACTION_ZJS_RUN)
+            i.putExtra(EXTRA_ZJS_PATH, path)
+            ContextCompat.startForegroundService(context, i)
+        }
+
+        /** 停止自动精灵脚本。 */
+        fun zjsStop(context: Context) {
+            ContextCompat.startForegroundService(context, intent(context, ACTION_ZJS_STOP))
+        }
         /** 停止脚本。 */
         fun scriptStop(context: Context) {
             ContextCompat.startForegroundService(context, intent(context, ACTION_SCRIPT_STOP))
