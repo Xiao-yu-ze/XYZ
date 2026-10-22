@@ -78,17 +78,77 @@ object PreviewPicker {
     private val _mode = MutableStateFlow<Mode?>(null)
     val mode: StateFlow<Mode?> = _mode.asStateFlow()
 
+    /**
+     * 准星当前位置（虚拟屏坐标）。null = 还没开始拖。
+     *
+     * ## 为什么要准星而不是"点一下就定"
+     *
+     * 自动精灵的做法是：画面上出现一个光标，用户拖着它走，
+     * 底下实时显示 `x, y`，位置满意了再点确定。
+     *
+     * 直接点一下的问题在于**手指挡住目标**——手指落下的地方就是被挡住的地方，
+     * 用户永远看不清自己点准了没有。准星加二次确认解决了这个。
+     */
+    private val _crosshair = MutableStateFlow<Point?>(null)
+    val crosshair: StateFlow<Point?> = _crosshair.asStateFlow()
+
+    /** 准星坐标（虚拟屏像素）。 */
+    data class Point(val x: Int, val y: Int)
+
     private val _result = MutableSharedFlow<Result>(replay = 0, extraBufferCapacity = 4)
     val result: SharedFlow<Result> = _result.asSharedFlow()
 
-    /** 开始取点。调用方随后提示用户"请在画面上点一下"。 */
-    fun arm(m: Mode) {
+    /**
+     * 开始取点。
+     *
+     * @param m 取什么
+     * @param initial 准星初始位置。null = 屏幕正中
+     *        （自动精灵也是这个默认值，见 renderer-home-bundle 的 `e.x = "50%"`）
+     * @param screenWidth / screenHeight 虚拟屏尺寸，用来算正中
+     */
+    fun arm(m: Mode, initial: Point? = null, screenWidth: Int = 0, screenHeight: Int = 0) {
         _mode.value = m
+        _crosshair.value = initial ?: if (screenWidth > 0 && screenHeight > 0) {
+            Point(screenWidth / 2, screenHeight / 2)
+        } else {
+            null
+        }
+    }
+
+    /** 拖准星。坐标会被夹到屏幕范围内，出界的话写回脚本就是个坏值。 */
+    fun moveCrosshair(x: Int, y: Int, screenWidth: Int, screenHeight: Int) {
+        if (_mode.value == null) return
+        _crosshair.value = Point(
+            x.coerceIn(0, (screenWidth - 1).coerceAtLeast(0)),
+            y.coerceIn(0, (screenHeight - 1).coerceAtLeast(0))
+        )
     }
 
     /** 取消取点，预览恢复成直接操作游戏。 */
     fun cancel() {
         _mode.value = null
+        _crosshair.value = null
+    }
+
+    /**
+     * 用户确认了准星位置。
+     *
+     * 这是「确定」按钮走的路径，不是触摸直接触发 ——
+     * 触摸只移动准星，位置看准了再确认。见 [crosshair] 的说明。
+     */
+    fun confirmCrosshair(screenWidth: Int, screenHeight: Int): Boolean {
+        val mode = _mode.value ?: return false
+        val p = _crosshair.value ?: return false
+        _mode.value = null
+        _crosshair.value = null
+        _result.tryEmit(
+            Result(
+                mode = mode,
+                x = p.x, y = p.y, w = 0, h = 0,
+                screenWidth = screenWidth, screenHeight = screenHeight
+            )
+        )
+        return true
     }
 
     /**
@@ -100,13 +160,14 @@ object PreviewPicker {
     fun deliver(result: Result): Boolean {
         if (_mode.value == null) return false
         _mode.value = null
+        _crosshair.value = null
         _result.tryEmit(result)
         return true
     }
 
     /** 给界面显示用的一句话提示。 */
     fun hintText(mode: Mode): String = when (mode) {
-        Mode.POINT -> "请在画面上点一下要点击的位置"
+        Mode.POINT -> "拖动准星到要点击的位置，然后点确定"
         Mode.RECT -> "请在画面上拖出要识别的区域"
         Mode.TEMPLATE -> "请在画面上框住要识别的图案"
     }

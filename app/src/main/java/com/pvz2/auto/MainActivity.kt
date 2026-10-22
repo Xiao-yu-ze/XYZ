@@ -153,16 +153,18 @@ class MainActivity : AppCompatActivity() {
                 launch { BotState.status.collect { statusView?.text = it } }
                 // 虚拟屏状态：服务写、界面读。两者是独立组件，所以走进程级单例流。
                 launch { VirtualDisplaySession.sharedState.collect { renderVirtualDisplay(it) } }
-                // 取点模式：画面顶部显示"请在画面上点一下"。
+                // 取点模式：画面顶部显示提示，并接管准星。
                 // 没有这个提示，用户不知道已经进入取点状态，会以为界面没反应。
                 launch {
                     PreviewPicker.mode.collect { mode ->
                         val banner = findViewById<TextView>(R.id.tvPickerHint)
                         if (mode == null) {
                             banner.visibility = View.GONE
+                            teardownCrosshair()
                         } else {
                             banner.text = PreviewPicker.hintText(mode)
                             banner.visibility = View.VISIBLE
+                            if (mode == PreviewPicker.Mode.POINT) setupCrosshair()
                         }
                     }
                 }
@@ -501,6 +503,83 @@ class MainActivity : AppCompatActivity() {
      * 想取消都来不及。UP 才注入等于"按下-抬起"才算一次点击，
      * 和真实触摸的语义一致。
      */
+    // ------------------------------------------------------------ 取点准星
+
+    /**
+     * 进入准星模式：显示准星和底部工具条，接管预览的触摸。
+     *
+     * ## 为什么和 [setupPreviewTouch] 分开
+     *
+     * 预览的触摸在平时是"操作游戏"，取点时是"选坐标"——两套语义互斥。
+     * 分开写，各自的状态不会互相污染；准星退出时预览立刻恢复成操作游戏。
+     *
+     * ## 画面矩形
+     *
+     * 预览是 `fitCenter`，画面两侧可能有黑边。准星只认画面矩形内的触摸，
+     * 落黑边上的忽略——换算过去会是负坐标，写进脚本就是坏值。
+     */
+    private fun setupCrosshair() {
+        val overlay = findViewById<com.pvz2.auto.ui.CrosshairOverlay>(R.id.ovCrosshair)
+        val bar = findViewById<View>(R.id.llCrosshairBar)
+        val pos = findViewById<TextView>(R.id.tvCrosshairPos)
+
+        val st = VirtualDisplaySession.sharedState.value
+        val iw = st.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
+        val ih = st.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+
+        overlay.visibility = View.VISIBLE
+        bar.visibility = View.VISIBLE
+
+        // 画面矩形：和 PreviewTouchMapper 用同一套换算，保证准星位置
+        // 和最终写进脚本的坐标是同一个点。
+        overlay.post {
+            val r = PreviewTouchMapper.imageRect(overlay.width, overlay.height, iw, ih)
+            overlay.setImageRect(r[0], r[1], r[2], r[3])
+
+            // 初始位置：取当前值，没有就画面正中（自动精灵的默认也是 50%/50%）
+            val init = PreviewPicker.crosshair.value
+            if (init != null) {
+                // 虚拟屏坐标 → 控件坐标
+                val sx = (init.x.toFloat() / iw) * (r[2] - r[0]) + r[0]
+                val sy = (init.y.toFloat() / ih) * (r[3] - r[1]) + r[1]
+                overlay.show(sx, sy)
+                pos.text = "${init.x}, ${init.y}"
+            } else {
+                val cx = (r[0] + r[2]) / 2f
+                val cy = (r[1] + r[3]) / 2f
+                overlay.show(cx, cy)
+                PreviewPicker.moveCrosshair(iw / 2, ih / 2, iw, ih)
+                pos.text = "${iw / 2}, ${ih / 2}"
+            }
+        }
+
+        overlay.onDrag = { x, y ->
+            // 控件坐标 → 虚拟屏坐标
+            val r = PreviewTouchMapper.imageRect(overlay.width, overlay.height, iw, ih)
+            val vx = ((x - r[0]) / (r[2] - r[0]) * iw).toInt()
+            val vy = ((y - r[1]) / (r[3] - r[1]) * ih).toInt()
+            PreviewPicker.moveCrosshair(vx, vy, iw, ih)
+            pos.text = "${vx.coerceIn(0, iw - 1)}, ${vy.coerceIn(0, ih - 1)}"
+        }
+
+        findViewById<com.google.android.material.button.MaterialButton>(R.id.btnCrosshairCancel)
+            .setOnClickListener { PreviewPicker.cancel() }
+
+        findViewById<com.google.android.material.button.MaterialButton>(R.id.btnCrosshairOk)
+            .setOnClickListener {
+                PreviewPicker.confirmCrosshair(iw, ih)
+            }
+    }
+
+    private fun teardownCrosshair() {
+        findViewById<com.pvz2.auto.ui.CrosshairOverlay>(R.id.ovCrosshair)?.let {
+            it.hide()
+            it.visibility = View.GONE
+            it.onDrag = null
+        }
+        findViewById<View>(R.id.llCrosshairBar)?.visibility = View.GONE
+    }
+
     private fun setupPreviewTouch() {
         val preview = findViewById<ImageView>(R.id.ivVdPreview)
         preview.isClickable = true
@@ -581,6 +660,16 @@ class MainActivity : AppCompatActivity() {
                         val st = VirtualDisplaySession.sharedState.value
                         val iw = st.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
                         val ih = st.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+
+                        // ★ POINT 模式不再"抬手即定"。
+                        //
+                        //   手指挡住目标，抬手前看不见自己点在哪。改成：
+                        //   拖动只移动准星，位置由底部数字显示，点「确定」才提交。
+                        //   这样用户能边看数字边微调。
+                        if (mode == PreviewPicker.Mode.POINT) {
+                            return@setOnTouchListener true
+                        }
+
                         val a = PreviewTouchMapper.map(downX, downY, view.width, view.height, iw, ih)
                         val b = PreviewTouchMapper.map(event.x, event.y, view.width, view.height, iw, ih)
                         if (a != null && b != null) {
@@ -588,15 +677,14 @@ class MainActivity : AppCompatActivity() {
                             val top = minOf(a.y, b.y)
                             val right = maxOf(a.x, b.x)
                             val bottom = maxOf(a.y, b.y)
-                            val isPoint = mode == PreviewPicker.Mode.POINT
 
                             PreviewPicker.deliver(
                                 PreviewPicker.Result(
                                     mode = mode,
-                                    x = if (isPoint) b.x else left,
-                                    y = if (isPoint) b.y else top,
-                                    w = if (isPoint) 0 else (right - left),
-                                    h = if (isPoint) 0 else (bottom - top),
+                                    x = left,
+                                    y = top,
+                                    w = right - left,
+                                    h = bottom - top,
                                     crop = if (mode == PreviewPicker.Mode.TEMPLATE) {
                                         cropTemplate(left, top, right - left, bottom - top)
                                     } else null,

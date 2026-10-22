@@ -16,6 +16,8 @@ import com.pvz2.auto.zjs.ZFieldEditor
 import com.pvz2.auto.zjs.ZScriptIO
 import com.pvz2.auto.zjs.ZjsRunner
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -320,11 +322,90 @@ class ZjsEditorPage(
                     line.setBackgroundResource(android.R.drawable.list_selector_background)
                     line.setOnClickListener { onEditRequested(row, actionIndex) }
                 }
+
+                // 坐标字段多一个取点按钮。
+                //
+                // 手输坐标是不现实的 —— 用户既不知道游戏里某按钮是第几像素，
+                // 也没法从画面上读出来。自动精灵的做法也是让用户在画面上指。
+                // 取 X 和 Y 是一次操作同时拿到的，所以 X 行放按钮，
+                // Y 行不放 —— 两个按钮会让人以为要分别取。
+                if (row.kind == ZActionDescriber.Kind.COORD && row.field.endsWith(".x")) {
+                    val base = row.field.removeSuffix(".x")   // "位置" / "起点" / "终点"
+                    val pick = android.widget.TextView(host).apply {
+                        text = "⊕"
+                        textSize = 15f
+                        setPadding(dp(10), 0, dp(2), 0)
+                        setTextColor(host.getColor(R.color.ink_faint))
+                        contentDescription = "在画面上取 $base 坐标"
+                    }
+                    pick.setOnClickListener { onPickPoint(base, actionIndex) }
+                    line.addView(pick)
+                }
+
                 return line
             }
 
             private fun dp(v: Int): Int =
                 (v * host.resources.displayMetrics.density).toInt()
+        }
+    }
+
+    /**
+     * 在预览画面上取点，结果写回该位置的 X 和 Y。
+     *
+     * ## 为什么挂到预览上而不是弹窗里
+     *
+     * 预览就是虚拟屏的实时画面，本身就是"要点的东西"。让用户在弹窗里
+     * 看着缩略图猜坐标是不可行的；在实时画面上拖准星才是自然操作。
+     *
+     * 这和 自动精灵 一致 —— 它也是让用户在"脚本运行区域"上完成选择。
+     */
+    private fun onPickPoint(prefix: String, actionIndex: Int) {
+        val cur = script ?: return
+        val action = cur.actions.getOrNull(actionIndex) ?: return
+
+        // 初始值：当前位置，没有就交给准星走默认（画面正中）
+        val pos = when (prefix) {
+            "起点" -> action.startPos
+            "终点" -> action.endPos
+            else -> action.posData
+        }
+        val initX = pos?.x?.raw?.toIntOrNull()
+        val initY = pos?.y?.raw?.toIntOrNull()
+        val initial = if (initX != null && initY != null) {
+            com.pvz2.auto.core.PreviewPicker.Point(initX, initY)
+        } else null
+
+        // 武装取点模式，等预览那边出结果
+        host.lifecycleScope.launch {
+            val deferred = host.lifecycleScope.async {
+                com.pvz2.auto.core.PreviewPicker.result.firstOrNull {
+                    it.mode == com.pvz2.auto.core.PreviewPicker.Mode.POINT
+                }
+            }
+            com.pvz2.auto.core.PreviewPicker.arm(
+                com.pvz2.auto.core.PreviewPicker.Mode.POINT,
+                initial = initial
+            )
+            android.widget.Toast.makeText(
+                host, "拖动准星到目标位置，然后点确定", android.widget.Toast.LENGTH_SHORT
+            ).show()
+
+            val r = deferred.await() ?: return@launch
+
+            // 写回：百分比两位小数，与协议一致（FIELDS.md 的推荐单位）
+            val px = "%.2f%%".format(100.0 * r.x / r.screenWidth)
+            val py = "%.2f%%".format(100.0 * r.y / r.screenHeight)
+
+            var updated = ZFieldEditor.apply(action, "$prefix.x", px) ?: action
+            updated = ZFieldEditor.apply(updated, "$prefix.y", py) ?: updated
+
+            val list = cur.actions.toMutableList()
+            list[actionIndex] = updated
+            script = cur.copy(actions = list)
+            adapter.submit(script!!.actions)
+            expandedIndex = actionIndex
+            adapter.notifyItemChanged(actionIndex)
         }
     }
 

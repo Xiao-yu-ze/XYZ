@@ -53,6 +53,53 @@
                 android:layout_height="match_parent"
                 android:contentDescription="@string/vd_preview_desc"
                 android:scaleType="fitCenter" />
+            <!-- 取点准星。覆盖在画面上，只在取点模式可见。
+                 手指落下会挡住目标，所以不能靠"点一下就定" ——
+                 拖着准星走，看准了再确认。 -->
+            <com.pvz2.auto.ui.CrosshairOverlay
+                android:id="@+id/ovCrosshair"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <!-- 取点工具条：取消 / 实时坐标 / 确定。
+                 坐标要一直显示，用户才能判断有没有对准。 -->
+            <LinearLayout
+                android:id="@+id/llCrosshairBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:background="#CC16241C"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="6dp"
+                android:visibility="gone">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCrosshairCancel"
+                    style="@style/AppButton.Quiet"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/picker_cancel" />
+
+                <TextView
+                    android:id="@+id/tvCrosshairPos"
+                    style="@style/Text.Body"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="0, 0"
+                    android:textColor="#FFFFFF" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCrosshairOk"
+                    style="@style/AppButton.Primary"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/picker_ok" />
+            </LinearLayout>
+
 
             <!-- 取点模式的横幅。必须在画面**之上**，否则用户不知道该点哪里，
                  会以为界面卡住了。 -->

@@ -147,4 +147,5 @@
     <string name="zjs_save_as">另存为</string>
     <string name="zjs_saved">已保存到 %1$s</string>
     <string name="zjs_save_failed">保存失败：%1$s</string>
+    <string name="picker_ok">确定</string>
 </resources>
