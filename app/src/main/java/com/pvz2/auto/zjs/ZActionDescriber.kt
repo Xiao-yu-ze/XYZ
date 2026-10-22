@@ -152,6 +152,20 @@ object ZActionDescriber {
         action.startPos?.let { rows += posRows("起点", it) }
         action.endPos?.let { rows += posRows("终点", it) }
 
+        // ---- 多指滑动：每根手指一组起终点
+        //
+        // 手指按 1、2、3 编号，而不用"第几个" ——
+        // 多指滑动时用户想的是"食指在哪、中指在哪"，
+        // 编号比序号更接近那个心智模型。
+        action.fingers.forEachIndexed { i, finger ->
+            val n = i + 1
+            finger.startPos?.let { rows += posRows("手指$n 起点", it) }
+            finger.endPos?.let { rows += posRows("手指$n 终点", it) }
+        }
+        if (action.type == Z.ActionType.MULTI_SWIPE && action.fingers.isEmpty()) {
+            rows += Row("手指", "（还没有手指，点击添加）", Kind.READONLY)
+        }
+
         // ---- 14 个通用字段，**缺省也显示**
         //
         // ## 顺序照抄自动精灵

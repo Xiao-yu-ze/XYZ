@@ -22,7 +22,7 @@ class ZModelTest {
         // 21 个不同字符串（6 个控制执行共享 type="控制执行"）
         val wires = listOf(
             "点击", "点击图片", "点击文字", "点击颜色", "点击节点", "AI点击",
-            "滑动", "单指手势", "多指手势", "按键", "输入内容", "识别屏幕",
+            "滑动", "单指手势", "多指滑动", "按键", "输入内容", "识别屏幕",
             "打开应用", "打开链接", "执行脚本", "运行多个动作",
             "系统提示", "设置变量", "运行JS代码", "加密动作"
         )
@@ -45,7 +45,7 @@ class ZModelTest {
         assertTrue(Z.ActionType.CLICK.executable)
         assertTrue(Z.ActionType.SWIPE.executable)
         // 这三类需要 PC 能力或 JS 沙箱，先不标
-        assertTrue(!Z.ActionType.MULTI_GESTURE.executable)
+        assertTrue(Z.ActionType.MULTI_SWIPE.executable)
         assertTrue(!Z.ActionType.RUN_JS.executable)
         assertTrue(!Z.ActionType.ENCRYPTED.executable)
     }

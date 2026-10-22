@@ -97,7 +97,7 @@ class ZScriptIOTest {
     @Test
     fun `安卓做不了的动作会被明确标出而不是静默跳过`() {
         // 多指手势没有安卓实现。静默跳过会让用户以为脚本跑完了。
-        val s = Z.Script.parse(JSONObject("""{"actions":[{"type":"多指手势","delayUnit":1}]}"""))
+        val s = Z.Script.parse(JSONObject("""{"actions":[{"type":"设置变量","delayUnit":1}]}"""))
         val issues = ZScriptIO.validate(s)
         assertTrue("应报不支持：$issues", issues.any { it.contains("暂不支持") })
     }
@@ -176,12 +176,12 @@ class ZScriptIOTest {
     fun `已禁用的不支持动作不进问题列表`() {
         // 否则"⚠ 行"在真实脚本上常年不为空，用户学会忽略它
         val s = Z.Script.parse(
-            JSONObject("""{"actions":[{"type":"多指手势","disabled":true,"delayUnit":1}]}""")
+            JSONObject("""{"actions":[{"type":"设置变量","disabled":true,"delayUnit":1}]}""")
         )
         assertTrue(ZScriptIO.validate(s).none { it.contains("暂不支持") })
 
         // 启用的才报
-        val on = Z.Script.parse(JSONObject("""{"actions":[{"type":"多指手势","delayUnit":1}]}"""))
+        val on = Z.Script.parse(JSONObject("""{"actions":[{"type":"设置变量","delayUnit":1}]}"""))
         assertTrue(ZScriptIO.validate(on).any { it.contains("暂不支持") })
     }
     @Test

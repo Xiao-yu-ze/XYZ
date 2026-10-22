@@ -177,7 +177,7 @@ object Z {
         AI_CLICK("AI点击"),
         SWIPE("滑动", executable = true),
         GESTURE("单指手势"),
-        MULTI_GESTURE("多指手势"),
+        MULTI_SWIPE("多指滑动", executable = true),
         KEY("按键", executable = true),
         INPUT_TEXT("输入内容", executable = true),
         RECOGNIZE_SCREEN("识别屏幕"),
@@ -292,8 +292,52 @@ object Z {
          * 空 map 视为"未设置"（FIELDS.md:303 `hasValue()`），落盘时不写。
          */
         val callbacks: Map<CallbackSlot, Action> = emptyMap(),
+        /**
+         * 多指滑动的每根手指。
+         *
+         * ## 这是本项目自己的节点，不是自动精灵的东西
+         *
+         * 协议里只有一个「多指手势」（`gestureActions` 装的是**完整动作数组**），
+         * 那套结构没法表达"多根手指同时滑、共用同一组时长和曲线"。
+         *
+         * 这里改成一组起终点：
+         *
+         * ```
+         * fingers: [ (start, end), (start, end), ... ]
+         * ```
+         *
+         * 所有手指共用 `duration`（拖动总时长）和其余通用字段 ——
+         * 多指手势的语义本来就是"同时"，每根手指各有时长是讲不通的。
+         *
+         * 落盘时写成 `multiSwipe: [{startPos, endPos}, ...]`。
+         * 自动精灵读到会当成未知字段跳过（不崩），我们自己读得回来。
+         */
+        val fingers: List<Finger> = emptyList(),
         val extra: MutableMap<String, Any?> = LinkedHashMap()
     ) {
+        /**
+         * 多指滑动里的一根手指。
+         *
+         * 起点终点都用 [PosData]，和单指滑动一样 —— 这样取点、区域、
+         * 图片匹配这些能力全都能直接用上，不用另写一套。
+         */
+        data class Finger(
+            val startPos: PosData? = null,
+            val endPos: PosData? = null
+        ) {
+            fun toJson(): JSONObject = JSONObject().apply {
+                startPos?.let { put("startPos", it.toJson()) }
+                endPos?.let { put("endPos", it.toJson()) }
+            }
+
+            companion object {
+                fun parse(o: JSONObject): Finger = Finger(
+                    startPos = o.optJSONObject("startPos")?.let { PosData.parse(it) },
+                    endPos = o.optJSONObject("endPos")?.let { PosData.parse(it) }
+                )
+            }
+        }
+
         fun toJson(): JSONObject = JSONObject().apply {
             put("type", type.wire)
             type.controlRunType?.let { put("controlRunType", it) }
@@ -311,6 +355,15 @@ object Z {
             posData?.let { put("posData", it.toJson()) }
             startPos?.let { put("startPos", it.toJson()) }
             endPos?.let { put("endPos", it.toJson()) }
+
+            // 多指滑动的手指列表。空列表不写 —— 空数组在协议里没有含义，
+            // 而自动精灵读到未知字段会跳过，写一个空数组只会让文件变乱。
+            if (fingers.isNotEmpty()) {
+                put("multiSwipe", org.json.JSONArray().apply {
+                    fingers.forEach { put(it.toJson()) }
+                })
+            }
+
             extra.forEach { (k, v) -> put(k, v) }
 
             // scriptCallbacks：空 map 不写（FIELDS.md:303 `hasValue()` 的语义）。
@@ -337,7 +390,7 @@ object Z {
             private val HANDLED = setOf(
                 "type", "controlRunType", "desc", "jumpId", "duration", "delay", "delayUnit",
                 "repeatCount", "repeatDelayValue", "repeatDelayUnit", "fastRepeatMode",
-                "disabled", "condition", "posData", "startPos", "endPos", "__vars",
+                "disabled", "condition", "posData", "startPos", "endPos", "__vars", "multiSwipe",
                 "scriptCallbacks"
             )
 
@@ -370,9 +423,25 @@ object Z {
                     posData = o.optJSONObject("posData")?.let { PosData.parse(it) },
                     startPos = o.optJSONObject("startPos")?.let { PosData.parse(it) },
                     endPos = o.optJSONObject("endPos")?.let { PosData.parse(it) },
+                    fingers = parseFingers(o.optJSONArray("multiSwipe")),
                     callbacks = parseCallbacks(o.optJSONObject("scriptCallbacks")),
                     extra = o.collectUnhandled(HANDLED)
                 )
+            }
+
+            /**
+             * 解析多指滑动的手指列表。
+             *
+             * 单根手指解析失败就跳过那一根，不影响其余 —— 一个坏的手指
+             * 不该让整个动作读不出来（那样用户会看到"这条没了"）。
+             */
+            private fun parseFingers(arr: org.json.JSONArray?): List<Finger> {
+                if (arr == null) return emptyList()
+                val out = ArrayList<Finger>(arr.length())
+                for (i in 0 until arr.length()) {
+                    arr.optJSONObject(i)?.let { out.add(Finger.parse(it)) }
+                }
+                return out
             }
 
             /**

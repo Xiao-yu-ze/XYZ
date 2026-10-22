@@ -128,6 +128,18 @@ object ZScriptIO {
             val wanted = ZFieldEditor.expectedPosType(action.type)
 
             // ---- 位置类动作
+            // ---- 多指滑动：走自己的检查（它的位置在 fingers 里）
+            if (action.type == Z.ActionType.MULTI_SWIPE) {
+                if (action.fingers.isEmpty()) {
+                    issues.add("$where 没有手指")
+                } else {
+                    action.fingers.forEachIndexed { fi, f ->
+                        if (f.startPos == null) issues.add("$where 手指${fi + 1} 缺起点")
+                        if (f.endPos == null) issues.add("$where 手指${fi + 1} 缺终点")
+                    }
+                }
+            }
+
             if (wanted != null) {
                 when (action.type) {
                     Z.ActionType.SWIPE -> {

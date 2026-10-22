@@ -33,8 +33,18 @@ class ZExecutorTest {
             keys.add(keyCode)
         }
 
+        val multi = ArrayList<List<List<Int>>>()
+
         override fun inputText(text: String) {
             texts.add(text)
+        }
+
+        override fun multiSwipe(
+            paths: List<Pair<ZPosResolver.Hit, ZPosResolver.Hit>>,
+            durationMs: Int
+        ) {
+            // 记下每根手指的起终点，断言"几根手指、各自去哪"
+            multi.add(paths.map { listOf(it.first.x, it.first.y, it.second.x, it.second.y) })
         }
     }
 
@@ -196,7 +206,7 @@ class ZExecutorTest {
 
     @Test
     fun `安卓不支持的动作跳过并记原因`() {
-        val (r, inj) = exec("""{"actions":[{"type":"多指手势","delayUnit":0}]}""")
+        val (r, inj) = exec("""{"actions":[{"type":"设置变量","delayUnit":0}]}""")
         assertEquals(0, inj.taps.size)
         assertTrue("应说明不支持：${r.skipped}", r.skipped.any { it.reason.contains("暂不支持") })
     }
@@ -274,5 +284,45 @@ class ZExecutorTest {
     fun `空脚本给出明确错误`() {
         val (r, _) = exec("""{"actions":[]}""")
         assertEquals("脚本里没有动作", r.error)
+    }
+    // ------------------------------------------------------------ 多指滑动
+
+    @Test
+    fun `多指滑动把每根手指分别传下去`() {
+        val (r, inj) = exec(
+            """{"actions":[{"type":"多指滑动","delayUnit":0,"duration":"300",
+                "multiSwipe":[
+                  {"startPos":{"type":"location","x":"100","y":"400"},
+                   "endPos":{"type":"location","x":"100","y":"100"}},
+                  {"startPos":{"type":"location","x":"900","y":"400"},
+                   "endPos":{"type":"location","x":"900","y":"100"}}]}]}"""
+        )
+        assertEquals(1, inj.multi.size)
+        assertEquals(2, inj.multi[0].size)
+        // 两根手指各自的位置，不能串
+        assertEquals(listOf(100, 400, 100, 100), inj.multi[0][0])
+        assertEquals(listOf(900, 400, 900, 100), inj.multi[0][1])
+        assertTrue("不该有跳过：${r.skipped}", r.skipped.isEmpty())
+    }
+
+    @Test
+    fun `多指滑动没有手指时记原因`() {
+        val (r, inj) = exec("""{"actions":[{"type":"多指滑动","delayUnit":0}]}""")
+        assertTrue(inj.multi.isEmpty())
+        assertTrue(r.skipped.any { it.reason.contains("没有手指") })
+    }
+
+    @Test
+    fun `多指滑动缺一端时整条跳过而不是滑一半`() {
+        // 只滑一根手指和"两指缩放"是完全不同的操作，宁可不动
+        val (r, inj) = exec(
+            """{"actions":[{"type":"多指滑动","delayUnit":0,
+                "multiSwipe":[
+                  {"startPos":{"type":"location","x":"100","y":"400"},
+                   "endPos":{"type":"location","x":"100","y":"100"}},
+                  {"startPos":{"type":"location","x":"900","y":"400"}}]}]}"""
+        )
+        assertTrue("不该注入", inj.multi.isEmpty())
+        assertTrue(r.skipped.any { it.reason.contains("缺起点或终点") })
     }
 }

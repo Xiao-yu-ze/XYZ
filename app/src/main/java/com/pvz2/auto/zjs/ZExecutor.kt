@@ -36,6 +36,21 @@ class ZExecutor(
         fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int)
         fun key(keyCode: Int, holdMs: Int)
         fun inputText(text: String)
+
+        /**
+         * 多指同时滑动。
+         *
+         * ## 为什么是"同时"而不是逐条调 swipe
+         *
+         * 多指手势的语义就是同时 —— 两指缩放、三指下滑，逐条调 swipe
+         * 会变成"先滑一根再滑另一根"，完全不是一回事。
+         *
+         * 默认实现退回逐条 swipe，这样测试用的假注入器不用实现它；
+         * 真机实现要覆盖成真正的并发注入。
+         */
+        fun multiSwipe(paths: List<Pair<ZPosResolver.Hit, ZPosResolver.Hit>>, durationMs: Int) {
+            paths.forEach { (a, b) -> swipe(a.x, a.y, b.x, b.y, durationMs) }
+        }
     }
 
     /** 识别接口。图片/文字/颜色匹配都走这里。 */
@@ -223,6 +238,34 @@ class ZExecutor(
                 val a = ZPosResolver.resolveLocation(s, screen)
                 val b = ZPosResolver.resolveLocation(e, screen)
                 inject.swipe(a.x, a.y, b.x, b.y, hold)
+                Outcome()
+            }
+
+            // ---- 多指滑动
+            Z.ActionType.MULTI_SWIPE -> {
+                if (action.fingers.isEmpty()) {
+                    skipped.add(Result.Skip(index, label, "没有手指"))
+                    return null
+                }
+                val paths = ArrayList<Pair<ZPosResolver.Hit, ZPosResolver.Hit>>()
+                for ((fi, f) in action.fingers.withIndex()) {
+                    val s = f.startPos
+                    val e = f.endPos
+                    if (s == null || e == null) {
+                        skipped.add(Result.Skip(index, label, "手指${fi + 1} 缺起点或终点"))
+                        return null
+                    }
+                    paths.add(
+                        ZPosResolver.resolveLocation(s, screen) to
+                            ZPosResolver.resolveLocation(e, screen)
+                    )
+                }
+                try {
+                    inject.multiSwipe(paths, hold)
+                } catch (e: Throwable) {
+                    skipped.add(Result.Skip(index, label, "多指滑动失败：${e.message}"))
+                    return null
+                }
                 Outcome()
             }
 
