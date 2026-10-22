@@ -35,6 +35,25 @@ class ZTouchInjectorAdapter(
         )
     }
 
+    /**
+     * 多指真并发交给后端。
+     *
+     * 这里**必须**覆盖父接口的默认实现 —— 默认是逐条 swipe，
+     * 那等于"先滑一根再滑另一根"，不是多指。
+     */
+    override fun multiSwipe(
+        paths: List<Pair<ZPosResolver.Hit, ZPosResolver.Hit>>,
+        durationMs: Int
+    ) {
+        val flat = paths.map {
+            floatArrayOf(
+                it.first.x.toFloat(), it.first.y.toFloat(),
+                it.second.x.toFloat(), it.second.y.toFloat()
+            )
+        }
+        touch.multiSwipe(flat, durationMs.toLong())
+    }
+
     override fun key(keyCode: Int, holdMs: Int) {
         // TouchInjector 只管触摸，按键要走另一个通道。
         // 没配通道时**必须抛**：静默吞掉的话，用户看到脚本跑完了，

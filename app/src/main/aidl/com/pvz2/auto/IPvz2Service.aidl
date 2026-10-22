@@ -263,5 +263,24 @@ interface IPvz2Service {
     /** 取消当前手势（手指划出画面时用），发 ACTION_CANCEL。 */
     void gestureCancel() = 29;
 
+    /**
+     * 多指同时滑动。
+     *
+     * ## 为什么整个手势一次调用
+     *
+     * 多指的每个 MOVE 帧要带 N 个坐标。每帧过一次 Binder 的话，
+     * 光是序列化就把几十毫秒的手势拖成阶梯 —— 而"同时"正是多指的全部意义。
+     * 所以插值放在服务端做，App 只给起终点。
+     *
+     * ## 为什么用并行数组
+     *
+     * `float[]` 在 AIDL 里是原生类型，开销远小于自定义 Parcelable。
+     *
+     * @param startXs / startYs / endXs / endYs 长度一致，每个元素是一根手指
+     * @return 是否成功；失败时日志里有具体原因
+     */
+    boolean multiSwipeOnDisplay(int displayId, in float[] startXs, in float[] startYs,
+                                in float[] endXs, in float[] endYs, int durationMs) = 30;
+
     void destroy() = 16777114;
 }

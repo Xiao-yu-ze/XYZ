@@ -21,6 +21,23 @@ interface TouchInjector {
      */
     fun beginGesture(x: Float, y: Float): StreamingGesture? = null
 
+    /**
+     * 多指同时滑动。
+     *
+     * ## 默认实现是逐条滑，但那**不是**多指
+     *
+     * 逐条滑会变成"先滑第一根，再滑第二根"，而多指手势的全部意义在于同时。
+     * 支持真并发的后端**必须覆盖**这个方法。默认实现只用于测试替身和
+     * 不支持多指的后端 —— 它保证行为可预测，但不保证语义正确。
+     *
+     * @param paths 每根手指 `[起点x, 起点y, 终点x, 终点y]`
+     */
+    fun multiSwipe(paths: List<FloatArray>, durationMs: Long) {
+        paths.forEach { p ->
+            if (p.size >= 4) swipe(p[0], p[1], p[2], p[3], durationMs)
+        }
+    }
+
     /** Releases backend resources. Safe to call multiple times. */
     fun release() = Unit
 }

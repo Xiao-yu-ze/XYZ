@@ -630,6 +630,55 @@ class Pvz2UserService : IPvz2Service.Stub() {
 
     override fun gestureCancel() = gesture.cancel()
 
+    /**
+     * 多指同时滑动。
+     *
+     * 单指的情况仍走已验证的 `input motionevent`（更快、路径最短）；
+     * 两根以上才需要自建 MotionEvent —— 那条命令一个事件只能带一个指针。
+     */
+    override fun multiSwipeOnDisplay(
+        displayId: Int,
+        startXs: FloatArray,
+        startYs: FloatArray,
+        endXs: FloatArray,
+        endYs: FloatArray,
+        durationMs: Int
+    ): Boolean {
+        val n = minOf(startXs.size, startYs.size, endXs.size, endYs.size)
+        if (n <= 0) {
+            Log.w(TAG, "multiSwipe: 没有手指")
+            return false
+        }
+
+        // 一根手指：直接复用单指路径，它已经在真机上验证过
+        if (n == 1) {
+            return runCatching {
+                val out = runShell(
+                    "input -d $displayId motionevent DOWN ${startXs[0].toInt()} ${startYs[0].toInt()}"
+                )
+                if (out.isNotBlank()) return false
+                val out2 = runShell(
+                    "input -d $displayId motionevent MOVE ${endXs[0].toInt()} ${endYs[0].toInt()}"
+                )
+                if (out2.isNotBlank()) return false
+                val out3 = runShell(
+                    "input -d $displayId motionevent UP ${endXs[0].toInt()} ${endYs[0].toInt()}"
+                )
+                out3.isBlank()
+            }.getOrDefault(false)
+        }
+
+        val err = MultiTouchInjector.swipe(
+            displayId, startXs, startYs, endXs, endYs, durationMs.coerceAtLeast(1)
+        )
+        if (err != null) {
+            Log.e(TAG, "multiSwipe 失败 display=$displayId n=$n：$err")
+            return false
+        }
+        Log.i(TAG, "multiSwipe 成功 display=$displayId n=$n ${durationMs}ms")
+        return true
+    }
+
     private class GestureInjector(
         /** 执行 shell 命令并返回合并后的输出。由外层类提供。 */
         private val exec: (String) -> String

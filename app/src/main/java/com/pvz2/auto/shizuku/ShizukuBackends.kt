@@ -165,6 +165,38 @@ class ShizukuTouchInjector(
         if (!ok) Log.w(TAG, "滑动 ($x1,$y1)->($x2,$y2) 未被系统接受 display=$target")
     }
 
+    /**
+     * 多指真并发。
+     *
+     * 走服务端的 `multiSwipeOnDisplay` —— 那里自己构造带 N 个指针的
+     * MotionEvent。不能用 `input motionevent`：那条命令一个事件只带一个
+     * 指针，连发两次是两个先后动作，不是多指。
+     */
+    override fun multiSwipe(paths: List<FloatArray>, durationMs: Long) {
+        if (paths.isEmpty()) return
+        val service = client.peek()
+        val target = displayIdProvider()
+        if (service == null) {
+            Log.w(TAG, "多指滑动失败：Shizuku 服务未连接")
+            return
+        }
+
+        val n = paths.size
+        val sxs = FloatArray(n) { paths[it].getOrElse(0) { 0f } }
+        val sys = FloatArray(n) { paths[it].getOrElse(1) { 0f } }
+        val exs = FloatArray(n) { paths[it].getOrElse(2) { 0f } }
+        val eys = FloatArray(n) { paths[it].getOrElse(3) { 0f } }
+
+        val ok = runCatching {
+            service.multiSwipeOnDisplay(
+                target, sxs, sys, exs, eys, durationMs.toInt().coerceAtLeast(1)
+            )
+        }.onFailure { Log.w(TAG, "多指滑动 n=$n 抛异常", it) }
+            .getOrDefault(false)
+
+        if (!ok) Log.w(TAG, "多指滑动 n=$n 未被系统接受 display=$target")
+    }
+
     /** 上一次点击是否被系统接受。调用方想感知失败时读它。 */
     @Volatile
     var lastTapOk: Boolean = true
