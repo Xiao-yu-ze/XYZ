@@ -128,7 +128,17 @@ data class ZArea(
     val bottom: ZValue
 ) {
     /**
-     * 换算成像素矩形。
+     * 换算成像素矩形 `[left, top, right, bottom]`。
+     *
+     * ## 这里曾经返回的是 [左,上,宽,高]
+     *
+     * 而 [com.pvz2.auto.zjs.ZPosResolver.searchRect] 的契约、以及所有
+     * 消费它的地方（执行器、预览绘制、匹配器）都按 `[左,上,右,下]` 用。
+     *
+     * 后果是:  `"320 180 960 540"` → `[320,180,640,360]`，被当成
+     * right=640/bottom=360，于是搜索范围被算成 320×180 —— 只有真实
+     * 区域的四分之一。现象是"模板比范围还大"或者"明明在画面里却找不到"，
+     * 而且不会有任何报错。
      *
      * @param screenWidth  物理宽（left/right 的百分比基准）
      * @param screenHeight 物理高（top/bottom 的百分比基准）
@@ -143,7 +153,7 @@ data class ZArea(
         val ct = t.coerceIn(0, screenHeight - 1)
         val cr = r.coerceIn(cl + 1, screenWidth)
         val cb = b.coerceIn(ct + 1, screenHeight)
-        return intArrayOf(cl, ct, cr - cl, cb - ct)
+        return intArrayOf(cl, ct, cr, cb)
     }
 
     /** 协议里的落盘写法：`左 上 右 下`，空格分隔。 */

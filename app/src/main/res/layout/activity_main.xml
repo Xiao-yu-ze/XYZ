@@ -61,6 +61,43 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent" />
 
+            <!-- 匹配结果层。把命中的框画在实时画面上，调阈值时能立刻看到效果。 -->
+            <com.pvz2.auto.ui.ResultsOverlay
+                android:id="@+id/ovResults"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <!-- 预览查找结果的工具条：说明 + 取消。 -->
+            <LinearLayout
+                android:id="@+id/llResultsBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:background="#CC16241C"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="6dp"
+                android:visibility="gone">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnResultsStop"
+                    style="@style/AppButton.Quiet"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/picker_cancel" />
+
+                <TextView
+                    android:id="@+id/tvResultsMsg"
+                    style="@style/Text.Body"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="@string/results_waiting"
+                    android:textColor="#FFFFFF" />
+            </LinearLayout>
+
             <!-- 取点工具条：取消 / 实时坐标 / 确定。
                  坐标要一直显示，用户才能判断有没有对准。 -->
             <LinearLayout

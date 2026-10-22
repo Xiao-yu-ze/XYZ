@@ -52,10 +52,14 @@ class ZjsEditorPage(
     private var expandedIndex = -1
 
     /** 当前打开的脚本。编辑都改这一份，界面从它重绘。 */
-    private var script: Z.Script? = null
+    private var script: Z.Script?
+        get() = ZjsEditState.script
+        set(v) { ZjsEditState.script = v }
 
     /** 当前脚本文件名，保存时用。 */
-    private var fileName: String = ""
+    private var fileName: String
+        get() = ZjsEditState.fileName
+        set(v) { ZjsEditState.fileName = v }
 
     /**
      * 嵌套编辑的路径栈。
@@ -84,6 +88,9 @@ class ZjsEditorPage(
     /** 把当前层的列表写回脚本。监听层要沿栈塞回去。 */
     private fun commitActions(newList: List<Z.Action>) {
         val s = script ?: return
+        // 所有改动都从这里过，所以在这里标脏最省事 ——
+        // 后面要提示"有未保存改动"时不至于漏掉某些编辑路径。
+        ZjsEditState.dirty = true
         val f = navStack.lastOrNull()
         if (f == null) {
             script = s.copy(actions = newList)
@@ -278,6 +285,15 @@ class ZjsEditorPage(
                         .setNegativeButton("取消", null)
                         .show()
                 }
+            }
+
+            // ---- 预览查找结果
+            //
+            // 把识别结果画到主界面的实时预览上，用户调阈值时能立刻看到变化。
+            // 这里只负责"武装 + 切到预览页"，绘制在主界面那边。
+            row.field.endsWith(".preview") -> {
+                val prefix = row.field.removeSuffix(".preview")
+                onPreviewResults(action, prefix)
             }
 
             // ---- 多指滑动的手指
@@ -636,6 +652,16 @@ class ZjsEditorPage(
     }
 
     private fun load() {
+        // 内存里已有脚本就直接渲染。
+        //
+        // 翻页（ViewPager2）会销毁并重建这一页，而下面那条路径是从
+        // assets 重读文件 —— 那会把用户没保存的改动（刚截的模板、
+        // 刚调的阈值）全部冲掉，界面上却看不出任何异常。
+        // 实测就是"点预览看画面再翻回来，改动没了"。
+        ZjsEditState.script?.let { existing ->
+            showScript(ZjsEditState.fileName, existing)
+            return
+        }
         host.lifecycleScope.launch {
             val entries = withContext(Dispatchers.IO) {
                 runCatching { ZjsRunner.listScripts(host) }.getOrDefault(emptyList())
@@ -870,6 +896,62 @@ class ZjsEditorPage(
      * 新手指横向错开（640、760、880…）—— 两根手指叠在同一个点上等于单指，
      * 用户还得自己拖开。上下留出距离，加进来就是一条像样的"几指下滑"。
      */
+    /**
+     * 在实时画面上预览识别结果。
+     *
+     * ## 为什么要切回第 1 页
+     *
+     * 预览画面在第 1 页。用户点完这个按钮还停在第 3 页，就永远看不到
+     * 结果 —— 那比不给这个按钮更糟：他以为坏了。
+     *
+     * 这和 自动精灵 一致：它也是让你"在运行区域上"选择/预览，
+     * 用的是一个专门的实时画面，而不是脚本编辑列表。
+     */
+    private fun onPreviewResults(action: Z.Action, prefix: String) {
+        val pos = when (prefix) {
+            "起点" -> action.startPos
+            "终点" -> action.endPos
+            else -> action.posData
+        }
+        if (pos == null) {
+            android.widget.Toast.makeText(host, "这个位置还没设置", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val st = com.pvz2.auto.service.VirtualDisplaySession.sharedState.value
+        if (st.frameWidth <= 0) {
+            android.widget.Toast.makeText(
+                host, "虚拟屏没在跑，先启动虚拟屏", android.widget.Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        val screen = com.pvz2.auto.zjs.ZPosResolver.Screen(
+            st.frameWidth, st.frameHeight, host.resources.displayMetrics.density
+        )
+
+        // 匹配器用真实的：预览必须和运行时的判定一致，否则调好的阈值跑起来又是另一个结果
+        val matcher = com.pvz2.auto.zjs.ZRealMatcher(
+            com.pvz2.auto.core.TemplateMatcher().also { it.load(host) },
+            frame = { com.pvz2.auto.service.VirtualDisplaySession.snapshotForMatch() }
+        )
+        matcher.cacheDirProvider = { java.io.File(host.cacheDir, "zjs_templates").absolutePath }
+
+        com.pvz2.auto.core.PreviewResults.start(
+            scope = host.lifecycleScope,
+            pos = pos,
+            screen = screen,
+            matcher = matcher,
+            frame = { com.pvz2.auto.service.VirtualDisplaySession.snapshotForMatch() }
+        )
+
+        // 切回第 1 页才看得见画面
+        (host as? com.pvz2.auto.MainActivity)?.gotoPage(0)
+        android.widget.Toast.makeText(
+            host, "已开始预览，改完记得回来", android.widget.Toast.LENGTH_SHORT
+        ).show()
+    }
+
     private fun addFinger(action: Z.Action, actionIndex: Int) {
         val x = 640 + action.fingers.size * 120
         val start = Z.PosData(

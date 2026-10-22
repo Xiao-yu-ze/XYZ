@@ -50,30 +50,80 @@ class ZRealMatcher(
             return emptyList()
         }
 
-        // 模板以 PNG base64 存在协议里（SPEC.md:677），落盘到临时文件
-        // 才能交给 TemplateMatcher（它按路径加载）。
-        val path = ensureTemplateFile(img)
-        if (path == null) {
-            lastUnsupported = "模板写到磁盘失败"
-            return emptyList()
-        }
-
         val threshold = (pos.minSimilarPercent ?: 90) / 100.0
-        // roi 用 android.graphics.Rect —— TemplateMatcher 内部自己转 720p 逻辑坐标
-        val roi = android.graphics.Rect(rect[0], rect[1], rect[2], rect[3])
 
         return try {
-            val hit = matcher.match(m, path, roi, threshold) ?: run {
-                lastUnsupported = null
+            /*
+             * ## 为什么不用 TemplateMatcher
+             *
+             * 它的 `match()` 只认 `load()` 时从 assets 预加载并缩放过的模板
+             * （`scaled[template] ?: return null`）。脚本里的模板是 base64、
+             * 尺寸任意，传进去**永远返回 null** —— 而 null 和"没找到"
+             * 在界面上长得一模一样，所以这个坑很难发现。
+             *
+             * 这里直接解码 + matchTemplate，模板来自脚本，不依赖任何预加载。
+             */
+            val tmpl = decodeTemplate(img.data) ?: run {
+                lastUnsupported = "模板解码失败（base64 或 PNG 损坏）"
                 return emptyList()
             }
+
+            // 帧是 RGBA，模板可能是 RGB/RGBA/灰度，统一成 BGR 才能比
+            val frameBgr = org.opencv.core.Mat()
+            org.opencv.imgproc.Imgproc.cvtColor(
+                m, frameBgr, org.opencv.imgproc.Imgproc.COLOR_RGBA2BGR
+            )
+
+            // 只在实际要搜的范围内匹配。范围外的画面会给出假高分，
+            // 这是模板匹配最常见的"明明没这东西却命中了"的来源。
+            val left = rect[0].coerceIn(0, (frameBgr.width() - 1).coerceAtLeast(0))
+            val top = rect[1].coerceIn(0, (frameBgr.height() - 1).coerceAtLeast(0))
+            val right = rect[2].coerceIn(left + 1, frameBgr.width())
+            val bottom = rect[3].coerceIn(top + 1, frameBgr.height())
+            val roiW = right - left
+            val roiH = bottom - top
+
+            if (tmpl.width() > roiW || tmpl.height() > roiH) {
+                lastUnsupported = "模板 ${tmpl.width()}×${tmpl.height()} 比搜索范围 ${roiW}×${roiH} 还大"
+                return emptyList()
+            }
+
+            val region = frameBgr.submat(org.opencv.core.Rect(left, top, roiW, roiH))
+            val result = org.opencv.core.Mat()
+            var best = Double.NEGATIVE_INFINITY
+            var bestX = 0
+            var bestY = 0
+            try {
+                org.opencv.imgproc.Imgproc.matchTemplate(
+                    region, tmpl, result, org.opencv.imgproc.Imgproc.TM_CCOEFF_NORMED
+                )
+                val mm = org.opencv.core.Core.minMaxLoc(result)
+                best = mm.maxVal
+                // minMaxLoc 给的是结果矩阵里的点，加回 ROI 左上角才是屏幕坐标
+                bestX = mm.maxLoc.x.toInt() + left
+                bestY = mm.maxLoc.y.toInt() + top
+            } finally {
+                region.release()
+                result.release()
+                frameBgr.release()
+                tmpl.release()
+            }
+
+            if (best < threshold) {
+                // 把"最高多少"报出来 —— 用户据此决定是降阈值还是换模板，
+                // 只说"没找到"等于让他盲调。
+                lastUnsupported = null
+                lastScore = best
+                return emptyList()
+            }
+
             lastUnsupported = null
-            // 命中的是模板左上角（720p 逻辑坐标）；用户想点的是**中心**。
-            // 模板宽高在协议里也是逻辑坐标，所以可以直接加。
+            lastScore = best
+            // 命中的是模板左上角；用户要的是中心
             listOf(
                 ZPosResolver.Hit(
-                    (hit.logicalX + (img.width ?: 0) / 2f).toInt(),
-                    (hit.logicalY + (img.height ?: 0) / 2f).toInt()
+                    bestX + tmpl.width() / 2,
+                    bestY + tmpl.height() / 2
                 )
             )
         } catch (t: Throwable) {
@@ -81,6 +131,39 @@ class ZRealMatcher(
             lastUnsupported = "图片匹配异常：${t.message}"
             emptyList()
         }
+    }
+
+    /** 最近一次匹配的最高相似度（0~1）。调试和界面提示用。 */
+    var lastScore: Double = 0.0
+        private set
+
+    /**
+     * 把 base64 PNG 解成 BGR Mat。
+     *
+     * 模板里的 alpha 通道不能直接参与匹配 —— 半透明边缘会让
+     * 相关系数整体偏低，看起来像"阈值不够"。
+     */
+    private fun decodeTemplate(b64: String): org.opencv.core.Mat? {
+        val bytes = try {
+            java.util.Base64.getDecoder().decode(b64)
+        } catch (t: Throwable) {
+            Log.e(TAG, "base64 解码失败", t)
+            return null
+        }
+        val buf = org.opencv.core.MatOfByte(*bytes)
+        val raw = org.opencv.imgcodecs.Imgcodecs.imdecode(buf, org.opencv.imgcodecs.Imgcodecs.IMREAD_UNCHANGED)
+        buf.release()
+        if (raw == null || raw.empty()) return null
+
+        val bgr = org.opencv.core.Mat()
+        when (raw.channels()) {
+            4 -> org.opencv.imgproc.Imgproc.cvtColor(raw, bgr, org.opencv.imgproc.Imgproc.COLOR_BGRA2BGR)
+            3 -> raw.copyTo(bgr)
+            1 -> org.opencv.imgproc.Imgproc.cvtColor(raw, bgr, org.opencv.imgproc.Imgproc.COLOR_GRAY2BGR)
+            else -> raw.copyTo(bgr)
+        }
+        raw.release()
+        return bgr
     }
 
     override fun findText(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit> {

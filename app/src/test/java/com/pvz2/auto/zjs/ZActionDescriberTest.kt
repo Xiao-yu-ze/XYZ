@@ -312,4 +312,26 @@ class ZActionDescriberTest {
         assertTrue("应有模板行", img != null)
         assertEquals("位置.image", img!!.field)
     }
+    @Test
+    fun `需要查找的类型有预览行`() {
+        // 调阈值是模板匹配最费时间的部分，必须有"在画面上看结果"的入口
+        for (json in listOf(
+            """{"type":"点击图片","delayUnit":1,"posData":{"type":"image",
+               "imageData":{"data":"AA","imageWidth":10,"imageHeight":10}}}""",
+            """{"type":"点击文字","delayUnit":1,"posData":{"type":"text","text":"确定"}}""",
+            """{"type":"点击颜色","delayUnit":1,"posData":{"type":"color","color":"#FF0000"}}"""
+        )) {
+            val r = rows(json)
+            val row = r.firstOrNull { it.field.endsWith(".preview") }
+            assertTrue("应有预览行：${r.map { it.label }}", row != null)
+            assertEquals(ZActionDescriber.Kind.ENTER, row!!.kind)
+        }
+    }
+
+    @Test
+    fun `固定坐标没有预览行`() {
+        // 固定坐标不"查找"，给它一个点了没反应的按钮只会让人困惑
+        val r = rows("""{"type":"点击","delayUnit":1,"posData":{"type":"location","x":"1","y":"2"}}""")
+        assertTrue("不该有预览行：${r.map { it.label }}", r.none { it.field.endsWith(".preview") })
+    }
 }

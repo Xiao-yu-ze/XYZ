@@ -168,6 +168,39 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
+                // 预览查找结果：把命中框画在实时画面上。
+                // 用户调阈值时能立刻看到效果，不用跑一遍脚本再回来。
+                launch {
+                    com.pvz2.auto.core.PreviewResults.active.collect { on ->
+                        val bar = findViewById<View>(R.id.llResultsBar)
+                        val ov = findViewById<com.pvz2.auto.ui.ResultsOverlay>(R.id.ovResults)
+                        bar.visibility = if (on) View.VISIBLE else View.GONE
+                        ov.visibility = if (on) View.VISIBLE else View.GONE
+                        if (!on) {
+                            ov.clear()
+                            findViewById<TextView>(R.id.tvResultsMsg).text =
+                                getString(R.string.results_waiting)
+                        }
+                    }
+                }
+                launch {
+                    com.pvz2.auto.core.PreviewResults.outcome.collect { o ->
+                        val ov = findViewById<com.pvz2.auto.ui.ResultsOverlay>(R.id.ovResults)
+                        if (o == null) return@collect
+                        findViewById<TextView>(R.id.tvResultsMsg).text = o.message
+
+                        // 每次重算画面上矩形 —— 转屏、分页切换都会让控件尺寸变，
+                        // 缓存旧矩形会让框画偏。
+                        ov.post {
+                            val st = VirtualDisplaySession.sharedState.value
+                            val iw = st.frameWidth.takeIf { it > 0 } ?: VD_WIDTH
+                            val ih = st.frameHeight.takeIf { it > 0 } ?: VD_HEIGHT
+                            val r = PreviewTouchMapper.imageRect(ov.width, ov.height, iw, ih)
+                            ov.setFrame(r[0], r[1], r[2], r[3], iw, ih)
+                            ov.setResults(o.searchRect, o.boxes)
+                        }
+                    }
+                }
             }
         }
     }
@@ -188,6 +221,18 @@ class MainActivity : AppCompatActivity() {
             override fun onPageSelected(position: Int) = renderDots(position)
         })
         renderDots(0)
+    }
+
+    /**
+     * 切到某一页。给功能页用 —— 比如"预览查找结果"要把用户带回有画面的第 1 页。
+     *
+     * 结果画在第 1 页的预览上，用户还停在第 3 页就永远看不到，
+     * 会以为按钮坏了。
+     */
+    fun gotoPage(index: Int) {
+        val p = findViewById<ViewPager2>(R.id.pager) ?: return
+        if (index !in 0 until (p.adapter?.itemCount ?: 0)) return
+        p.setCurrentItem(index, true)
     }
 
     private fun renderDots(selected: Int) {
@@ -285,6 +330,12 @@ class MainActivity : AppCompatActivity() {
         }
         root.findViewById<MaterialButton>(R.id.btnVdStop).setOnClickListener {
             AutomationService.vdStop(this)
+        }
+        // 预览查找结果：取消就停止轮询、清掉覆盖层。
+        // 放在 onCreate 而不是取点流程里 —— 这个工具条和取点模式无关，
+        // 从编辑器点「预览」进来时没有准星，也要能取消。
+        root.findViewById<MaterialButton>(R.id.btnResultsStop).setOnClickListener {
+            com.pvz2.auto.core.PreviewResults.stop()
         }
         // 导出日志：真机上没电脑连着时，这是唯一能把现场发给别人的办法。
         root.findViewById<MaterialButton>(R.id.btnExportLog).setOnClickListener {

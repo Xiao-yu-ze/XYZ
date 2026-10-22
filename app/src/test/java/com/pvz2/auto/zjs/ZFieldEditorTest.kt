@@ -196,4 +196,72 @@ class ZFieldEditorTest {
         assertEquals("25.00%", area.top.raw)
         assertEquals("75.00%", area.bottom.raw)
     }
+    // ------------------------------------------------------------ 相似度阈值
+
+    @Test
+    fun `相似度带百分号也能填`() {
+        // 界面上显示的是 "90%"，用户照着改就带着百分号
+        val a = action("""{"type":"点击图片","delayUnit":0,
+            "posData":{"type":"image","imageData":{"data":"AA"}}}""")
+        val out = ZFieldEditor.apply(a, "位置.minSimilarPercent", "85%")!!
+        assertEquals(85, out.posData!!.minSimilarPercent)
+    }
+
+    @Test
+    fun `相似度超范围夹住而不是报错`() {
+        // 用户想表达"最严格"，弹个错只会让他再猜一次
+        val a = action("""{"type":"点击图片","delayUnit":0,
+            "posData":{"type":"image","imageData":{"data":"AA"}}}""")
+        assertEquals(100, ZFieldEditor.apply(a, "位置.minSimilarPercent", "150")!!.posData!!.minSimilarPercent)
+        assertEquals(0, ZFieldEditor.apply(a, "位置.minSimilarPercent", "-5")!!.posData!!.minSimilarPercent)
+    }
+
+    @Test
+    fun `清空相似度回到默认`() {
+        val a = action("""{"type":"点击图片","delayUnit":0,
+            "posData":{"type":"image","imageData":{"data":"AA"},"minSimilarPercent":77}}""")
+        val out = ZFieldEditor.apply(a, "位置.minSimilarPercent", "")!!
+        assertNull(out.posData!!.minSimilarPercent)
+    }
+    // ------------------------------------------------------------ 搜索范围的单位
+
+    @Test
+    fun `搜索范围返回的是左上右下不是宽高`() {
+        // ★ 这里钉住一个曾经的真实 bug：
+        //   toPxRect 返回 [左,上,宽,高]，而所有消费者按 [左,上,右,下] 用。
+        //   "320 180 960 540" 于是被算成 320×180，搜索范围只有真实的四分之一，
+        //   现象是"模板比范围还大"或者"明明在画面里却找不到"，且没有任何报错。
+        val screen = ZPosResolver.Screen(1280, 720, 1f)
+        val pos = Z.PosData(
+            type = Z.PosType.IMAGE,
+            limitArea = ZArea(
+                ZValue.parse("320"), ZValue.parse("180"),
+                ZValue.parse("960"), ZValue.parse("540")
+            )
+        )
+        val r = ZPosResolver.searchRect(pos, screen)
+        assertEquals(320, r[0])
+        assertEquals(180, r[1])
+        assertEquals(960, r[2])   // 右，不是宽 640
+        assertEquals(540, r[3])   // 下，不是高 360
+        assertEquals(640, r[2] - r[0])
+        assertEquals(360, r[3] - r[1])
+    }
+
+    @Test
+    fun `百分比范围也按左上右下返回`() {
+        val screen = ZPosResolver.Screen(1000, 500, 1f)
+        val pos = Z.PosData(
+            type = Z.PosType.IMAGE,
+            limitArea = ZArea(
+                ZValue.parse("25%"), ZValue.parse("20%"),
+                ZValue.parse("75%"), ZValue.parse("80%")
+            )
+        )
+        val r = ZPosResolver.searchRect(pos, screen)
+        assertEquals(250, r[0])
+        assertEquals(100, r[1])
+        assertEquals(750, r[2])
+        assertEquals(400, r[3])
+    }
 }

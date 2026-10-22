@@ -315,17 +315,30 @@ object ZActionDescriber {
                     val size = if (img.width != null && img.height != null) "${img.width}×${img.height}" else "未知尺寸"
                     rows += Row("$prefix 模板", "$size，${img.data.length} 字符", Kind.IMAGE, field = "$prefix.image")
                 }
-                pos.minSimilarPercent?.let { rows += Row("$prefix 相似度", "$it%") }
+                // 阈值是模板匹配唯一的调节旋钮，必须能改。
+                rows += Row(
+                    "$prefix 相似度",
+                    pos.minSimilarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
+                    Kind.NUMBER, field = "$prefix.minSimilarPercent"
+                )
             }
 
             Z.PosType.TEXT -> {
                 rows += Row("$prefix 文字", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
-                pos.similarPercent?.let { rows += Row("$prefix 相似度", "$it%") }
+                rows += Row(
+                    "$prefix 相似度",
+                    pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
+                    Kind.NUMBER, field = "$prefix.similarPercent"
+                )
             }
 
             Z.PosType.COLOR -> {
                 rows += Row("$prefix 颜色", pos.color.orEmpty(), Kind.TEXT, field = "$prefix.color")
-                pos.similarPercent?.let { rows += Row("$prefix 相似度", "$it%") }
+                rows += Row(
+                    "$prefix 相似度",
+                    pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
+                    Kind.NUMBER, field = "$prefix.similarPercent"
+                )
             }
 
             Z.PosType.NODE -> {
@@ -335,6 +348,24 @@ object ZActionDescriber {
             Z.PosType.AI_LOC -> {
                 rows += Row("$prefix AI", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
             }
+        }
+
+        // 预览查找结果：在实时画面上把命中位置框出来。
+        //
+        // 只对"需要查找"的类型出现 —— 固定坐标没有"查找"这回事，
+        // 给它一个点了没反应的按钮只会让人困惑。
+        //
+        // 单独一行而不是塞进菜单：调阈值是这个动作最费时间的部分，
+        // 藏进二级菜单等于让它更难找。
+        if (pos.type == Z.PosType.IMAGE || pos.type == Z.PosType.TEXT ||
+            pos.type == Z.PosType.COLOR || pos.type == Z.PosType.NODE
+        ) {
+            rows += Row(
+                "$prefix 预览",
+                "点这里在画面上看命中位置",
+                Kind.ENTER,
+                field = "$prefix.preview"
+            )
         }
 
         // 通用字段（FIELDS.md:144-147）

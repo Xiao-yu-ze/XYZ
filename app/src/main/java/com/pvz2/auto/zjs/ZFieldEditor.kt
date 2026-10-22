@@ -132,7 +132,27 @@ object ZFieldEditor {
                 pos.copy(limitArea = area)
             }
         }
+        // 相似度阈值，0~100。用户常填 "90%" 或 "90"，两种都收；
+        // 超范围直接夹住而不是拒绝 —— 用户想表达的是"最宽松/最严格"，
+        // 弹个错只会让他再猜一次。清空 = 回到协议默认值。
+        "minSimilarPercent" -> if (value.isBlank()) {
+            pos.copy(minSimilarPercent = null)
+        } else {
+            parsePercent(value)?.let { pos.copy(minSimilarPercent = it) }
+        }
+        "similarPercent" -> if (value.isBlank()) {
+            pos.copy(similarPercent = null)
+        } else {
+            parsePercent(value)?.let { pos.copy(similarPercent = it) }
+        }
         else -> null
+    }
+
+    /** "90%" / "90" → 90，并夹到 0~100。空串 → null 表示清空。 */
+    private fun parsePercent(raw: String): Int? {
+        val t = raw.trim().removeSuffix("%").trim()
+        if (t.isEmpty()) return null
+        return t.toDoubleOrNull()?.toInt()?.coerceIn(0, 100)
     }
 
     /** 空串 → null；否则按 [ZValue] 校验后保留原字符串。 */

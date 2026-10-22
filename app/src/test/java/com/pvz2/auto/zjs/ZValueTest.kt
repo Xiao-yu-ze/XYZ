@@ -83,10 +83,12 @@ class ZValueTest {
         // 断言换算出来的宽高是 (right-left, bottom-top)。
         val area = ZArea.parse("25% 25% 75% 75%")!!
         val r = area.toPxRect(w, h, density)
-        assertEquals(320, r[0])   // left  = 25% * 1280
-        assertEquals(180, r[1])   // top   = 25% * 720
-        assertEquals(640, r[2])   // width = 75%-25% = 50% * 1280
-        assertEquals(360, r[3])   // height= 50% * 720
+        assertEquals(320, r[0])   // left   = 25% * 1280
+        assertEquals(180, r[1])   // top    = 25% * 720
+        assertEquals(960, r[2])   // right  = 75% * 1280（不是宽 640）
+        assertEquals(540, r[3])   // bottom = 75% * 720（不是高 360）
+        assertEquals(640, r[2] - r[0])   // 宽由右下减左上得出
+        assertEquals(360, r[3] - r[1])
     }
 
     @Test
@@ -114,13 +116,15 @@ class ZValueTest {
 
     @Test
     fun `框选往返不漂`() {
-        // 往返一致性：框选 → 落盘 → 运行时换算，必须一模一样
+        // 往返一致性：框选 → 落盘 → 运行时换算，必须一模一样。
+        // fromPxRect 收的是 (left, top, w, h)，所以回来要看左上和右下
+        // 两个角都对得上 —— 只比 left/top 会漏掉宽高算错的情况。
         val area = ZArea.fromPxRect(412, 260, 86, 32, 1280, 720)
         val r = area.toPxRect(1280, 720, density)
-        assertEquals(412, r[0])
-        assertEquals(260, r[1])
-        assertEquals(86, r[2])
-        assertEquals(32, r[3])
+        assertEquals(412, r[0])            // left
+        assertEquals(260, r[1])            // top
+        assertEquals(412 + 86, r[2])       // right
+        assertEquals(260 + 32, r[3])       // bottom
     }
 
     @Test
