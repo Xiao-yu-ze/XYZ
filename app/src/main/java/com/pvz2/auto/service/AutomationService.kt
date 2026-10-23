@@ -639,10 +639,18 @@ class AutomationService : Service() {
 
         zjsExecutor = null
         result.onSuccess { r ->
-            val msg = buildString {
+            /*
+             * ★ 失败必须以「失败：」开头。
+             *
+             *   原来不管成功还是失败都写「完成：执行 N 条；原因」——
+             *   脚本在第 7 条被终止时，界面上读起来像跑完了，
+             *   用户根本不知道任务已经失败（实测反馈：任务失败没有提示）。
+             */
+            val msg = if (r.error != null) {
+                "失败：${r.error}"
+            } else buildString {
                 append("完成：执行 ${r.executed} 条")
                 if (r.skipped.isNotEmpty()) append("，跳过 ${r.skipped.size} 条")
-                r.error?.let { append("；$it") }
             }
             // 跳过明细写日志 —— 界面上放不下几十条，但排查时必须有。
             r.skipped.take(20).forEach {

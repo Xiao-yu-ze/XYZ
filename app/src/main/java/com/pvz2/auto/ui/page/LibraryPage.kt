@@ -118,9 +118,15 @@ class LibraryPage(
                         runStatus.text = state.message.ifBlank { "运行中" }
                         // 只要在跑就把整条状态栏（含停止按钮）显示出来 ——
                         // 不依赖状态文案是否为空，免得"在跑但看不到停止"。
-                        runStatusBar.visibility =
-                            if (state.running) android.view.View.VISIBLE
-                            else android.view.View.GONE
+                        //
+                        // ★ 失败之后也要留着：任务一失败 running 立刻变 false，
+                        //   状态条跟着消失，用户只看到脚本停了、不知道停在哪、
+                        //   为什么停（实测反馈：任务失败没有提示）。
+                        runStatusBar.visibility = when {
+                            state.running -> android.view.View.VISIBLE
+                            state.message.startsWith("失败") -> android.view.View.VISIBLE
+                            else -> android.view.View.GONE
+                        }
                     }
                 }
             }

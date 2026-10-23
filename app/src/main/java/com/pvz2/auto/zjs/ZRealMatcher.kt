@@ -481,15 +481,16 @@ class ZRealMatcher(
             val total = (mask.rows() * mask.cols()).coerceAtLeast(1)
             val ratio = nonzero.toDouble() / total
             lastScore = ratio
-            val ok = ratio >= COLOR_MIN_RATIO
+            // Maa 语义：至少一个像素（count = 1）
+            val ok = nonzero > 0
             if (!ok) {
                 // 顺带报出这一块的平均色：只说"没找到"，用户只能猜一个颜色再试。
                 val mv = org.opencv.core.Core.mean(bgr).`val`
                 val r0 = mv[2].toInt()
                 val g0 = mv[1].toInt()
                 val b0 = mv[0].toInt()
-                lastUnsupported = "没找到这个颜色（命中比例 %.1f%% < %.1f%%，这一块平均色 #%02X%02X%02X）"
-                    .format(ratio * 100, COLOR_MIN_RATIO * 100, r0, g0, b0)
+                lastUnsupported = "没找到这个颜色（命中 0 像素，这一块平均色 #%02X%02X%02X）"
+                    .format(r0, g0, b0)
                 return emptyList()
             }
 
@@ -621,13 +622,16 @@ class ZRealMatcher(
         }
 
         /**
-     * 颜色判定要求的最小命中比例。
+     * 颜色判定要求的最小命中像素比例。
      *
-     * 原来是"有一个像素落在范围内就算命中"——太松：卡片进入冷却后残留的一点
-     * 原色像素就能让闸门通过。判定块通常很小（8x96 这种），语义就是
-     * "这一块是不是这个颜色"，所以按比例卡。
+     * ★ 必须是 0：Maa 的 ColorMatch 默认 `count: 1`，**只要有一个像素
+     *   落在 lower~upper 之间就算命中**。我一度改成"要求一半像素"，
+     *   直接把「是否进入关内」这种正常闸门卡死了 —— 那是改坏了语义。
+     *
+     *   冷却后卡片仍然命中的问题，正确解法是 lower/upper 逐通道上下界
+     *   （见 findColor），不是收紧像素数量。
      */
-    private const val COLOR_MIN_RATIO = 0.5
+    private const val COLOR_MIN_RATIO = 0.0
 
     internal fun parseHexRgb(raw: String?): IntArray? {
             val hex = raw?.trim()?.removePrefix("#")?.removePrefix("0x")?.removePrefix("0X")
