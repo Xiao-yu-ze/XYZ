@@ -75,13 +75,20 @@
                 android:layout_height="match_parent"
                 android:visibility="gone" />
 
+            <TextView
+                android:id="@+id/tvPreviewEmpty"
+                style="@style/Text.Hint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="@string/vd_preview_empty"
+                android:textColor="@color/ink_faint" />
+        </com.pvz2.auto.ui.AspectFrameLayout>
             <!-- 预览查找结果的工具条：说明 + 取消。 -->
             <LinearLayout
                 android:id="@+id/llResultsBar"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_gravity="bottom"
-                android:background="#CC16241C"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
                 android:paddingHorizontal="8dp"
@@ -103,7 +110,7 @@
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="@string/results_waiting"
-                    android:textColor="#FFFFFF" />
+                    android:textColor="@color/ink" />
             </LinearLayout>
 
             <!-- 取点工具条：取消 / 实时坐标 / 确定。
@@ -112,8 +119,6 @@
                 android:id="@+id/llCrosshairBar"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_gravity="bottom"
-                android:background="#CC16241C"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
                 android:paddingHorizontal="8dp"
@@ -135,7 +140,7 @@
                     android:layout_weight="1"
                     android:gravity="center"
                     android:text="0, 0"
-                    android:textColor="#FFFFFF" />
+                    android:textColor="@color/ink" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnCrosshairOk"
@@ -153,22 +158,11 @@
                 style="@style/Text.Body"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_gravity="top"
-                android:background="#CC16241C"
                 android:gravity="center"
                 android:paddingVertical="8dp"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/ink"
                 android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/tvPreviewEmpty"
-                style="@style/Text.Hint"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:text="@string/vd_preview_empty"
-                android:textColor="@color/ink_faint" />
-        </com.pvz2.auto.ui.AspectFrameLayout>
     </FrameLayout>
 
     <!-- 预览下面一行：左边状态，右边帧率。 -->

@@ -728,11 +728,29 @@ class ZjsEditorPage(
 
         // 预览命中位置。条件和动作共用同一套预览，判定完全一致。
         if (row.field == "cond.preview") {
-            // 必须先关掉条件弹窗：它盖在预览区上面，结果条的「取消」被它挡住，
-            // 用户会以为取消坏了。
+            /*
+             * 条件里的「预览」。
+             *
+             * 既要关掉弹窗（它盖在预览区上，结果条的取消会被挡住），
+             * 又要**等弹窗真的消失之后**再启动预览：
+             * dismiss() 只是请求关闭，窗口还没销毁。立刻 start 的话，
+             * 预览的结果条先贴在弹窗下面，弹窗一消失布局重排，
+             * 用户看到的就是"点了预览什么都没发生"。
+             *
+             * 用 post 让出这一帧，让弹窗走完自己的销毁流程再开始。
+             */
             conditionDialog?.dismiss()
             conditionDialog = null
-            previewFor(condition.posData)
+            val target = condition.posData
+            host.window.decorView.post {
+                previewFor(target)
+                android.widget.Toast.makeText(
+                    host,
+                    if (target == null) "这个条件还没有可预览的位置"
+                    else "预览中：结果在画面上方，取消按钮在画面下方",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
             return
         }
 
