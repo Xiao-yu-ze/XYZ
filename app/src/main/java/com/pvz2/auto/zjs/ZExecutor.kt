@@ -378,6 +378,14 @@ class ZExecutor(
                     // "在等画面"和"卡死了" —— 这两件的处理方式完全相反。
                     if (round % 10 == 0) {
                         val waited = (System.currentTimeMillis() - startedAt) / 1000
+                        // 同一个信息也要给界面看：用户不该为了知道"在等什么"去翻 logcat
+                        com.pvz2.auto.core.ScriptRunState.update {
+                            it.copy(
+                                message = "正在等「${action.candidates.joinToString(" / ") {
+                                    c -> c.jumpTo ?: "下一动作"
+                                }}」第 $round 轮（已 ${waited}s）"
+                            )
+                        }
                         log(
                             "[等待候选] ${label}：已等 ${waited}s，第 $round 轮，" +
                                 "${action.candidates.size} 个候选都没出现" +

@@ -51,6 +51,7 @@ class LibraryPage(
     private val rv: RecyclerView = root.findViewById(R.id.rvLibrary)
     private val hint: TextView = root.findViewById(R.id.tvLibraryHint)
     private val count: TextView = root.findViewById(R.id.tvLibraryCount)
+    private val runStatus: TextView = root.findViewById(R.id.tvRunStatus)
 
     private val adapter = LibraryAdapter()
 
@@ -100,9 +101,20 @@ class LibraryPage(
                 launch {
                     ZjsEditState.savedRevision.collect { reload() }
                 }
-                // 运行状态变了要重画按钮（运行中那颗变成「停止」）
+                // 运行状态变了要重画按钮（运行中那颗变成「停止」），
+                // 同时把"正在等什么"写到状态行 —— 脚本没动静时，
+                // 用户要能一眼分清"在等画面"和"卡死了"。
                 launch {
-                    ScriptRunState.state.collect { adapter.submit(adapter.items, it) }
+                    ScriptRunState.state.collect { state ->
+                        adapter.submit(adapter.items, state)
+                        runStatus.text = state.message
+                        runStatus.visibility = when {
+                            !state.running -> android.view.View.GONE
+                            state.message.isBlank() || state.message == "未运行" ->
+                                android.view.View.GONE
+                            else -> android.view.View.VISIBLE
+                        }
+                    }
                 }
             }
         }
