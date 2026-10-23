@@ -259,6 +259,11 @@ class MainActivity : AppCompatActivity() {
                             banner.text = PreviewPicker.hintText(mode)
                             banner.visibility = View.VISIBLE
                             // POINT 用准星，其余（框范围/截模板）用可拖角的框
+                            // 取点/框选开始时就停掉预览匹配：
+                            // 结果条会盖住预览区底部，而"框范围"恰恰要用那块地方。
+                            com.pvz2.auto.core.PreviewResults.stop()
+                            findViewById<View>(R.id.llResultsBar).visibility = View.GONE
+                            findViewById<View>(R.id.ovResults).visibility = View.GONE
                             if (mode == PreviewPicker.Mode.POINT) setupCrosshair() else setupRectPicker()
                         }
                     }
@@ -319,7 +324,17 @@ class MainActivity : AppCompatActivity() {
         val pager = findViewById<ViewPager2>(R.id.pager)
         pager.adapter = PageAdapter()
         pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
-            override fun onPageSelected(position: Int) = renderDots(position)
+            override fun onPageSelected(position: Int) {
+                renderDots(position)
+                // 离开编辑页就停掉预览匹配。
+                //
+                // 不停的话 PreviewResults.active 永远为 true，预览区底部那条
+                // 深色结果条就长期压在画面上（178px，占预览区 17%），
+                // 看起来像界面本身被挡了一块 —— 实际是上一次预览没结束。
+                if (position != PAGE_ZJS) {
+                    com.pvz2.auto.core.PreviewResults.stop()
+                }
+            }
         })
         renderDots(0)
     }

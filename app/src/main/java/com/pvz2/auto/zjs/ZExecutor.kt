@@ -138,21 +138,37 @@ class ZExecutor(
                     continue
                 }
 
-                // 条件：不满足就跳过
+                /*
+                 * 条件。
+                 *
+                 * ★ 这里落实四个字段：识别次数、识别间隔、先等待再检查、取反。
+                 *
+                 *   以前只判一次就跳过 —— 那四个字段在模型和界面里都有，
+                 *   执行器却从没读过，等于纯装饰：用户把「识别次数」设成 50，
+                 *   行为和 1 完全一样。这种"设了不生效"比字段不存在更伤人。
+                 *
+                 * 顺序（FIELDS.md:259）：
+                 *   checkBeforeDelay = true  → 先检查，通过后再等 delay
+                 *   checkBeforeDelay = false → 先等 delay，再检查
+                 */
                 val cond = action.common.condition
-                if (cond != null && cond.disabled.not() && !evaluate(cond, pc, skipped)) {
+                val mustCheck = cond != null && cond.disabled.not()
+                var delayDone = false
+                if (mustCheck && !cond!!.checkBeforeDelay) {
+                    waitDelay(action.common.delay, action.common.delayUnit)
+                    delayDone = true
+                }
+                if (mustCheck && !evaluateWithRetry(cond!!, pc, skipped)) {
                     skipped.add(Result.Skip(pc, label, "条件不满足"))
                     pc++
                     continue
                 }
+                if (!delayDone) {
+                    waitDelay(action.common.delay, action.common.delayUnit)
+                }
 
                 // 上报"现在跑到哪一条"，界面据此在这一条上画进度条。
-                // 放在等待之前：用户要看的是"这一条正在跑"，
-                // 而不是等完之后才出现。
                 com.pvz2.auto.core.ScriptRunState.enterAction(pc, label, estimateMs(action))
-
-                // 前置等待
-                waitDelay(action.common.delay, action.common.delayUnit)
 
                 // 执行（含重复）
                 val outcome = executeWithRepeat(action, pc, label, skipped)
@@ -546,6 +562,46 @@ class ZExecutor(
      * 条件出错时如果按成立处理，动作会**乱点**；按不成立处理只是不动。
      * 用户看到"没执行"会来查，看到"点错了"却查不出来。
      */
+    /**
+     * 带重试的条件判断 —— 识别次数 / 识别间隔在这里生效。
+     *
+     * @return 最终是否成立
+     *
+     * 规则照 FIELDS.md:256-258：
+     *   repeatWhenFalse = false → 只判一次
+     *   repeatWhenFalseLimitTimes = 0 → 无限重试，N → 最多判 N 次
+     *   repeatWhenFalseRepeatDelay → 每次之间的间隔（毫秒）
+     *
+     * 睡眠切 20ms 小片，保证「停止」能及时生效。
+     */
+    private fun evaluateWithRetry(
+        cond: Z.Condition,
+        index: Int,
+        skipped: MutableList<Result.Skip>
+    ): Boolean {
+        val first = evaluate(cond, index, skipped)
+        if (first || !cond.repeatWhenFalse) return first
+
+        val limit = cond.repeatWhenFalseLimitTimes ?: 0
+        val gap = (cond.repeatWhenFalseRepeatDelay ?: 1000).coerceIn(20, 60_000)
+        var attempt = 1     // 第一次已经判过了
+        while (!stopped) {
+            if (limit > 0 && attempt >= limit) break
+            var slept = 0
+            while (slept < gap && !stopped) {
+                Thread.sleep(20L)
+                slept += 20
+            }
+            if (stopped) break
+            attempt++
+            if (evaluate(cond, index, skipped)) {
+                log("[条件] 第 $attempt 次识别成立")
+                return true
+            }
+        }
+        return false
+    }
+
     private fun evaluate(
         cond: Z.Condition,
         index: Int,

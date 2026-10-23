@@ -54,6 +54,10 @@ import sys
 SRC_W = 1920
 SRC_H = 1080
 
+# 把「点文字」转成「点固定坐标 + 文字条件」。
+# 用 --ocr-fixed-click 打开。适用于按钮位置固定的场景（用户确认过）。
+OCR_FIXED_CLICK = False
+
 
 def pct_x(v):
     return round(float(v) / SRC_W * 100.0, 2)
@@ -289,8 +293,54 @@ class Converter:
         # DoNothing / 其他：发一个 0ms 的等待，只为了有个地方挂 jumpId
         return "控制执行"
 
+    def ocr_click_as_fixed(self, node, delay_ms):
+        """
+        「点文字」→「点固定坐标 + 文字条件」。
+
+        什么时候用：按钮位置固定（用户确认过），OCR 只是用来确认"到了这个界面"。
+        好处是识别只当闸门，点的是硬坐标 —— 不受字体渲染/OCR 误识影响。
+        PP-OCR 读不动游戏里的艺术字（实测把「开始战斗」读成「HN」），
+        所以固定位置的按钮用这条路径更稳。
+
+        条件上带识别次数/间隔（repeatWhenFalse + limit + delay），
+        这些是自动精灵的原生字段，界面上也能直接改。
+        """
+        roi = node.get("roi")
+        if not roi or len(roi) < 4:
+            return None
+        cx = roi[0] + roi[2] / 2.0
+        cy = roi[1] + roi[3] / 2.0
+        cond = self.condition(node)
+        if cond:
+            cond = dict(cond)
+            cond["repeatWhenFalse"] = True
+            # 0 = 无限次（和 Maa 的 timeout:-1 对应）；有限次数就填次数
+            timeout = node.get("timeout")
+            cond["repeatWhenFalseLimitTimes"] = 0 if timeout == -1 or not timeout else max(
+                1, int(timeout) // int(node.get("rate_limit") or 500)
+            )
+            cond["repeatWhenFalseRepeatDelay"] = int(node.get("rate_limit") or 500)
+        return {
+            "type": "点击",
+            "desc": node["name"],
+            "jumpId": node["name"],
+            "delay": str(delay_ms),
+            "delayUnit": 0,
+            "repeatCount": 1,
+            "posData": {"type": "location", "x": f"{pct_x(cx)}%", "y": f"{pct_y(cy)}%"},
+            **({"condition": cond} if cond else {}),
+        }
+
     def build_action(self, node, delay_ms):
         name = node["name"]
+
+        # OCR 点击 → 固定坐标点击（按钮位置固定时更稳）
+        if OCR_FIXED_CLICK and self._rec_type(node) == "OCR" and \
+                str(node.get("action", "")).lower() == "click" and not node.get("target"):
+            fixed = self.ocr_click_as_fixed(node, delay_ms)
+            if fixed:
+                return fixed
+
         atype = self.action_type(node)
         a = {
             "type": atype,
@@ -546,6 +596,11 @@ def main():
     if len(sys.argv) < 5:
         print(__doc__)
         sys.exit(1)
+
+    global OCR_FIXED_CLICK
+    if "--ocr-fixed-click" in sys.argv:
+        OCR_FIXED_CLICK = True
+        sys.argv = [a for a in sys.argv if a != "--ocr-fixed-click"]
 
     pipeline_path, site_path, image_root, out_path = sys.argv[1:5]
     if len(sys.argv) >= 7:
