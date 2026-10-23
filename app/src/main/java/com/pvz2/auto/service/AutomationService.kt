@@ -550,6 +550,25 @@ class AutomationService : Service() {
             return
         }
 
+        /*
+         * 虚拟屏没跑就别开始。
+         *
+         * 曾经不检查：脚本照常"跑完"，但每一下手势都被注入层拒绝
+         * （日志里只有 W 级的「手势未开始：虚拟屏 displayId=-1」），
+         * 界面上什么都不变 —— 用户看到的就是「点运行没反应」。
+         *
+         * 静默空转比报错难查得多，所以这里直接拒绝并说清原因。
+         */
+        val pre = VirtualDisplaySession.sharedState.value
+        if (!pre.running || pre.displayId <= 0) {
+            Log.e(
+                TAG,
+                "[zjs] 拒绝运行：虚拟屏没在跑 displayId=${pre.displayId} running=${pre.running}"
+            )
+            ScriptRunState.finish("虚拟屏没在运行：先回第 1 页点「在虚拟屏启动游戏」")
+            return
+        }
+
         val touch = ensureInjector()
         if (touch == null) {
             Log.e(TAG, "[zjs] 注入器不可用")

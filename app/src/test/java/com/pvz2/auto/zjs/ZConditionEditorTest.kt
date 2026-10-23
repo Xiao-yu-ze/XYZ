@@ -109,14 +109,24 @@ class ZConditionEditorTest {
         for (must in listOf("条件类型", "百分比", "备注", "取反", "禁用", "不成立时反复检查")) {
             assertTrue("缺 [$must]：$labels", labels.any { it == must })
         }
-        // 开了重复检查才显示次数
-        assertTrue(labels.contains("最多重试"))
+        // 识别次数/间隔始终显示 —— 藏在开关后面会让人以为字段没做
+        assertTrue("缺 [识别次数]：$labels", labels.contains("识别次数"))
+        assertTrue("缺 [识别间隔(ms)]：$labels", labels.contains("识别间隔(ms)"))
+        val times = rows.first { it.label == "识别次数" }
+        // 协议默认 0 = 无限次，所以未显式设置时显示 0
+        assertEquals("0", times.value)
+        assertEquals(ZActionDescriber.Kind.NUMBER, times.kind)
     }
 
     @Test
-    fun `没开重复检查时不显示次数`() {
+    fun `没开重复检查时次数显示占位符但仍可见`() {
         val c = ZConditionEditor.create(Z.ConditionType.RANDOM)
-        assertTrue(ZConditionEditor.describe(c).none { it.label == "最多重试" })
+        val rows = ZConditionEditor.describe(c)
+        val times = rows.firstOrNull { it.label == "识别次数" }
+        assertNotNull("识别次数应该一直可见", times)
+        assertEquals("—", times!!.value)
+        // 但这几个字段能改，不因为开关关着就变成只读
+        assertEquals(ZActionDescriber.Kind.NUMBER, times.kind)
     }
 
     @Test

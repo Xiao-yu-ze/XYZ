@@ -280,16 +280,18 @@ object ZConditionEditor {
             "不成立时反复检查", if (c.repeatWhenFalse) "是" else "否",
             Kind.SWITCH, field = "repeatWhenFalse"
         )
-        if (c.repeatWhenFalse) {
-            rows += Row(
-                "最多重试", c.repeatWhenFalseLimitTimes?.toString().orEmpty(),
-                Kind.NUMBER, field = "repeatWhenFalseLimitTimes"
-            )
-            rows += Row(
-                "重试间隔(ms)", c.repeatWhenFalseRepeatDelay?.toString().orEmpty(),
-                Kind.NUMBER, field = "repeatWhenFalseRepeatDelay"
-            )
-        }
+        // 「识别次数」和「识别间隔」始终显示。
+        //
+        // 以前只在开启"反复检查"后才出现，用户第一眼看不到，就会以为
+        // 自动精灵有的字段我们没做。默认关着但看得见，比藏起来好。
+        rows += Row(
+            "识别次数", if (c.repeatWhenFalse) (c.repeatWhenFalseLimitTimes ?: 0).toString() else "—",
+            Kind.NUMBER, field = "repeatWhenFalseLimitTimes"
+        )
+        rows += Row(
+            "识别间隔(ms)", if (c.repeatWhenFalse) (c.repeatWhenFalseRepeatDelay ?: 1000).toString() else "—",
+            Kind.NUMBER, field = "repeatWhenFalseRepeatDelay"
+        )
         rows += Row(
             "先等待再检查", if (c.checkBeforeDelay) "是" else "否",
             Kind.SWITCH, field = "checkBeforeDelay"

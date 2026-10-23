@@ -312,6 +312,19 @@ object ZActionDescriber {
      * `x`/`y` 用 [Kind.COORD]，编辑时能挂取点按钮；
      * `limitArea` 用 [Kind.AREA]，能挂框选按钮。
      */
+    /** 从 posData.extra 里读一个布尔（协议里是可选字段，缺省按 false）。 */
+    private fun extraBool(pos: Z.PosData, key: String): Boolean =
+        when (val v = pos.extra[key]) {
+            is Boolean -> v
+            is String -> v == "true" || v == "是"
+            null -> false
+            else -> false
+        }
+
+    /** 从 posData.extra 里读一个字符串。 */
+    private fun extraStr(pos: Z.PosData, key: String): String? =
+        pos.extra[key]?.toString()?.takeIf { it.isNotBlank() }
+
     private fun posRows(prefix: String, pos: Z.PosData, showPrefix: Boolean = true): List<Row> {
         // 小节已经说明了这是"位置"，每行再带「位置」两个字既重复又占宽度
         val p = if (showPrefix) "$prefix " else ""
@@ -356,6 +369,31 @@ object ZActionDescriber {
                     pos.minSimilarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
                     Kind.PERCENT, field = "$prefix.minSimilarPercent"
                 )
+                // FIELDS.md 3.2 里这三个字段以前既没显示也没解释。
+                // 快速搜图是「降精度换速度」，搜索模式决定用哪种匹配算法 ——
+                // 调不动它们，用户就只能靠改相似度盲试。
+                rows += Row(
+                    "${p}快速搜图",
+                    if (extraBool(pos, "quickSearch")) "是" else "否",
+                    Kind.SWITCH, field = "$prefix.quickSearch"
+                )
+                rows += Row(
+                    "${p}搜索模式",
+                    extraStr(pos, "searchMode") ?: "color_2.21",
+                    Kind.ENUM,
+                    listOf("color_2.21", "outline_2.21", "COLOR", "HOG"),
+                    field = "$prefix.searchMode"
+                )
+                rows += Row(
+                    "${p}缩放方式",
+                    extraStr(pos, "imageScaleType") ?: "dpi",
+                    Kind.ENUM,
+                    listOf(
+                        "dpi", "baseScreenWidth", "baseScreenHeight",
+                        "baseScreenWidthAndHeight", "tryAll", "none"
+                    ),
+                    field = "$prefix.imageScaleType"
+                )
             }
 
             Z.PosType.TEXT -> {
@@ -365,6 +403,13 @@ object ZActionDescriber {
                     pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
                     Kind.PERCENT, field = "$prefix.similarPercent"
                 )
+                // FIELDS.md 3.3：本地识别 / 云识别
+                rows += Row(
+                    "${p}OCR 模式",
+                    extraStr(pos, "ocrMode") ?: "local_v2",
+                    Kind.ENUM, listOf("local_v2", "local", "online"),
+                    field = "$prefix.ocrMode"
+                )
             }
 
             Z.PosType.COLOR -> {
@@ -373,6 +418,15 @@ object ZActionDescriber {
                     "${p}相似度",
                     pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
                     Kind.PERCENT, field = "$prefix.similarPercent"
+                )
+                // FIELDS.md 3.4：填了「指定位置」就只看那一个点，忽略范围
+                rows += Row(
+                    "${p}指定位置 X", extraStr(pos, "limitPosX").orEmpty(),
+                    Kind.COORD, field = "$prefix.limitPosX"
+                )
+                rows += Row(
+                    "${p}指定位置 Y", extraStr(pos, "limitPosY").orEmpty(),
+                    Kind.COORD, field = "$prefix.limitPosY"
                 )
             }
 

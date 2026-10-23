@@ -145,6 +145,22 @@ object ZFieldEditor {
         } else {
             parsePercent(value)?.let { pos.copy(similarPercent = it) }
         }
+        // 下面这些在协议里是可选的识别字段，模型没单独建属性，统一放 extra。
+        // 好处是：**不认识/不常用字段不会因为编辑一次就被丢掉**。
+        "quickSearch" -> pos.copy(
+            extra = pos.extra.toMutableMap().apply {
+                val on = value == "是" || value.equals("true", ignoreCase = true)
+                if (on) put("quickSearch", true) else remove("quickSearch")
+            }
+        )
+        // searchMode / imageScaleType / ocrMode：枚举字符串
+        // limitPosX / limitPosY：协议里是 Value（% / dp / px），原样存
+        "searchMode", "imageScaleType", "ocrMode", "limitPosX", "limitPosY" ->
+            pos.copy(
+                extra = pos.extra.toMutableMap().apply {
+                    if (value.isBlank()) remove(name) else put(name, value)
+                }
+            )
         else -> null
     }
 

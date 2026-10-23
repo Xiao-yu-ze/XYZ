@@ -165,6 +165,18 @@ class LibraryPage(
                 if (isRunning) {
                     AutomationService.zjsStop(host)
                 } else {
+                    // 虚拟屏没跑就地拦下并说清楚。
+                    //
+                    // 不拦的话：脚本会"跑完"，但每一下手势都被注入层丢掉，
+                    // 界面上什么都不变 —— 表现就是「点运行没反应」。
+                    val vd = com.pvz2.auto.service.VirtualDisplaySession.sharedState.value
+                    if (!vd.running || vd.displayId <= 0) {
+                        android.widget.Toast.makeText(
+                            host, "虚拟屏没在运行：先回第 1 页点「在虚拟屏启动游戏」",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        return@setOnClickListener
+                    }
                     // 运行前先保存内存里的编辑：用户可能刚在第 3 页改过
                     // 但没点保存，直接跑会是旧版本 —— 那种"我明明改了"最难查。
                     flushEditorIfSame(item.name)
