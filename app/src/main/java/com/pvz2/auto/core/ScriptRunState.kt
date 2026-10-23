@@ -54,7 +54,17 @@ object ScriptRunState {
         /** 这个动作预计要花多久（毫秒）。0 = 估计不出来（例如候选等待）。 */
         val expectedMs: Int = 0,
         /** 每个动作已经执行过几次。key = 动作下标。 */
-        val counts: Map<Int, Long> = emptyMap()
+        val counts: Map<Int, Long> = emptyMap(),
+        /**
+         * 当前动作的识别重试次数。
+         *
+         * Maa 的 timeout + rate_limit 意味着一条识别可能要跑几百次
+         * （实测「仿原葵1」重试了 392 次）。这个数字必须能在界面上看到 ——
+         * 否则用户只看到"卡住"，分不清是没在跑还是在拼命识别。
+         */
+        val retryCount: Int = 0,
+        /** 最近一次重试失败的具体原因（实测到的色值/文字）。 */
+        val retryReason: String = ""
     ) {
         /**
          * 当前动作的完成度 0~1，界面拿它画进度条。
@@ -90,9 +100,16 @@ object ScriptRunState {
                 currentLabel = label,
                 actionStartedAt = android.os.SystemClock.uptimeMillis(),
                 expectedMs = expectedMs,
+                retryCount = 0,
+                retryReason = "",
                 message = label
             )
         }
+    }
+
+    /** 记录一次识别重试。界面据此显示"识别了多少次、为什么没中"。 */
+    fun retry(count: Int, reason: String) {
+        update { it.copy(retryCount = count, retryReason = reason) }
     }
 
     /** 第 [index] 个动作执行完一次（跳转、跳过、成功都算）。 */

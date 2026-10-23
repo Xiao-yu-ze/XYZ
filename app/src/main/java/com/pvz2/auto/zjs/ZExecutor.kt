@@ -782,9 +782,12 @@ class ZExecutor(
              *   这里把"在等什么、为什么没等到"同时推给日志和运行状态，
              *   第 2 页的状态行、第 3 页的节点进度都能看见。
              */
+            // 每次都推给界面（重试频率只有几十 Hz，开销可忽略）：
+            // 用户需要看到"它在拼命识别"而不是"它卡住了"。
+            val why = matcher.lastReason() ?: "条件不成立"
+            com.pvz2.auto.core.ScriptRunState.retry(retries, why)
             if (retries % 5 == 0) {
                 val secs = (System.currentTimeMillis() - startedAt) / 1000
-                val why = matcher.lastReason() ?: "条件不成立"
                 log("[条件] 第 $retries 次仍不成立（已 ${secs}s）：$why")
                 com.pvz2.auto.core.ScriptRunState.update {
                     it.copy(message = "正在等条件：第 $retries 次（已 ${secs}s）· $why")

@@ -1355,8 +1355,19 @@ class ZjsEditorPage(
                         pbAction.isIndeterminate = false
                         pbAction.progress = (p * pbAction.max).toInt()
                     }
-                    tvRunCount.text =
-                        if (done > 0) "×${done + 1} · ${elapsed}s" else "${elapsed}s"
+                    /*
+                     * 把"识别了几次"直接摆在节点上。
+                     *
+                     * 一条识别等上 392 次、27 秒是常态（Maa 的 timeout + rate_limit），
+                     * 界面上如果只有"1.4s"在跳，用户分不清它是在拼命识别还是卡死。
+                     */
+                    tvRunCount.text = when {
+                        runState.retryCount > 0 -> "识别 ${runState.retryCount} 次 · ${elapsed}s"
+                        done > 0 -> "×${done + 1} · ${elapsed}s"
+                        else -> "${elapsed}s"
+                    }
+                    // 原因太长，塞进这一行会把进度条挤没；它在第 2 页状态行和日志里都有。
+
                 } else if (llProgress.visibility == View.VISIBLE) {
                     pbAction.isIndeterminate = false
                     pbAction.progress = pbAction.max
