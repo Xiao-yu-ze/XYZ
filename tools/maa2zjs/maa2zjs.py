@@ -63,18 +63,38 @@ SRC_H = 1080
 OCR_FIXED_CLICK = True
 
 
-def pct_x(v):
-    return round(float(v) / SRC_W * 100.0, 2)
+# 目标虚拟屏分辨率。源脚本是 1920x1080 逻辑空间，虚拟屏是 1280x720。
+TARGET_W = 1280
+TARGET_H = 720
+
+# 输出整像素而不是百分比 —— **默认开启**。
+#
+# 为什么：百分比是"1920 → 两位小数百分比 → 1280 像素"，两次取整。
+# 刷金币里卡槽颜色判定框只有 8 像素宽（缩放后 5.3 像素），
+# 偏 1 个像素就量到边框而不是填充，颜色判定直接失效：
+# 实测第 8 条「仿原葵1」量到 #153463，而目标是亮蓝 #318EFA。
+#
+# 按目标分辨率直接算整像素，误差归零。
+# 想回到百分比可传 --percent。
+USE_PX = True
 
 
-def pct_y(v):
-    return round(float(v) / SRC_H * 100.0, 2)
+def c_x(v):
+    if USE_PX:
+        return str(int(round(float(v) * TARGET_W / SRC_W)))
+    return f"{round(float(v) / SRC_W * 100.0, 2)}%"
+
+
+def c_y(v):
+    if USE_PX:
+        return str(int(round(float(v) * TARGET_H / SRC_H)))
+    return f"{round(float(v) / SRC_H * 100.0, 2)}%"
 
 
 def area_str(roi):
-    """Maa 的 roi（x,y,w,h）→ 我们的 limitArea（左 上 右 下，百分比）。"""
+    """Maa 的 roi（x,y,w,h）→ 我们的 limitArea（左 上 右 下）。"""
     x, y, w, h = roi[0], roi[1], roi[2], roi[3]
-    return f"{pct_x(x)}% {pct_y(y)}% {pct_x(x + w)}% {pct_y(y + h)}%"
+    return f"{c_x(x)} {c_y(y)} {c_x(x + w)} {c_y(y + h)}"
 
 
 def strip_regex(text):
@@ -389,7 +409,7 @@ class Converter:
             "delay": str(delay_ms),
             "delayUnit": 0,
             "repeatCount": 1,
-            "posData": {"type": "location", "x": f"{pct_x(cx)}%", "y": f"{pct_y(cy)}%"},
+            "posData": {"type": "location", "x": c_x(cx), "y": c_y(cy)},
             **({"condition": cond} if cond else {}),
         }
 
@@ -432,8 +452,8 @@ class Converter:
         if atype == "滑动":
             sx, sy = self.point(node["begin"])
             ex, ey = self.point(node["end"])
-            a["startPos"] = {"type": "location", "x": f"{pct_x(sx)}%", "y": f"{pct_y(sy)}%"}
-            a["endPos"] = {"type": "location", "x": f"{pct_x(ex)}%", "y": f"{pct_y(ey)}%"}
+            a["startPos"] = {"type": "location", "x": c_x(sx), "y": c_y(sy)}
+            a["endPos"] = {"type": "location", "x": c_x(ex), "y": c_y(ey)}
             # ★ 滑动上的识别不能丢。
             #
             #   刷金币这个脚本里 17 个颜色识别全挂在滑动上（"这个格子有颜色
@@ -453,7 +473,7 @@ class Converter:
                 cy = target[1] + target[3] / 2.0
             else:
                 cx, cy = target[0], target[1]
-            a["posData"] = {"type": "location", "x": f"{pct_x(cx)}%", "y": f"{pct_y(cy)}%"}
+            a["posData"] = {"type": "location", "x": c_x(cx), "y": c_y(cy)}
             # 有 target 时识别只当门闸，写成条件
             cond = self.condition(node)
             if cond:
@@ -659,7 +679,11 @@ def main():
         print(__doc__)
         sys.exit(1)
 
-    global OCR_FIXED_CLICK
+    global OCR_FIXED_CLICK, USE_PX
+    if "--percent" in sys.argv:
+        USE_PX = False
+        sys.argv = [a for a in sys.argv if a != "--percent"]
+
     if "--ocr-fixed-click" in sys.argv:
         OCR_FIXED_CLICK = True
         sys.argv = [a for a in sys.argv if a != "--ocr-fixed-click"]
