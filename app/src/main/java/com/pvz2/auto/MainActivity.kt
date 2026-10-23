@@ -326,14 +326,15 @@ class MainActivity : AppCompatActivity() {
         pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
                 renderDots(position)
-                // 离开编辑页就停掉预览匹配。
+                // ★ 这里**不能**停预览。
                 //
-                // 不停的话 PreviewResults.active 永远为 true，预览区底部那条
-                // 深色结果条就长期压在画面上（178px，占预览区 17%），
-                // 看起来像界面本身被挡了一块 —— 实际是上一次预览没结束。
-                if (position != PAGE_ZJS) {
-                    com.pvz2.auto.core.PreviewResults.stop()
-                }
+                //   预览本来就要把画面摆到用户眼前，而画面在第 1 页 ——
+                //   previewFor 自己会 gotoPage(0)。在这里加"不在编辑页就停"，
+                //   等于预览刚 start 就被自己那次切页杀掉：结果条一闪即灭、
+                //   画面上什么都不出现，看起来就是"点预览没反应"。
+                //   （这条错误规则曾经真实存在过，并导致了这个现象。）
+                //
+                //   停止预览只有两个入口：结果条上的「取消」，以及 Activity 不可见时。
             }
         })
         renderDots(0)
@@ -1150,6 +1151,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        // 预览匹配是挂在 Activity 作用域上的循环，不主动停会一直读帧。
+        // 放在这里而不是 onPageSelected：翻页不是"不看了"，退出才是。
+        com.pvz2.auto.core.PreviewResults.stop()
         ShizukuBridge.removePermissionResultListener(shizukuPermissionListener)
         ShizukuBridge.removeBinderReceivedListener(binderReceivedListener)
         super.onDestroy()

@@ -234,19 +234,57 @@ class Converter:
 
         return None
 
+    @staticmethod
+    def _timeout_ms(node):
+        """
+        Maa 的 timeout → 毫秒，**三态**。
+
+            timeout > 0   → 那个毫秒数
+            timeout == -1 → -1（一直等，只有停止能结束）
+            timeout 缺失  → 20000（Maa 的默认值）
+
+        ★ 这三个必须分开。之前把 -1 也写成 0，而执行器把 0 当"只试一次"，
+          于是「死等结算画面」的节点变成「一帧没命中就跳过」；
+          缺失的又写成 0，于是本该 20 秒放弃的变成无限等。方向正好相反的两种错。
+        """
+        t = node.get("timeout")
+        if t is None:
+            return 20000
+        try:
+            t = int(t)
+        except (TypeError, ValueError):
+            return 20000
+        return -1 if t == -1 else max(0, t)
+
     def condition(self, node):
-        """节点的识别 → 我们的 condition。DirectHit 返回 None。"""
+        """
+        节点的识别 → 我们的 condition。DirectHit 返回 None。
+
+        同时挂上重试字段（识别次数/间隔）：Maa 的语义是"等这个画面出现，
+        最多 timeout 那么久，每 rate_limit 毫秒看一次"。降级成条件之后，
+        这个等待只能由 condition 的重试来表达 —— 不写的话就变成"只判一次"，
+        画面还没渲染好就走错分支。
+        """
         pd = self.pos_data(node)
         if pd is None:
             return None
         t = pd["type"]
         if t == "image":
-            return {"type": "image", "image": pd}
-        if t == "text":
-            return {"type": "textFount", "text": pd}
-        if t == "color":
-            return {"type": "colorFound", "colorData": pd}
-        return None
+            cond = {"type": "image", "image": pd}
+        elif t == "text":
+            cond = {"type": "textFount", "text": pd}
+        elif t == "color":
+            cond = {"type": "colorFound", "colorData": pd}
+        else:
+            return None
+
+        step = int(node.get("rate_limit") or 500)
+        tmo = self._timeout_ms(node)
+        cond["repeatWhenFalse"] = True
+        # 0 = 无限（对应 timeout:-1）；否则换算成"额外检查次数"
+        cond["repeatWhenFalseLimitTimes"] = 0 if tmo < 0 else max(1, tmo // max(step, 1))
+        cond["repeatWhenFalseRepeatDelay"] = step
+        return cond
 
     # ---------------------------------------------------------------- 动作
 
@@ -454,7 +492,7 @@ class Converter:
             "delay": str(delay_ms),
             "delayUnit": 0,
             "repeatCount": 1,
-            "waitTimeoutMs": tmo,
+            "waitTimeoutMs": self._timeout_ms(node),
             "waitIntervalMs": int(node.get("rate_limit") or 200),
             "candidates": cands,
         }
@@ -499,16 +537,11 @@ class Converter:
             # 而 -1 就是永不放弃）。没有这个字段，我们的脚本会一路冲过去，
             # 不等画面出现 —— 那正是和 Maa 差的那一块。
             has_rec = self._rec_type(node) in ("TemplateMatch", "OCR", "ColorMatch")
-            timeout = node.get("timeout")
             if has_rec:
-                if isinstance(timeout, int) and timeout > 0:
-                    act["waitTimeoutMs"] = timeout
-                elif timeout == -1:
-                    act["waitTimeoutMs"] = 0          # Maa: -1 = 永不放弃
-                else:
-                    # 没写 timeout 的节点，Maa 用的是**默认 20 秒**。
-                    # 这里不能也当成无限等 —— 那会让"识别不到"变成永久卡死。
-                    act["waitTimeoutMs"] = 20000
+                # 三态统一由 _timeout_ms 表达：正数 / -1（一直等）/ 缺省 20000。
+                # 之前把 -1 写成 0，而执行器把 0 读成"只试一次"——
+                # "死等结算画面"就变成了"一帧没命中立刻跳过"，方向完全反了。
+                act["waitTimeoutMs"] = self._timeout_ms(node)
             if node.get("rate_limit"):
                 act["waitIntervalMs"] = int(node["rate_limit"])
 

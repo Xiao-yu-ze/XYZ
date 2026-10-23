@@ -45,6 +45,34 @@ class ZRealMatcher(
     var lastUnsupported: String? = null
         private set
 
+    /**
+     * 上一帧还没回收的 Mat。
+     *
+     * ## 为什么要有这个
+     *
+     * [frame] 每次返回**新分配**的 720p Mat（3.7MB，native 内存），
+     * 而 findXxx 里的早退路径很多，逐一记得 release 很容易漏。
+     * 漏一块就是 3.7MB，而等待候选/识别重试是 200ms 一次的循环 ——
+     * 那就是 37MB/s 的持续泄漏，几分钟后进程被系统杀掉。
+     *
+     * 这里用"取下一帧时回收上一帧"，把无界泄漏压成**常量级（最多 1 块）**。
+     * 彻底的修法是每次调用都 try/finally release（已在待办里）。
+     */
+    private var pendingFrame: org.opencv.core.Mat? = null
+
+    private fun nextFrame(): org.opencv.core.Mat? {
+        pendingFrame?.release()
+        val m = frame()
+        pendingFrame = m
+        return m
+    }
+
+    /** 用完记得调，否则最后一块要等 finalizer 兜底。 */
+    fun close() {
+        pendingFrame?.release()
+        pendingFrame = null
+    }
+
     /** 执行器问"为什么没命中"时走这里。 */
     override fun lastReason(): String? = lastUnsupported
 
@@ -74,9 +102,36 @@ class ZRealMatcher(
              *
              * 这里直接解码 + matchTemplate，模板来自脚本，不依赖任何预加载。
              */
-            val tmpl = decodeTemplate(img.data) ?: run {
+            val tmpl0 = decodeTemplate(img.data) ?: run {
                 lastUnsupported = "模板解码失败（base64 或 PNG 损坏）"
                 return emptyList()
+            }
+
+            /*
+             * ★ 模板必须按"截图时的屏幕宽度"缩放到当前帧宽度。
+             *
+             *   模板是在作者设备上截的（这批 Maa 脚本来自 1920×1080 逻辑空间），
+             *   虚拟屏固定 1280×720。同一张图在两种分辨率下**像素尺寸不同**，
+             *   直接拿原尺寸 matchTemplate，等于拿 301×88 的图去找 200×59 的目标 ——
+             *   相关性永远上不去，而且**不报错**，只表现为"没找到"。
+             *   用户会以为脚本写错了，其实是尺度没对齐。
+             *
+             *   基准取 imageData.screenWidth（截图时屏宽）；没有该字段
+             *   （手写的老脚本）就按当前帧处理。
+             */
+            val shotW = img.screenWidth ?: 0
+            val frameW = m.width()
+            val tmpl = if (shotW > 0 && frameW > 0 && kotlin.math.abs(shotW - frameW) > 2) {
+                val k = frameW.toDouble() / shotW
+                val dst = org.opencv.core.Mat()
+                org.opencv.imgproc.Imgproc.resize(
+                    tmpl0, dst, org.opencv.core.Size(), k, k,
+                    org.opencv.imgproc.Imgproc.INTER_AREA
+                )
+                tmpl0.release()
+                dst
+            } else {
+                tmpl0
             }
 
             // 帧是 RGBA，模板可能是 RGB/RGBA/灰度，统一成 BGR 才能比
@@ -203,6 +258,16 @@ class ZRealMatcher(
             if (rejected > 0) {
                 Log.i(TAG, "匹配：${hits.size} 处通过，$rejected 处被逐像素复核剔除")
             }
+            /*
+             * ★ 命中结果按"从上到下、从左到右"排序，不是按相关度。
+             *
+             *   协议（FIELDS.md:156）规定排序是 boundTop 升序、同高再 boundLeft 升序，
+             *   因为 indexNum 选的是"第几个"—— 用户看着画面数是"第 2 个图标"，
+             *   是按位置数的。按相关度排的话，indexNum="2" 点的是分数第 2 高的，
+             *   在多目标场景下会**静默点错**，而且看起来像随机。
+             *   相关度只用于阈值过滤和日志。
+             */
+            hits.sortWith(compareBy({ it.y }, { it.x }))
             hits
         } catch (t: Throwable) {
             Log.e(TAG, "图片匹配失败", t)
@@ -268,7 +333,7 @@ class ZRealMatcher(
             lastUnsupported = "文字识别缺少 Context（内部错误）"
             return emptyList()
         }
-        val m = frame() ?: run {
+        val m = nextFrame() ?: run {
             lastUnsupported = "拿不到当前帧"
             return emptyList()
         }
@@ -358,7 +423,7 @@ class ZRealMatcher(
         val g = rgb[1]
         val b = rgb[2]
 
-        val m = frame() ?: run {
+        val m = nextFrame() ?: run {
             lastUnsupported = "拿不到当前帧"
             return emptyList()
         }

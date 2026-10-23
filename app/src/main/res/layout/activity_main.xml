@@ -85,6 +85,7 @@
                 android:textColor="@color/ink_faint" />
         </com.pvz2.auto.ui.AspectFrameLayout>
             <!-- 预览查找结果的工具条：说明 + 取消。 -->
+    </FrameLayout>
             <LinearLayout
                 android:id="@+id/llResultsBar"
                 android:layout_width="match_parent"
@@ -163,7 +164,6 @@
                 android:textColor="@color/ink"
                 android:visibility="gone" />
 
-    </FrameLayout>
 
     <!-- 预览下面一行：左边状态，右边帧率。 -->
     <LinearLayout

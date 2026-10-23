@@ -87,6 +87,15 @@ class ZExecutor(
     }
 
     /** 运行状态，外部可以中断。 */
+    /**
+     * 停止标志。
+     *
+     * ★ 必须 @Volatile：写入方是主线程（AutomationService 的 onStartCommand），
+     *   读取方是 Dispatchers.IO 上的脚本线程。没有 volatile 的话 JMM 不保证
+     *   可见性，JIT 甚至可以把 `while (!stopped)` 的读提到循环外 ——
+     *   表现就是"点了停止没反应，只能杀进程"。
+     */
+    @Volatile
     private var stopped = false
 
     fun stop() {
@@ -103,7 +112,9 @@ class ZExecutor(
         val actions = script.actions
         if (actions.isEmpty()) return Result(0, emptyList(), "脚本里没有动作")
 
-        stopped = false
+        // ★ 不要在这里重置 stopped。
+        //   stop() 可能比 run() 更早到达（RUN 后立刻 STOP），
+        //   重置等于把那次停止吞掉。每个 run 用新的执行器实例，默认就是 false。
         val skipped = ArrayList<Result.Skip>()
         var executed = 0
         var steps = 0
@@ -113,6 +124,8 @@ class ZExecutor(
         actions.forEachIndexed { i, a ->
             a.common.jumpId?.takeIf { it.isNotBlank() }?.let { jumpTable[it] = i }
         }
+        // resolveJump 要用这张表（同一个对象，后面不会再被替换）
+        jumpTableOf = jumpTable
 
         val scriptRepeat = script.baseInfo.repeatCount ?: 1
         var loop = 0
@@ -174,14 +187,23 @@ class ZExecutor(
                 val outcome = executeWithRepeat(action, pc, label, skipped)
                 com.pvz2.auto.core.ScriptRunState.finishAction(pc)
                 if (outcome.jumpTo != null) {
-                    // 跳转：跳到目标；找不到就当脚本结束
-                    val target = jumpTable[outcome.jumpTo]
-                    if (target == null) {
-                        skipped.add(Result.Skip(pc, label, "跳转目标「${outcome.jumpTo}」不存在"))
-                        pc = actions.size
-                    } else {
-                        pc = target
+                    val resolved = resolveJump(outcome.jumpTo!!, pc, actions.size)
+                    if (resolved == null) {
+                        /*
+                         * ★ 找不到目标时**停在原地**，不要把 pc 推到末尾。
+                         *
+                         *   推到末尾 = 整条脚本静默结束，界面上只有一条跳过原因 ——
+                         *   用户看到的是"脚本跑完了但什么都没做"，最难查。
+                         *   停在原地至少让"停止"和"往下看"都还可控，
+                         *   而且这条 skip 会留在结果里。
+                         */
+                        skipped.add(
+                            Result.Skip(pc, label, "跳转目标「${outcome.jumpTo}」不存在")
+                        )
+                        log("[跳转] 目标「${outcome.jumpTo}」不存在，停在这一条")
+                        return Result(executed, skipped, "跳转目标「${outcome.jumpTo}」不存在")
                     }
+                    pc = resolved
                     continue
                 }
                 if (outcome.stop) {
@@ -476,9 +498,20 @@ class ZExecutor(
         val rect = ZPosResolver.searchRect(pos, screen)
         var hits = searchPos(pos, rect)
 
-        // 找不到就按间隔重试，直到超时（Maa 的 timeout）
-        if (hits.isEmpty() && timeoutMs > 0 && !stopped) {
-            val deadline = System.currentTimeMillis() + timeoutMs
+        // 找不到就按间隔重试，直到超时（Maa 的 timeout）。
+        //
+        // ★ 三态语义，必须分清：
+        //      timeoutMs > 0  → 等到这个时长为止
+        //      timeoutMs < 0  → **一直等**（Maa 的 timeout:-1），只有「停止」能结束
+        //      timeoutMs = 0  → 只试一次
+        //
+        //   之前只处理了 >0，于是 timeout:-1 被转成 0 之后变成"只试一次"，
+        //   而"永不放弃"的节点（识别开始战斗/识别结算/boss 识别）就全都
+        //   一帧没命中立刻跳过 —— 打完一关进不了继续挑战分支，就是这个。
+        if (hits.isEmpty() && timeoutMs != 0 && !stopped) {
+            val forever = timeoutMs < 0
+            val deadline = if (forever) Long.MAX_VALUE
+            else System.currentTimeMillis() + timeoutMs
             val step = intervalMs.coerceIn(20, 2000)
             var round = 0
             while (hits.isEmpty() && !stopped && System.currentTimeMillis() < deadline) {
@@ -489,6 +522,14 @@ class ZExecutor(
                 }
                 round++
                 hits = searchPos(pos, rect)
+                // 一直等的时候也要让人看得见在等什么、等了多久
+                if (forever && round % 10 == 0) {
+                    val secs = round * step / 1000
+                    log("[动作 $index] $label 还在等（第 $round 轮，已 ${secs}s，不设上限）")
+                    com.pvz2.auto.core.ScriptRunState.update {
+                        it.copy(message = "正在等「$label」第 $round 轮（已 ${secs}s）")
+                    }
+                }
             }
             if (hits.isNotEmpty()) log("[动作 $index] $label — 等了 $round 轮后找到")
         }
@@ -520,6 +561,46 @@ class ZExecutor(
      * 宁可估粗也不要估 0：估 0 的话进度条永远是满的或不动，
      * 用户看不出"这一条正在跑"还是"卡住了"。
      */
+    /**
+     * 解析 `jumpToPosition` 的写法，返回目标下标；解析不出来返回 null。
+     *
+     * ## 为什么要支持这么多种
+     *
+     * 协议（SPEC.md:447-460）里跳转有四种写法，而真实脚本**最常用的是第一种**：
+     *
+     *      ":A"     → 跳到 jumpId 为 A 的动作（自动精灵原生的无限循环就这么写）
+     *      "2"      → 跳到第 2 条（**1 基**）
+     *      "+2"/"-1" → 相对当前前进/后退
+     *      "&1"     → 子列表，未支持
+     *
+     * 原来只做 jumpTable 精确匹配，于是真实脚本里的 `":a"` 和 `"2"` 全都查不到，
+     * 而查不到又会把 pc 推到末尾 —— 整条脚本跑一条就"完成"了。
+     */
+    private fun resolveJump(raw: String, current: Int, size: Int): Int? {
+        val t = raw.trim()
+        if (t.isEmpty()) return null
+
+        // ":A" —— 按 jumpId 找
+        if (t.startsWith(":")) {
+            return jumpTableOf[t.substring(1)]
+        }
+        // "+2" / "-1" —— 相对当前
+        if (t.length > 1 && (t[0] == '+' || t[0] == '-')) {
+            val delta = t.toIntOrNull() ?: return null
+            val target = current + delta
+            return target.takeIf { it in 0 until size }
+        }
+        // "&1" —— 子列表跳转，协议里有，我们没实现，明确不猜
+        if (t.startsWith("&")) return null
+        // "2" —— 1 基序号
+        val idx = t.toIntOrNull() ?: return jumpTableOf[t]
+        val target = idx - 1
+        return target.takeIf { it in 0 until size } ?: jumpTableOf[t]
+    }
+
+    /** 由 [run] 填好，供 [resolveJump] 用。 */
+    private var jumpTableOf: Map<String, Int> = emptyMap()
+
     private fun estimateMs(a: Z.Action): Int {
         fun num(s: String?): Int =
             s?.substringBefore('-')?.trim()?.toIntOrNull() ?: 0
@@ -582,20 +663,34 @@ class ZExecutor(
         val first = evaluate(cond, index, skipped)
         if (first || !cond.repeatWhenFalse) return first
 
+        /*
+         * ★ limit 是"**额外**重复检查的次数"，不是总次数。
+         *
+         *   协议原实现（自动精灵 m4506.js）：
+         *       const t = LimitTimes || 0; let o = 1;
+         *       for (; (0 == t || o <= t) && (... r = await n(), !r);) o++
+         *   循环体先检查再 o++，o 从 1 走到 t —— 即第 1 次之外**再做 t 次**。
+         *   界面文案也写着"额外重复检查的上限次数，0 代表无限"。
+         *
+         *   原先写成 `attempt >= limit` 直接 break：limit=1 变成"总共只判 1 次"
+         *   = 0 次重试，比协议少一次。而真实脚本普遍写
+         *   `repeatWhenFalseLimitTimes: 1`（首帧没出现就再等 100ms 看一眼），
+         *   少这一次会成片漏动作。
+         */
         val limit = cond.repeatWhenFalseLimitTimes ?: 0
         val gap = (cond.repeatWhenFalseRepeatDelay ?: 1000).coerceIn(20, 60_000)
-        var attempt = 1     // 第一次已经判过了
+        var retries = 0
         while (!stopped) {
-            if (limit > 0 && attempt >= limit) break
+            if (limit > 0 && retries >= limit) break
             var slept = 0
             while (slept < gap && !stopped) {
                 Thread.sleep(20L)
                 slept += 20
             }
             if (stopped) break
-            attempt++
+            retries++
             if (evaluate(cond, index, skipped)) {
-                log("[条件] 第 $attempt 次识别成立")
+                log("[条件] 额外识别第 $retries 次成立")
                 return true
             }
         }

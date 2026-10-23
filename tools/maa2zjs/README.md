@@ -80,3 +80,18 @@ Maa        一棵节点图。每次 tick 从当前节点按 next 顺序逐个试
 - 导入后编辑器摘要里有没有 `⚠` 校验提示
 
 `out/YS_无尽挑战.json`：108 个节点 → 133 条动作，96 个跳转标签、37 条跳转全部有目标。
+
+## 复现命令（两份产物各用不同开关，必须照抄）
+
+```
+# 无尽挑战（不带开关）
+python tools/maa2zjs/maa2zjs.py "...\pipeline\YS\YS.json" "...\Initialization\site.json" "...\image" out/YS_无尽挑战.json
+
+# 刷金币（必须带 --ocr-fixed-click）
+python tools/maa2zjs/maa2zjs.py --ocr-fixed-click "...\pipeline\GetCoin\CollectGoldCoin.json" "...\Initialization\site.json" "...\image" out/刷金币.json
+```
+
+`--ocr-fixed-click` 把「点识别到的文字」转换成「点 ROI 中心的固定坐标 + 文字条件」。
+用于**按钮位置固定**的场景：PP-OCR 读不动游戏里的艺术字（实测把「开始战斗」读成「HN」），
+而按钮不动，所以识别只当闸门、点硬坐标更稳。两份产物的形状不同就是因为这个开关，
+不带它重算刷金币会得到另一份脚本。
