@@ -1469,6 +1469,13 @@ class ZjsEditorPage(
 
     /** 预览命中位置。动作和条件共用 —— 判定必须和解算时完全一致。 */
     private fun previewFor(pos: Z.PosData?) {
+        // 入口就记一行：预览"没反应"时，能立刻分清是没走到这里，
+        // 还是走到了但匹配/绘制出了问题。
+        android.util.Log.i(
+            "ZjsPreview",
+            "previewFor 进入：pos=${pos?.type} 有模板=${pos?.imageData != null} " +
+                "文字=${pos?.text} 颜色=${pos?.color} 范围=${pos?.limitArea}"
+        )
         if (pos == null) {
             android.widget.Toast.makeText(host, "这个位置还没设置", android.widget.Toast.LENGTH_SHORT).show()
             return
