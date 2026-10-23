@@ -194,7 +194,7 @@ class Converter:
 
     def pos_data(self, node):
         """节点的识别 → 我们的位置对象（posData）。DirectHit 返回 None。"""
-        rec = node.get("recognition", "DirectHit")
+        rec = self._rec_type(node)
         roi = node.get("roi")
 
         if rec == "TemplateMatch":
@@ -246,13 +246,37 @@ class Converter:
 
     # ---------------------------------------------------------------- 动作
 
-    def action_type(self, node):
-        act = node.get("action", "DoNothing")
-        rec = node.get("recognition", "DirectHit")
+    @staticmethod
+    def _next_list(node):
+        """
+        next 归一化成列表。
 
-        if act == "Swipe":
+        Maa 里 `"next": "某节点"` 和 `"next": ["某节点"]` 都合法 —— 两种写法
+        在不同作者的脚本里都出现过。直接 `for x in next` 会把字符串按字符拆开，
+        转出来的东西毫无意义且不报错。
+        """
+        nxt = node.get("next")
+        if nxt is None:
+            return []
+        if isinstance(nxt, str):
+            return [nxt] if nxt else []
+        return list(nxt)
+
+    @staticmethod
+    def _rec_type(node):
+        rec = node.get("recognition")
+        if isinstance(rec, dict):
+            return rec.get("type", "DirectHit")
+        return rec or "DirectHit"
+
+    def action_type(self, node):
+        # 动作名大小写都收：同一个项目里 `Click` 和 `click` 混着写
+        act = str(node.get("action", "DoNothing")).lower()
+        rec = self._rec_type(node)
+
+        if act == "swipe":
             return "滑动"
-        if act == "Click":
+        if act == "click":
             if node.get("target"):
                 return "点击"
             if rec == "TemplateMatch":
@@ -287,6 +311,10 @@ class Converter:
 
         if atype == "控制执行":
             a["controlRunType"] = "waitDelay"
+            # DoNothing 节点在 Maa 里也可能带识别：它就是个闸门。
+            cond = self.condition(node)
+            if cond:
+                a["condition"] = cond
             return a
 
         if atype == "滑动":
@@ -294,6 +322,14 @@ class Converter:
             ex, ey = self.point(node["end"])
             a["startPos"] = {"type": "location", "x": f"{pct_x(sx)}%", "y": f"{pct_y(sy)}%"}
             a["endPos"] = {"type": "location", "x": f"{pct_x(ex)}%", "y": f"{pct_y(ey)}%"}
+            # ★ 滑动上的识别不能丢。
+            #
+            #   刷金币这个脚本里 17 个颜色识别全挂在滑动上（"这个格子有颜色
+            #   才往这里种"）。只给点击加条件的话，这些闸门会被静默丢掉，
+            #   脚本就变成无条件乱滑 —— 看着在跑，种的全是错位置。
+            cond = self.condition(node)
+            if cond:
+                a["condition"] = cond
             return a
 
         # 点击系列
@@ -386,7 +422,7 @@ class Converter:
                 continue
             self._emitted.add(name)
             self.order.append(name)
-            nxt = self.nodes[name].get("next") or []
+            nxt = self._next_list(self.nodes[name])
             # 反向压栈，保证按 next 顺序展开
             for child in reversed(nxt):
                 if child not in self._emitted:
@@ -412,7 +448,7 @@ class Converter:
             # timeout == -1 或没写都当作"一直等"（Maa 的 timeout 到点才放弃，
             # 而 -1 就是永不放弃）。没有这个字段，我们的脚本会一路冲过去，
             # 不等画面出现 —— 那正是和 Maa 差的那一块。
-            has_rec = node.get("recognition") in ("TemplateMatch", "OCR", "ColorMatch")
+            has_rec = self._rec_type(node) in ("TemplateMatch", "OCR", "ColorMatch")
             timeout = node.get("timeout")
             if has_rec:
                 if isinstance(timeout, int) and timeout > 0:
@@ -428,7 +464,7 @@ class Converter:
 
             self.actions.append(act)
 
-            nxt = node.get("next") or []
+            nxt = self._next_list(node)
             if not nxt:
                 continue
 
