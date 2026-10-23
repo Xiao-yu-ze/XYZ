@@ -330,7 +330,7 @@ class Converter:
 
     # ---------------------------------------------------------------- 展开
 
-    def wait_action(self, node, nxt):
+    def wait_action(self, node, nxt, delay_ms=0):
         """
         Maa 的 `next` → 我们的「等待候选」。
 
@@ -360,7 +360,12 @@ class Converter:
         return {
             "type": "等待候选",
             "desc": f"{node['name']} 等候选",
-            "delay": "0",
+            # ★ delay 必须是累积的 post_delay，不能写死 0。
+            #
+            #   自环节点（boss 喂豆 → 自己）在 Maa 里靠 post_delay=3000 控制
+            #   每次喂豆的间隔。写死 0 的话这条环会**全速空转**：
+            #   日志刷屏、CPU 打满、每秒往游戏里灌几十次滑动。
+            "delay": str(delay_ms),
             "delayUnit": 0,
             "repeatCount": 1,
             "waitTimeoutMs": tmo,
@@ -435,7 +440,9 @@ class Converter:
                 continue
 
             # 多候选 → 一条「等待候选」。由执行器按顺序轮询，语义和 Maa 一致。
-            self.actions.append(self.wait_action(node, nxt))
+            # 把 post_delay 交给它：候选命中后会立刻跳走，间隔只能挂在这里。
+            self.actions.append(self.wait_action(node, nxt, carried))
+            carried = 0
 
         return self.actions
 

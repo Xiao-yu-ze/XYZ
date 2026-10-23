@@ -201,8 +201,15 @@ class AutomationService : Service() {
                 if (path.isNullOrBlank()) {
                     ScriptRunState.finish("没有指定脚本文件")
                 } else {
-                    // 和上面一样：等旧任务真正结束再起新的，
-                    // 否则两个 job 共用注入器会两边同时点。
+                    // ★ 先让旧执行器停手，再 cancelAndJoin。
+                    //
+                    //   等待循环用的是 Thread.sleep + stopped 标志，**不响应协程取消**。
+                    //   只 cancel 不 stop 的话：job 立刻被标记为已取消、
+                    //   join 马上返回，但旧循环还在后台轮询 ——
+                    //   两个任务同时读帧、同时注入，界面上却只有一个"运行中"。
+                    //   真机上就是这么出现「一个在等过渡、一个在等神器补给」的。
+                    zjsExecutor?.stop()
+                    zjsExecutor = null
                     val previous = scriptJob
                     scriptJob = scope.launch {
                         previous?.cancelAndJoin()
@@ -616,7 +623,15 @@ class AutomationService : Service() {
             log = { Log.i(TAG, "[zjs] $it") }
         )
         zjsExecutor = executor
-        ScriptRunState.begin("zjs", "${script.actions.size} 个动作")
+        // ★ scriptName 必须是**脚本文件名**，不能是字面量 "zjs"。
+        //
+        //   第 2 页判断"这张卡是不是正在跑的那个"就是
+        //   `runState.scriptName == item.name`。写死成 "zjs" 的话永远对不上，
+        //   于是每张卡都显示「运行」—— 脚本在跑，但用户找不到「停止」。
+        ScriptRunState.begin(
+            java.io.File(path).nameWithoutExtension,
+            "${script.actions.size} 个动作"
+        )
 
         val result = withContext(Dispatchers.IO) {
             runCatching { executor.run(script) }

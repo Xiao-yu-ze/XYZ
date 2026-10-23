@@ -54,16 +54,41 @@
 
       所以把执行器正在等什么、等了几轮直接显示出来。
     -->
-    <TextView
-        android:id="@+id/tvRunStatus"
-        style="@style/Text.Hint"
+    <LinearLayout
+        android:id="@+id/llRunStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
-        android:textColor="@color/ink_muted"
-        android:textSize="12sp"
-        android:visibility="gone"
-        tools:text="运行中：正在等「识别开始战斗 / 识别boss关」第 50 轮（已 10s）" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvRunStatus"
+            style="@style/Text.Hint"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="@color/ink_muted"
+            android:textSize="12sp"
+            tools:text="正在等「识别开始战斗 / 识别boss关」第 50 轮（已 10s）" />
+
+        <!--
+          页面级「停止」。
+
+          卡片上的按钮靠"脚本名对得上"来决定显示运行还是停止；
+          万一名字对不上（换过文件名、状态没清），用户就**停不下来** ——
+          真机上刚发生过。这一颗不依赖任何匹配，只要在跑就能点。
+        -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnRunStop"
+            style="@style/AppButton.Primary"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:minWidth="64dp"
+            android:text="@string/library_stop" />
+    </LinearLayout>
 
     <!-- 导入 / 导出。
          导入是为了把别人做的脚本（或电脑上自动精灵导出的）拿进来；

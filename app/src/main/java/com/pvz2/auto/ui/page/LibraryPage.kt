@@ -52,12 +52,20 @@ class LibraryPage(
     private val hint: TextView = root.findViewById(R.id.tvLibraryHint)
     private val count: TextView = root.findViewById(R.id.tvLibraryCount)
     private val runStatus: TextView = root.findViewById(R.id.tvRunStatus)
+    private val runStatusBar: android.view.View = root.findViewById(R.id.llRunStatus)
 
     private val adapter = LibraryAdapter()
 
     fun bind() {
         rv.layoutManager = LinearLayoutManager(host)
         rv.adapter = adapter
+
+        // 页面级「停止」。不依赖卡片上的名字匹配 —— 卡片那颗按钮靠
+        // `runState.scriptName == item.name` 判断，名字对不上就永远显示「运行」，
+        // 用户就停不下来（真机上发生过）。这颗没有前置条件。
+        root.findViewById<MaterialButton>(R.id.btnRunStop).setOnClickListener {
+            AutomationService.zjsStop(host)
+        }
 
         // 导入：交给 Activity 的 SAF 启动器。放这里注册会违反
         // registerForActivityResult 的生命周期约束（可能已经 STARTED）。
@@ -107,13 +115,12 @@ class LibraryPage(
                 launch {
                     ScriptRunState.state.collect { state ->
                         adapter.submit(adapter.items, state)
-                        runStatus.text = state.message
-                        runStatus.visibility = when {
-                            !state.running -> android.view.View.GONE
-                            state.message.isBlank() || state.message == "未运行" ->
-                                android.view.View.GONE
-                            else -> android.view.View.VISIBLE
-                        }
+                        runStatus.text = state.message.ifBlank { "运行中" }
+                        // 只要在跑就把整条状态栏（含停止按钮）显示出来 ——
+                        // 不依赖状态文案是否为空，免得"在跑但看不到停止"。
+                        runStatusBar.visibility =
+                            if (state.running) android.view.View.VISIBLE
+                            else android.view.View.GONE
                     }
                 }
             }
