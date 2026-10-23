@@ -140,8 +140,25 @@ class OcrEngine(private val context: Context) : AutoCloseable {
         val srcW = region.width()
         val srcH = region.height()
 
-        // 长边限制 + 32 对齐，是 PP-OCR 检测模型的标准预处理。
-        val ratio = if (max(srcW, srcH) > DET_LIMIT) DET_LIMIT.toDouble() / max(srcW, srcH) else 1.0
+        /*
+         * 缩放比例。
+         *
+         * 标准 PP-OCR 预处理只会**下采样**（长边限到 960），不会上采样。
+         * 但脚本里的搜索范围经常很小 —— 比如「开始战斗」按钮在我们
+         * 1280×720 的画面上只有 201×59。det 模型拿到这么一小撮像素，
+         * 特征根本不够，表现就是"识别到一行却读成乱码"（实测读成「HN」）。
+         *
+         * 所以小图要放大：长边不足 [DET_MIN_SIDE] 时按比例放大，
+         * 上限 [DET_UPSCALE_MAX] 倍。文本框坐标最后会按同一比例缩回原尺寸，
+         * 见下方 resize(mask → srcW×srcH)，与 ratio 无关。
+         */
+        val maxSide = max(srcW, srcH)
+        val ratio = when {
+            maxSide > DET_LIMIT -> DET_LIMIT.toDouble() / maxSide
+            maxSide in 1 until DET_MIN_SIDE ->
+                kotlin.math.min(DET_UPSCALE_MAX, DET_MIN_SIDE.toDouble() / maxSide)
+            else -> 1.0
+        }
         val dstW = (srcW * ratio).roundToInt().let { alignUp(it, 32) }.coerceAtLeast(32)
         val dstH = (srcH * ratio).roundToInt().let { alignUp(it, 32) }.coerceAtLeast(32)
 
@@ -355,6 +372,12 @@ class OcrEngine(private val context: Context) : AutoCloseable {
 
         /** 检测输入长边上限，PP-OCR 标准值。 */
         const val DET_LIMIT = 960
+
+    /** 长边不足这个值时放大后再检测（PP-OCR 本身只缩不放）。 */
+    const val DET_MIN_SIDE = 480
+
+    /** 放大倍数上限，别把噪声也一起放大。 */
+    const val DET_UPSCALE_MAX = 3.0
         const val DET_MEAN = 0.5f
         const val DET_SCALE = 2.0f
         const val DET_BINARY_THRESHOLD = 0.3f
