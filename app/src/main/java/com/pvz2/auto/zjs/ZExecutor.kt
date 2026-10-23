@@ -182,7 +182,34 @@ class ZExecutor(
                     delayDone = true
                 }
                 if (mustCheck && !evaluateWithRetry(cond!!, pc, skipped)) {
-                    skipped.add(Result.Skip(pc, label, "条件不满足"))
+                    /*
+                     * ★ 条件（本质就是节点的识别）不成立 → 任务结束，不是跳过。
+                     *
+                     *   颜色/图片/文字条件跑完了重试次数还是没出现，说明这个节点
+                     *   进不去。Maa 里这时任务就停在那里，不会"跳过这一条继续下一条"。
+                     *   我们原来是跳过 —— 于是整条链在一瞬间被冲完，
+                     *   界面显示"跑完 N 条"，实际一步没做（实测 3~4 秒）。
+                     *
+                     *   报错要能定位：第几条、找的是什么、为什么没找到。
+                     */
+                    val why = matcher.lastReason() ?: "条件不成立"
+                    val msg = "第 ${pc + 1} 条「$label」条件不满足：$why"
+                    skipped.add(Result.Skip(pc, label, msg))
+                    /*
+                     * 分成两种：
+                     *
+                     *   识别类条件（颜色/图片/文字）不成立 → 这个节点进不去，
+                     *   任务结束。这是 Maa 的行为，也是用户明确要求的。
+                     *
+                     *   我们还没实现的条件类型（jsExpression / conditionSet …）
+                     *   不成立是**我们的能力缺口**，不是脚本的问题 ——
+                     *   那种情况只跳过这一条并明确警告，不该把整个任务杀掉。
+                     */
+                    if (isRecognitionCondition(cond!!)) {
+                        log("[任务结束] $msg")
+                        return Result(executed, skipped, msg)
+                    }
+                    log("[跳过] $msg（这个条件类型还没实现，不据此终止任务）")
                     pc++
                     continue
                 }
@@ -754,6 +781,12 @@ class ZExecutor(
             }
         }
         return false
+    }
+
+    /** 这个条件是不是"看画面"的识别类条件。 */
+    private fun isRecognitionCondition(c: Z.Condition): Boolean = when (c.type) {
+        Z.ConditionType.IMAGE, Z.ConditionType.TEXT, Z.ConditionType.COLOR -> true
+        else -> false
     }
 
     private fun evaluate(
