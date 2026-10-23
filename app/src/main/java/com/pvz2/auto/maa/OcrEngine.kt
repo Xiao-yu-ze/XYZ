@@ -313,7 +313,18 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                 .coerceAtMost(REC_MAX_WIDTH)
             Imgproc.resize(crop, normalized, Size(dstW.toDouble(), REC_HEIGHT.toDouble()), 0.0, 0.0, Imgproc.INTER_LINEAR)
 
-            val code = if (normalized.channels() == 4) Imgproc.COLOR_RGBA2RGB else Imgproc.COLOR_BGR2RGB
+            /*
+             * ★ rec 也要 **BGR**。
+             *
+             * PaddleOCR 的识别管线同样是 cv2.imread（BGR）→ Resize → Normalize，
+             * 中途不转 RGB。虽然它用的是对称的 0.5/0.5 归一化，
+             * 但**模型权重是分通道的**，R/B 互换会稳定掉精度。
+             *
+             * 实测症状：版权行里的 "Electronic" 被读成 "EecroniAsic" ——
+             * 拉丁字母系统性错位，而中文（份有限公司）反而基本正确。
+             */
+            val code = if (normalized.channels() == 4) Imgproc.COLOR_RGBA2BGR else -1
+            if (code >= 0) Imgproc.cvtColor(normalized, rgb, code) else normalized.copyTo(rgb)
             Imgproc.cvtColor(normalized, rgb, code)
 
             val data = MatToTensor.nchw(rgb, mean = REC_MEAN, scale = REC_SCALE)
