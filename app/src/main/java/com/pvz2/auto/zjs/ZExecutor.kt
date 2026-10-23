@@ -164,6 +164,13 @@ class ZExecutor(
                  *   checkBeforeDelay = true  → 先检查，通过后再等 delay
                  *   checkBeforeDelay = false → 先等 delay，再检查
                  */
+                // 先上报"跑到哪一条"，再做条件判断。
+                //
+                // ★ 顺序很重要：条件可能无限重试（等到画面出现），
+                //   如果等条件通过了才上报，那整个等待期间界面是静止的 ——
+                //   用户看到的就是"卡在第一个节点"。
+                com.pvz2.auto.core.ScriptRunState.enterAction(pc, label, estimateMs(action))
+
                 val cond = action.common.condition
                 val mustCheck = cond != null && cond.disabled.not()
                 var delayDone = false
@@ -179,9 +186,6 @@ class ZExecutor(
                 if (!delayDone) {
                     waitDelay(action.common.delay, action.common.delayUnit)
                 }
-
-                // 上报"现在跑到哪一条"，界面据此在这一条上画进度条。
-                com.pvz2.auto.core.ScriptRunState.enterAction(pc, label, estimateMs(action))
 
                 // 执行（含重复）
                 val outcome = executeWithRepeat(action, pc, label, skipped)
@@ -680,6 +684,7 @@ class ZExecutor(
         val limit = cond.repeatWhenFalseLimitTimes ?: 0
         val gap = (cond.repeatWhenFalseRepeatDelay ?: 1000).coerceIn(20, 60_000)
         var retries = 0
+        val startedAt = System.currentTimeMillis()
         while (!stopped) {
             if (limit > 0 && retries >= limit) break
             var slept = 0
@@ -692,6 +697,24 @@ class ZExecutor(
             if (evaluate(cond, index, skipped)) {
                 log("[条件] 额外识别第 $retries 次成立")
                 return true
+            }
+            /*
+             * ★ 每 5 轮上报一次。
+             *
+             *   无限重试（limit = 0）时如果什么都不打，界面上就是**彻底静止**——
+             *   看起来和死循环、卡死一模一样，用户只能强杀进程。
+             *   实测已发生：第 1 个节点"卡住"，其实是在一遍遍 OCR 等画面。
+             *
+             *   这里把"在等什么、为什么没等到"同时推给日志和运行状态，
+             *   第 2 页的状态行、第 3 页的节点进度都能看见。
+             */
+            if (retries % 5 == 0) {
+                val secs = (System.currentTimeMillis() - startedAt) / 1000
+                val why = matcher.lastReason() ?: "条件不成立"
+                log("[条件] 第 $retries 次仍不成立（已 ${secs}s）：$why")
+                com.pvz2.auto.core.ScriptRunState.update {
+                    it.copy(message = "正在等条件：第 $retries 次（已 ${secs}s）· $why")
+                }
             }
         }
         return false
