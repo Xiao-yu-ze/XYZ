@@ -1336,15 +1336,27 @@ class ZjsEditorPage(
                 llProgress.visibility =
                     if (isCurrent || (runState.running && done > 0)) View.VISIBLE else View.GONE
                 if (isCurrent) {
+                    /*
+                     * 显示"这一条已经跑了多久"，不是"第几次"。
+                     *
+                     * 转换出来的脚本绝大多数是单程的（每个动作只执行一次），
+                     * 所以"第 1 次"永远不变 —— 数字是对的，但一点信息都没有。
+                     * 真正有用的是"它在这一条上卡了多久"。
+                     *
+                     * 真重复（跳转回来 / 执行次数 > 1）时才带次数前缀 ×N。
+                     */
+                    val elapsed = runState.actionStartedAt.let { st ->
+                        if (st <= 0L) 0L
+                        else (android.os.SystemClock.uptimeMillis() - st) / 1000
+                    }
                     val p = runState.actionProgress()
-                    if (p < 0f) {
-                        pbAction.isIndeterminate = true
-                        tvRunCount.text = "运行中"
-                    } else {
+                    if (p < 0f) pbAction.isIndeterminate = true
+                    else {
                         pbAction.isIndeterminate = false
                         pbAction.progress = (p * pbAction.max).toInt()
-                        tvRunCount.text = "第 ${done + 1} 次"
                     }
+                    tvRunCount.text =
+                        if (done > 0) "×${done + 1} · ${elapsed}s" else "${elapsed}s"
                 } else if (llProgress.visibility == View.VISIBLE) {
                     pbAction.isIndeterminate = false
                     pbAction.progress = pbAction.max
