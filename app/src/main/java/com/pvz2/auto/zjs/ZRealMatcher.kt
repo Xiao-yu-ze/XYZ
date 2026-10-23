@@ -540,8 +540,30 @@ class ZRealMatcher(
             val a = want.trim().lowercase()
             val b = got.trim().lowercase()
             if (a == b) return 1.0
-            if (b.contains(a) || a.contains(b)) {
-                // 长短差异越大越扣分，避免"1"匹配上"123456"
+
+            /*
+             * ★ 「识别结果里包含要找的文字」= 命中，这是协议语义。
+             *
+             *   「出现文字」这个条件判断的是"这段文字出没出现"，
+             *   不是"识别结果和它一模一样"。所以只要 b 里含 a，就该判成立。
+             *
+             *   原来这里按长短比例扣分：0.7 + 0.3×(短/长)。
+             *   「开始战斗」出现在「开始战斗开始战斗」里（游戏按钮渲染了两遍）
+             *   只有 0.7+0.3×(4/8) = 0.85，**低于默认阈值 0.90** ——
+             *   差 0.05 分，整个脚本卡在第一步，而界面上只说"没匹配到"。
+             *   实测就发生在刷金币的第 2 条。
+             *
+             *   单字仍然保留比例扣分：否则「1」会匹配上「123456」，
+             *   那种误命中比漏命中更难查。
+             */
+            if (b.contains(a)) {
+                if (a.length >= 2) return 0.95
+                val short = minOf(a.length, b.length).toDouble()
+                val long = maxOf(a.length, b.length).toDouble()
+                return 0.7 + 0.3 * (short / long)
+            }
+            // 识别结果只是目标的一段（被遮挡/截断）—— 次一档
+            if (a.contains(b)) {
                 val short = minOf(a.length, b.length).toDouble()
                 val long = maxOf(a.length, b.length).toDouble()
                 return 0.7 + 0.3 * (short / long)

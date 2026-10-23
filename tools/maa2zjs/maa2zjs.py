@@ -217,8 +217,17 @@ class Converter:
             if roi:
                 pd["limitArea"] = area_str(roi)
             thr = node.get("threshold")
-            if thr is not None:
-                pd["similarPercent"] = int(round(float(thr) * 100))
+            # ★ 没写 threshold 时不能留空。
+            #
+            #   Maa 的 OCR threshold 默认 0.7（识别置信度）；我们的 similarPercent
+            #   是**文字相似度**，默认 90%。两者语义不同，留空就等于用 90 去卡，
+            #   比 Maa 严得多 —— 「开始战斗」出现在「开始战斗开始战斗」里
+            #   （游戏按钮渲染了两遍）只有 0.85，直接判不成立。
+            #
+            #   这里落到 80：既比 90 宽松，又能拦住明显不对的文本。
+            pd["similarPercent"] = (
+                int(round(float(thr) * 100)) if thr is not None else 80
+            )
             return pd
 
         if rec == "ColorMatch":
