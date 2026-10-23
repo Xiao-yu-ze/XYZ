@@ -167,15 +167,19 @@ class OcrEngine(private val context: Context) : AutoCloseable {
         try {
             Imgproc.resize(region, resized, Size(dstW.toDouble(), dstH.toDouble()), 0.0, 0.0, Imgproc.INTER_LINEAR)
 
-            // 模型吃 RGB；截图是 BGRA。
-            // ★ 帧是 RGBA（AImageReader / bitmapToMat 都是 R,G,B,A），要得到 RGB 必须用
-            //   `COLOR_RGBA2RGB`（= 丢 alpha、不交换）。
-            //   之前写的 `COLOR_BGRA2RGB` 等价于"交换"，把 RGBA 变成 BGR 交给
-            //   PP-OCR —— 模型收到的是红蓝反转的图，检测框和识别率静默下降。
-            val code = if (resized.channels() == 4) Imgproc.COLOR_RGBA2RGB else Imgproc.COLOR_BGR2RGB
-            Imgproc.cvtColor(resized, rgb, code)
+            /*
+             * ★ det 要 **BGR**，不是 RGB。
+             *
+             * PaddleOCR 的检测管线是 cv2.imread（BGR）→ Resize → Normalize，
+             * 中间**不转 RGB**，所以 ImageNet 的 mean[0]=0.485 是对 B 通道的。
+             * 我们若把 R 当第一通道喂进去，均值和标准差就错位到 B/R 上。
+             *
+             * rec（识别）用的是对称的 0.5/0.5，通道顺序不影响，那边保持 RGB。
+             */
+            val code = if (resized.channels() == 4) Imgproc.COLOR_RGBA2BGR else -1
+            if (code >= 0) Imgproc.cvtColor(resized, rgb, code) else resized.copyTo(rgb)
 
-            val input = MatToTensor.nchw(rgb, mean = DET_MEAN, scale = DET_SCALE)
+            val input = MatToTensor.nchw(rgb, DET_MEAN_RGB, DET_STD_RGB)
             OnnxTensor.createTensor(
                 environment,
                 FloatBuffer.wrap(input),
@@ -378,8 +382,20 @@ class OcrEngine(private val context: Context) : AutoCloseable {
 
     /** 放大倍数上限，别把噪声也一起放大。 */
     const val DET_UPSCALE_MAX = 3.0
-        const val DET_MEAN = 0.5f
-        const val DET_SCALE = 2.0f
+
+        /**
+         * det 的归一化：**ImageNet**，BGR 通道顺序。
+         *
+         * 不是识别模型那套 (x-0.5)/0.5。用错这一处，概率图整体偏移，
+         * 二值化后要么框错位、要么只检出一个大框 —— 表现是"识别到 1 行"，
+         * 且识别结果是乱码（实测把按钮读成「2」「HN」）。
+         *
+         * 依据：MaaFramework 自带的 fastdeploy_ppocr_maa.dll 里，
+         * 0.485/0.456/0.406 与 0.229/0.224/0.225 各以 float32 出现 3 次；
+         * PaddleOCR 的 det 管线也是这一套（rec 才是 0.5/0.5）。
+         */
+        val DET_MEAN_RGB = floatArrayOf(0.485f, 0.456f, 0.406f)
+        val DET_STD_RGB = floatArrayOf(0.229f, 0.224f, 0.225f)
         const val DET_BINARY_THRESHOLD = 0.3f
 
         /** 识别输入高度固定 48，宽度上限 320。 */
@@ -413,7 +429,23 @@ internal object MatToTensor {
      * PP-OCR 的归一化是 `(pixel / 255 - mean) / scale`，
      * 其中 mean=0.5、scale=0.5（等价于 (pixel/255 - 0.5) * 2）。
      */
-    fun nchw(src: Mat, mean: Float, scale: Float): FloatArray {
+    fun nchw(src: Mat, mean: Float, scale: Float): FloatArray =
+        nchw(src, floatArrayOf(mean, mean, mean), floatArrayOf(scale, scale, scale))
+
+    /**
+     * 逐通道归一化 —— det 模型必须用这个。
+     *
+     * PP-OCR 的检测模型用的是 **ImageNet 归一化**：
+     *   mean = [0.485, 0.456, 0.406]（对应 BGR 通道顺序）
+     *   std  = [0.229, 0.224, 0.225]
+     * 而不是识别模型那套 (x-0.5)/0.5。用错这一处，概率图整体偏移，
+     * 二值化后要么框错位、要么只检出一个大框 —— 表现就是"识别到 1 行"，
+     * 而且识别出来的是乱码（实测把按钮读成「2」「HN」）。
+     *
+     * 这条常量是从 MaaFramework 自带的 fastdeploy_ppocr_maa.dll 里核对的：
+     * 0.485/0.456/0.406 与 0.229/0.224/0.225 各自以 float32 出现 3 次。
+     */
+    fun nchw(src: Mat, means: FloatArray, stds: FloatArray): FloatArray {
         val w = src.width()
         val h = src.height()
         val channels = src.channels()
@@ -430,7 +462,7 @@ internal object MatToTensor {
                 val dstIndex = y * w + x
                 for (c in 0 until 3) {
                     val raw = if (c < channels) buffer[srcIndex + c].toInt() and 0xFF else 0
-                    out[c * plane + dstIndex] = (raw / 255.0f - mean) / scale
+                    out[c * plane + dstIndex] = (raw / 255.0f - means[c]) / stds[c]
                 }
             }
         }
