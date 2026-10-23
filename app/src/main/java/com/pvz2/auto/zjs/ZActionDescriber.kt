@@ -209,6 +209,37 @@ object ZActionDescriber {
             finger.endPos?.let { rows += posRows("手指$n 终点", it) }
         }
 
+        // ---- 等待候选（我们自己的节点，等价于 Maa 的 next）
+        //
+        // 候选本身不在这里编辑 —— 它们的条件就是各自的位置对象，
+        // 在动作列表里逐条配更顺手。这里只把「等谁、等多久」摊开，
+        // 让用户一眼看到这条到底在等什么，而不是一个空壳。
+        if (action.type == Z.ActionType.WAIT_CANDIDATES) {
+            rows += Row("候选", "共 ${action.candidates.size} 个，按顺序试", Kind.READONLY)
+            action.candidates.forEachIndexed { i, c ->
+                val what = when (c.condition?.type) {
+                    null -> "无条件（一定命中）"
+                    Z.ConditionType.IMAGE -> "出现图片"
+                    Z.ConditionType.TEXT -> "出现文字"
+                    Z.ConditionType.COLOR -> "出现颜色"
+                    Z.ConditionType.NODE -> "出现节点"
+                    else -> c.condition?.type?.wire ?: "?"
+                }
+                val target = c.jumpTo ?: "（往下走）"
+                rows += Row("候选 ${i + 1}", "$what → $target", Kind.READONLY)
+            }
+            rows += Row(
+                "总超时(ms)",
+                (action.waitTimeoutMs ?: 0).let { if (it <= 0) "一直等" else it.toString() },
+                Kind.NUMBER, field = "waitTimeoutMs"
+            )
+            rows += Row(
+                "轮询间隔(ms)",
+                (action.waitIntervalMs ?: 200).toString(),
+                Kind.NUMBER, field = "waitIntervalMs"
+            )
+        }
+
         // ---- 14 个通用字段，**缺省也显示**
         //
         // ## 顺序照抄自动精灵

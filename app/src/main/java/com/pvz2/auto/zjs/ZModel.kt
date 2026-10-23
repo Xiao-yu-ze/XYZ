@@ -194,7 +194,31 @@ object Z {
         PROMPT("系统提示", executable = true),
         SET_VARS("设置变量"),
         RUN_JS("运行JS代码"),
-        ENCRYPTED("加密动作");
+        ENCRYPTED("加密动作"),
+
+        /**
+         * 等候选出现 —— **我们自己的动作类型，协议里没有**。
+         *
+         * ## 为什么必须是一等公民
+         *
+         * Maa 的 `next` 是一条候选链：每轮从当前节点出发按顺序逐个识别，
+         * 第一个成功的被进入；都不成功就继续等，直到超时。
+         *
+         * 用「条件 + 跳转」拼能凑出近似的分支，但凑不出**等待**：
+         * 条件不满足就跳过，没有任何地方表示"我在这里再等一会儿"。
+         * 从 Maa 转过来的脚本就会一路冲过去，而不是等画面出现 ——
+         * 这正是「Maa 能做到的我们也得能做到」差的那一块。
+         *
+         * 语义：
+         * ```
+         * 循环 {
+         *   按顺序试每个候选：条件成立（或没有条件）→ 跳到它的 jumpTo
+         *   睡 intervalMs
+         * } 直到超过 timeoutMs（0 = 一直等）
+         * 超时仍没命中 → 往下走（等价于 Maa 里 timeout 到点）
+         * ```
+         */
+        WAIT_CANDIDATES("等待候选", executable = true);
 
         companion object {
             /**
@@ -330,6 +354,17 @@ object Z {
          * 自动精灵读到会当成未知字段跳过（不崩），我们自己读得回来。
          */
         val fingers: List<Finger> = emptyList(),
+        /**
+         * 「等待候选」的候选列表（我们自己的节点，见 [ActionType.WAIT_CANDIDATES]）。
+         *
+         * 顺序就是优先级：Maa 的 `next` 是"按顺序试，第一个命中就进"，
+         * 所以这里**不能排序、不能去重**。
+         */
+        val candidates: List<Candidate> = emptyList(),
+        /** 「等待候选」的总超时（毫秒）。0 或缺省 = 一直等。 */
+        val waitTimeoutMs: Int? = null,
+        /** 「等待候选」每轮之间的间隔（毫秒），缺省 200。 */
+        val waitIntervalMs: Int? = null,
         val extra: MutableMap<String, Any?> = LinkedHashMap()
     ) {
         /**
@@ -355,6 +390,30 @@ object Z {
             }
         }
 
+        /**
+         * 「等待候选」里的一个候选。
+         *
+         * `condition == null` 表示无条件 —— Maa 里对应 `DirectHit` 的候选：
+         * 试到它就一定命中，所以它天然适合放到列表末尾当兜底。
+         */
+        data class Candidate(
+            val condition: Condition? = null,
+            /** 条件成立后跳到哪个动作的 jumpId。null = 留在原地往下走。 */
+            val jumpTo: String? = null
+        ) {
+            fun toJson(): JSONObject = JSONObject().apply {
+                condition?.let { put("condition", it.toJson()) }
+                jumpTo?.let { put("jumpTo", it) }
+            }
+
+            companion object {
+                fun parse(o: JSONObject): Candidate = Candidate(
+                    condition = o.optJSONObject("condition")?.let { Condition.parse(it) },
+                    jumpTo = o.optString("jumpTo").takeIf { it.isNotEmpty() }
+                )
+            }
+        }
+
         fun toJson(): JSONObject = JSONObject().apply {
             put("type", type.wire)
             type.controlRunType?.let { put("controlRunType", it) }
@@ -372,6 +431,15 @@ object Z {
             posData?.let { put("posData", it.toJson()) }
             startPos?.let { put("startPos", it.toJson()) }
             endPos?.let { put("endPos", it.toJson()) }
+
+            // 「等待候选」：候选顺序就是优先级，必须原样保留（不排序、不去重）
+            if (candidates.isNotEmpty()) {
+                put("candidates", org.json.JSONArray().apply {
+                    candidates.forEach { put(it.toJson()) }
+                })
+            }
+            waitTimeoutMs?.let { put("waitTimeoutMs", it) }
+            waitIntervalMs?.let { put("waitIntervalMs", it) }
 
             // 多指滑动的手指列表。空列表不写 —— 空数组在协议里没有含义，
             // 而自动精灵读到未知字段会跳过，写一个空数组只会让文件变乱。
@@ -408,6 +476,7 @@ object Z {
                 "type", "controlRunType", "desc", "jumpId", "duration", "delay", "delayUnit",
                 "repeatCount", "repeatDelayValue", "repeatDelayUnit", "fastRepeatMode",
                 "disabled", "condition", "posData", "startPos", "endPos", "__vars", "multiSwipe",
+                "candidates", "waitTimeoutMs", "waitIntervalMs",
                 "scriptCallbacks"
             )
 
@@ -441,9 +510,22 @@ object Z {
                     startPos = o.optJSONObject("startPos")?.let { PosData.parse(it) },
                     endPos = o.optJSONObject("endPos")?.let { PosData.parse(it) },
                     fingers = parseFingers(o.optJSONArray("multiSwipe")),
+                    candidates = parseCandidates(o.optJSONArray("candidates")),
+                    waitTimeoutMs = o.optIntOrNull("waitTimeoutMs"),
+                    waitIntervalMs = o.optIntOrNull("waitIntervalMs"),
                     callbacks = parseCallbacks(o.optJSONObject("scriptCallbacks")),
                     extra = o.collectUnhandled(HANDLED)
                 )
+            }
+
+            /** 解析「等待候选」的候选列表。坏一个只丢一个，不影响整条动作。 */
+            private fun parseCandidates(arr: org.json.JSONArray?): List<Candidate> {
+                if (arr == null) return emptyList()
+                val out = ArrayList<Candidate>(arr.length())
+                for (i in 0 until arr.length()) {
+                    arr.optJSONObject(i)?.let { out.add(Candidate.parse(it)) }
+                }
+                return out
             }
 
             /**

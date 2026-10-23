@@ -330,6 +330,44 @@ class Converter:
 
     # ---------------------------------------------------------------- 展开
 
+    def wait_action(self, node, nxt):
+        """
+        Maa 的 `next` → 我们的「等待候选」。
+
+        这是翻译里最关键的一步。Maa 的 next 是**候选链**：每轮按顺序逐个识别，
+        第一个成功的被进入，都不成功就继续等，直到超时。
+
+        用「条件 + 跳转」拼能凑出分支，但凑不出**等待** —— 条件不满足就跳过，
+        脚本会一路冲过去，不等画面。所以这里发一条等待候选，轮询交给执行器。
+        """
+        timeout = node.get("timeout")
+        if isinstance(timeout, int) and timeout > 0:
+            tmo = timeout
+        else:
+            # -1 或未写 = 无限等。候选里通常有 DirectHit 兜底，一定会命中，
+            # 所以这个 0 不会真的死等。
+            tmo = 0
+
+        cands = []
+        for cand in nxt:
+            cnode = self.nodes.get(cand, {}) or {}
+            cond = self.condition(cnode)
+            c = {"jumpTo": cand}
+            if cond:
+                c["condition"] = cond
+            cands.append(c)
+
+        return {
+            "type": "等待候选",
+            "desc": f"{node['name']} 等候选",
+            "delay": "0",
+            "delayUnit": 0,
+            "repeatCount": 1,
+            "waitTimeoutMs": tmo,
+            "waitIntervalMs": int(node.get("rate_limit") or 200),
+            "candidates": cands,
+        }
+
     def collect_order(self):
         """
         从入口出发，按 next 顺序深度优先走一遍，每个节点只记一次。
@@ -361,7 +399,29 @@ class Converter:
             delay = carried + int(node.get("pre_delay") or 0)
             carried = int(node.get("post_delay") or 0)
 
-            self.actions.append(self.build_action(node, delay))
+            act = self.build_action(node, delay)
+
+            # Maa 的 timeout / rate_limit → 我们的等待参数。
+            #
+            # 有识别的动作才需要等：固定坐标的点击等没有意义。
+            # timeout == -1 或没写都当作"一直等"（Maa 的 timeout 到点才放弃，
+            # 而 -1 就是永不放弃）。没有这个字段，我们的脚本会一路冲过去，
+            # 不等画面出现 —— 那正是和 Maa 差的那一块。
+            has_rec = node.get("recognition") in ("TemplateMatch", "OCR", "ColorMatch")
+            timeout = node.get("timeout")
+            if has_rec:
+                if isinstance(timeout, int) and timeout > 0:
+                    act["waitTimeoutMs"] = timeout
+                elif timeout == -1:
+                    act["waitTimeoutMs"] = 0          # Maa: -1 = 永不放弃
+                else:
+                    # 没写 timeout 的节点，Maa 用的是**默认 20 秒**。
+                    # 这里不能也当成无限等 —— 那会让"识别不到"变成永久卡死。
+                    act["waitTimeoutMs"] = 20000
+            if node.get("rate_limit"):
+                act["waitIntervalMs"] = int(node["rate_limit"])
+
+            self.actions.append(act)
 
             nxt = node.get("next") or []
             if not nxt:
@@ -374,22 +434,8 @@ class Converter:
                 self.actions.append(self.jump_action(nxt[0]))
                 continue
 
-            # 多候选：前面的是"条件成立就跳走"，最后一个是 fallback
-            for cand in nxt[:-1]:
-                cnode = self.nodes.get(cand, {})
-                cond = self.condition(cnode) if cnode else None
-                if cond is None:
-                    print(
-                        f"  ⚠ {name} 的候选 {cand} 没有识别条件，"
-                        f"无法表达优先级，改成无条件跳转",
-                        file=sys.stderr,
-                    )
-                    self.actions.append(self.jump_action(cand))
-                else:
-                    ja = self.jump_action(cand)
-                    ja["condition"] = cond
-                    self.actions.append(ja)
-            self.actions.append(self.jump_action(nxt[-1]))
+            # 多候选 → 一条「等待候选」。由执行器按顺序轮询，语义和 Maa 一致。
+            self.actions.append(self.wait_action(node, nxt))
 
         return self.actions
 

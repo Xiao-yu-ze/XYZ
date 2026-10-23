@@ -29,7 +29,12 @@ class ZModelTest {
         for (w in wires) {
             assertNotNull("认不出动作类型 [$w]", Z.ActionType.ofWire(w, null))
         }
-        assertEquals(26, Z.ActionType.entries.size)
+        assertEquals(
+            // 26 个协议类型 + 1 个我们自己的（等待候选，等价于 Maa 的 next）。
+            // 断言等于而不是大于：多出一个没登记的类型，说明有人加了节点却没更新这里。
+            27, Z.ActionType.entries.size
+        )
+        assertEquals(1, Z.ActionType.entries.count { it.wire == "等待候选" })
     }
 
     @Test

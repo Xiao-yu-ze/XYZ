@@ -101,6 +101,13 @@ object ZFieldEditor {
             // 枚举类字段：接受显示值（是/否）也接受协议值（true/false）
             "fastRepeatMode" -> c.copy(fastRepeatMode = truthy(value))
             "disabled" -> c.copy(disabled = truthy(value))
+            // 「等待候选」的两个参数。0 / 空 = 一直等。
+            "waitTimeoutMs" -> return action.copy(
+                waitTimeoutMs = value.trim().toIntOrNull()?.coerceAtLeast(0)
+            )
+            "waitIntervalMs" -> return action.copy(
+                waitIntervalMs = value.trim().toIntOrNull()?.coerceIn(20, 60_000)
+            )
             else -> return null
         }
         return action.copy(common = newCommon)

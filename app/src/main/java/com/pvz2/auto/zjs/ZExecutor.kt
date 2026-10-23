@@ -231,7 +231,12 @@ class ZExecutor(
                     skipped.add(Result.Skip(index, label, "缺位置"))
                     return null
                 }
-                val hit = locate(pos, index, label, skipped) ?: return null
+                // 等待参数来自动作本身（转换出来的脚本会带上 Maa 的 timeout）
+                val hit = locate(
+                    pos, index, label, skipped,
+                    timeoutMs = action.waitTimeoutMs ?: 0,
+                    intervalMs = action.waitIntervalMs ?: 200
+                ) ?: return null
                 inject.tap(hit.x, hit.y, hold)
                 Outcome()
             }
@@ -329,6 +334,71 @@ class ZExecutor(
 
             Z.ActionType.CONTROL_STOP -> Outcome(stop = true)
 
+            /*
+             * 等候选 —— Maa 的 next 语义。
+             *
+             * Maa 的每个节点都有一条候选链：每轮按顺序逐个识别，第一个成功的
+             * 被进入；都不成功就继续等，直到超时。
+             *
+             * 这里就是那条循环。几个必须讲清楚的点：
+             *
+             * 1. **顺序即优先级**。不能排序、不能去重 —— 用户排的顺序就是语义。
+             * 2. **每轮都从头试**。Maa 也是每轮重新识别，不是记住上一轮结果。
+             * 3. **睡的时候分片**，否则「停止」要等整段间隔才生效，
+             *    用户会以为卡死了。
+             * 4. **超时不是错误**。Maa 里 timeout 到点是"这条没等到"，
+             *    继续往下走；记一条跳过原因，但不按失败处理。
+             */
+            Z.ActionType.WAIT_CANDIDATES -> {
+                if (action.candidates.isEmpty()) {
+                    skipped.add(Result.Skip(index, label, "没有候选可等"))
+                    return null
+                }
+                val timeout = action.waitTimeoutMs ?: 0
+                val interval = (action.waitIntervalMs ?: 200).coerceAtLeast(20)
+                val startedAt = System.currentTimeMillis()
+                var round = 0
+                while (!stopped) {
+                    round++
+                    for ((ci, cand) in action.candidates.withIndex()) {
+                        val ok = cand.condition == null ||
+                            evaluate(cand.condition, index, skipped)
+                        if (ok) {
+                            val target = cand.jumpTo
+                            log(
+                                "[等待候选] 第 $round 轮命中候选 ${ci + 1}" +
+                                    "/${action.candidates.size}" +
+                                    (target?.let { " → $it" } ?: "（留在原地往下走）")
+                            )
+                            return if (target.isNullOrBlank()) Outcome() else Outcome(jumpTo = target)
+                        }
+                    }
+                    // 每 10 轮报一次"还在等什么"。
+                    // 不报的话脚本会长时间毫无动静，用户无法区分
+                    // "在等画面"和"卡死了" —— 这两件的处理方式完全相反。
+                    if (round % 10 == 0) {
+                        val waited = (System.currentTimeMillis() - startedAt) / 1000
+                        log(
+                            "[等待候选] ${label}：已等 ${waited}s，第 $round 轮，" +
+                                "${action.candidates.size} 个候选都没出现" +
+                                (if (timeout > 0) "（上限 ${timeout}ms）" else "（不设上限）")
+                        )
+                    }
+                    if (timeout > 0 && System.currentTimeMillis() - startedAt >= timeout) {
+                        log("[等待候选] 等了 ${timeout}ms，${round} 轮都没命中，继续往下")
+                        skipped.add(Result.Skip(index, label, "等了 ${timeout}ms 没有候选出现"))
+                        return null
+                    }
+                    var slept = 0
+                    while (slept < interval && !stopped) {
+                        Thread.sleep(20L)
+                        slept += 20
+                    }
+                }
+                skipped.add(Result.Skip(index, label, "被停止"))
+                null
+            }
+
             // pause / setJumpId / runAimAction 安卓上先不做
             else -> {
                 val why = when {
@@ -346,28 +416,57 @@ class ZExecutor(
      *
      * 找到多个时按 `indexNum` 选一个 —— 这是协议里"选第几个"的语义。
      */
+    /**
+     * 解析点击位置。
+     *
+     * ## 找不到时会重试（Maa 的 timeout 语义）
+     *
+     * Maa 的节点识别不到会一直等到超时，我们原来是一失败就跳过 ——
+     * 从 Maa 转过来的脚本因此会"一路冲过去"，不等画面。
+     *
+     * ★ 关键区别：重试的是**识别**，不是动作。
+     *   用 repeatCount 重试整个动作的话，找到之后剩下的次数会继续点下去
+     *   （点 5 下变成点 5 次），那是另一个 bug。
+     *
+     * @param timeoutMs 总超时，0 = 只试一次
+     * @param intervalMs 每轮间隔
+     */
     private fun locate(
         pos: Z.PosData,
         index: Int,
         label: String,
-        skipped: MutableList<Result.Skip>
+        skipped: MutableList<Result.Skip>,
+        timeoutMs: Int = 0,
+        intervalMs: Int = 200
     ): ZPosResolver.Hit? {
         if (pos.type == Z.PosType.LOCATION) {
             return ZPosResolver.resolveLocation(pos, screen)
         }
 
         val rect = ZPosResolver.searchRect(pos, screen)
-        val hits = when (pos.type) {
-            Z.PosType.IMAGE -> matcher.findImage(pos, rect)
-            Z.PosType.TEXT -> matcher.findText(pos, rect)
-            Z.PosType.COLOR -> matcher.findColor(pos, rect)
-            Z.PosType.NODE -> matcher.findNode(pos, rect)
-            else -> emptyList()
+        var hits = searchPos(pos, rect)
+
+        // 找不到就按间隔重试，直到超时（Maa 的 timeout）
+        if (hits.isEmpty() && timeoutMs > 0 && !stopped) {
+            val deadline = System.currentTimeMillis() + timeoutMs
+            val step = intervalMs.coerceIn(20, 2000)
+            var round = 0
+            while (hits.isEmpty() && !stopped && System.currentTimeMillis() < deadline) {
+                var slept = 0
+                while (slept < step && !stopped) {
+                    Thread.sleep(20L)
+                    slept += 20
+                }
+                round++
+                hits = searchPos(pos, rect)
+            }
+            if (hits.isNotEmpty()) log("[动作 $index] $label — 等了 $round 轮后找到")
         }
 
         if (hits.isEmpty()) {
             val why = matcher.lastReason()
-            val msg = if (why != null) "没有匹配到目标：$why" else "没有匹配到目标"
+            val prefix = if (timeoutMs > 0) "等了 ${timeoutMs}ms 仍" else ""
+            val msg = "${prefix}没有匹配到目标" + (why?.let { "：$it" } ?: "")
             skipped.add(Result.Skip(index, label, msg))
             log("[动作 $index] $label — $msg")
             return null
@@ -384,6 +483,16 @@ class ZExecutor(
             y = (hit.y + oy).toInt().coerceIn(0, screen.height - 1)
         )
     }
+
+    /** 按位置类型找一遍。抽出来是因为重试要重复调用它。 */
+    private fun searchPos(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit> =
+        when (pos.type) {
+            Z.PosType.IMAGE -> matcher.findImage(pos, rect)
+            Z.PosType.TEXT -> matcher.findText(pos, rect)
+            Z.PosType.COLOR -> matcher.findColor(pos, rect)
+            Z.PosType.NODE -> matcher.findNode(pos, rect)
+            else -> emptyList()
+        }
 
     // ------------------------------------------------------------ 条件
 
