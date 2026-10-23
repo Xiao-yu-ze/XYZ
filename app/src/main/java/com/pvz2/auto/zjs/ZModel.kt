@@ -114,6 +114,18 @@ object Z {
         val yOffset: ZValue? = null,
         val extra: MutableMap<String, Any?> = LinkedHashMap()
     ) {
+        /*
+         * 颜色的逐通道上下界（Maa 的 lower/upper）。
+         *
+         * Maa 的 ColorMatch 就是这对上下界，而且**是非对称的**
+         * （例如 R 237~255 但 G 202~229）。压成"中心色 + 容差"会改变判定范围，
+         * 实测后果：植物种下后卡槽进入冷却、颜色已经变了，闸门却仍然通过。
+         */
+        val colorLower: List<Int>?
+            get() = (extra["colorLower"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }
+        val colorUpper: List<Int>?
+            get() = (extra["colorUpper"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }
+
         fun toJson(): JSONObject = JSONObject().apply {
             put("type", type.wire)
             x?.let { put("x", it.raw) }

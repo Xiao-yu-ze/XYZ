@@ -241,6 +241,17 @@ class Converter:
                 "color": f"{r:02X}{g:02X}{b:02X}",
                 "similarPercent": sim_from_tolerance(tol),
             }
+            # ★ 把 lower/upper 原样带过去。
+            #
+            #   Maa 的颜色判定就是这对**非对称**的逐通道上下界；
+            #   压成"中心色 + 容差"会改变判定范围 —— 实测后果是
+            #   植物种下、卡槽进入冷却后颜色变了，闸门却仍然通过。
+            lo = node.get("lower")
+            hi = node.get("upper")
+            if isinstance(lo, list) and len(lo) >= 3:
+                pd["colorLower"] = [int(v) for v in lo[:3]]
+            if isinstance(hi, list) and len(hi) >= 3:
+                pd["colorUpper"] = [int(v) for v in hi[:3]]
             if roi:
                 pd["limitArea"] = area_str(roi)
             return pd

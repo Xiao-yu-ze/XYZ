@@ -147,6 +147,15 @@ class ZExecutor(
                 val action = actions[pc]
                 val label = ZScriptIO.actionLabel(action)
 
+                /*
+                 * ★ 每条动作先打一行头。
+                 *
+                 *   排查"哪一步出的问题"时，没有这一行就只能在几百行日志里
+                 *   猜哪段属于哪条动作。带上序号/类型/节点名，配合下面
+                 *   每步的实测值，就能直接定位到"哪个字段算错了"。
+                 */
+                log("── [${pc + 1}/${actions.size}] ${action.type.wire} · $label")
+
                 // 禁用：跳过，不算失败
                 if (action.common.disabled) {
                     skipped.add(Result.Skip(pc, label, "已禁用"))
@@ -343,6 +352,7 @@ class ZExecutor(
                     timeoutMs = action.waitTimeoutMs ?: 0,
                     intervalMs = action.waitIntervalMs ?: 200
                 ) ?: return null
+                log("   点击 (${hit.x},${hit.y}) 按住 ${hold}ms")
                 inject.tap(hit.x, hit.y, hold)
                 Outcome()
             }
@@ -357,6 +367,7 @@ class ZExecutor(
                 }
                 val a = ZPosResolver.resolveLocation(s, screen)
                 val b = ZPosResolver.resolveLocation(e, screen)
+                log("   滑动 (${a.x},${a.y})→(${b.x},${b.y}) 用时 ${hold}ms")
                 inject.swipe(a.x, a.y, b.x, b.y, hold)
                 Outcome()
             }
@@ -805,7 +816,13 @@ class ZExecutor(
                     Z.ConditionType.COLOR -> matcher.findColor(pos, rect)
                     else -> matcher.findNode(pos, rect)
                 }
-                hits.isNotEmpty()
+                val ok = hits.isNotEmpty()
+                log(
+                    "   条件 ${cond.type.wire}: " +
+                        if (ok) "成立（命中 ${hits.size} 处）"
+                        else "不成立（${matcher.lastReason() ?: "未命中"}）"
+                )
+                ok
             }
 
             Z.ConditionType.RANDOM -> {

@@ -435,29 +435,61 @@ class ZRealMatcher(
             org.opencv.imgproc.Imgproc.cvtColor(
                 region, bgr, org.opencv.imgproc.Imgproc.COLOR_RGBA2BGR
             )
-            // 相似度 90 → 每通道允许差 25；相似度 100 → 0；0 → 255
-            val tol = ((100 - (pos.similarPercent ?: 90)) * 255 / 100).coerceIn(0, 255).toDouble()
-            org.opencv.core.Core.inRange(
-                bgr,
-                org.opencv.core.Scalar(
-                    (b - tol).coerceAtLeast(0.0), (g - tol).coerceAtLeast(0.0), (r - tol).coerceAtLeast(0.0)
-                ),
-                org.opencv.core.Scalar(
-                    (b + tol).coerceAtMost(255.0), (g + tol).coerceAtMost(255.0), (r + tol).coerceAtMost(255.0)
-                ),
-                mask
-            )
+            /*
+             * ★ 优先用脚本里的逐通道上下界（lower/upper），这是 Maa 的原始语义。
+             *
+             *   之前我把 lower/upper 压成"中心色 + 容差"，再拿它去比 —— 丢了两件事：
+             *   上下界本来是非对称的（比如 R 237~255 而 G 202~229），
+             *   压成对称容差之后判定范围完全不同。
+             *
+             *   没有 lower/upper 的老脚本才退回中心色 + 容差。
+             */
+            val lo = pos.colorLower
+            val hi = pos.colorUpper
+            if (lo != null && hi != null && lo.size >= 3 && hi.size >= 3) {
+                org.opencv.core.Core.inRange(
+                    bgr,
+                    org.opencv.core.Scalar(lo[2].toDouble(), lo[1].toDouble(), lo[0].toDouble()),
+                    org.opencv.core.Scalar(hi[2].toDouble(), hi[1].toDouble(), hi[0].toDouble()),
+                    mask
+                )
+            } else {
+                // 相似度 90 → 每通道允许差 25；相似度 100 → 0；0 → 255
+                val tol = ((100 - (pos.similarPercent ?: 90)) * 255 / 100).coerceIn(0, 255).toDouble()
+                org.opencv.core.Core.inRange(
+                    bgr,
+                    org.opencv.core.Scalar(
+                        (b - tol).coerceAtLeast(0.0), (g - tol).coerceAtLeast(0.0), (r - tol).coerceAtLeast(0.0)
+                    ),
+                    org.opencv.core.Scalar(
+                        (b + tol).coerceAtMost(255.0), (g + tol).coerceAtMost(255.0), (r + tol).coerceAtMost(255.0)
+                    ),
+                    mask
+                )
+            }
 
+            /*
+             * ★ 要求足够比例的像素落在范围内，不是"有一个像素就算"。
+             *
+             *   实测问题：植物种下去进入冷却后卡槽颜色会变，但卡片上残留的一点
+             *   原色像素仍然命中 —— 于是闸门照样通过，脚本继续往下种。
+             *
+             *   判定块通常很小（比如 8×96），语义就是"这一块是不是这个颜色"，
+             *   所以按比例卡才对。比例也打进日志，方便按实际画面调。
+             */
             val nonzero = org.opencv.core.Core.countNonZero(mask)
-            lastScore = if (nonzero == 0) 0.0 else 1.0
-            if (nonzero == 0) {
+            val total = (mask.rows() * mask.cols()).coerceAtLeast(1)
+            val ratio = nonzero.toDouble() / total
+            lastScore = ratio
+            val ok = ratio >= COLOR_MIN_RATIO
+            if (!ok) {
                 // 顺带报出这一块的平均色：只说"没找到"，用户只能猜一个颜色再试。
                 val mv = org.opencv.core.Core.mean(bgr).`val`
                 val r0 = mv[2].toInt()
                 val g0 = mv[1].toInt()
                 val b0 = mv[0].toInt()
-                lastUnsupported = "没找到这个颜色（这一块平均色 #" +
-                    "%02X%02X%02X".format(r0, g0, b0) + "）"
+                lastUnsupported = "没找到这个颜色（命中比例 %.1f%% < %.1f%%，这一块平均色 #%02X%02X%02X）"
+                    .format(ratio * 100, COLOR_MIN_RATIO * 100, r0, g0, b0)
                 return emptyList()
             }
 
@@ -588,7 +620,16 @@ class ZRealMatcher(
             return prev[b.length]
         }
 
-        internal fun parseHexRgb(raw: String?): IntArray? {
+        /**
+     * 颜色判定要求的最小命中比例。
+     *
+     * 原来是"有一个像素落在范围内就算命中"——太松：卡片进入冷却后残留的一点
+     * 原色像素就能让闸门通过。判定块通常很小（8x96 这种），语义就是
+     * "这一块是不是这个颜色"，所以按比例卡。
+     */
+    private const val COLOR_MIN_RATIO = 0.5
+
+    internal fun parseHexRgb(raw: String?): IntArray? {
             val hex = raw?.trim()?.removePrefix("#")?.removePrefix("0x")?.removePrefix("0X")
                 ?: return null
             // 8 位是 AARRGGBB，颜色在低 6 位
