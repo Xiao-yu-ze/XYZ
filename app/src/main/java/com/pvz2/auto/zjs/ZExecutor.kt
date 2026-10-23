@@ -95,6 +95,9 @@ class ZExecutor(
      *   可见性，JIT 甚至可以把 `while (!stopped)` 的读提到循环外 ——
      *   表现就是"点了停止没反应，只能杀进程"。
      */
+    /** Maa 的 pre_delay / post_delay 默认值：没写 delay 时按这个走。 */
+    private val DEFAULT_DELAY_MS = 200
+
     @Volatile
     private var stopped = false
 
@@ -175,7 +178,7 @@ class ZExecutor(
                 val mustCheck = cond != null && cond.disabled.not()
                 var delayDone = false
                 if (mustCheck && !cond!!.checkBeforeDelay) {
-                    waitDelay(action.common.delay, action.common.delayUnit)
+                    waitDelay(action.common.delay, action.common.delayUnit, interactionDefaultMs(action))
                     delayDone = true
                 }
                 if (mustCheck && !evaluateWithRetry(cond!!, pc, skipped)) {
@@ -184,12 +187,26 @@ class ZExecutor(
                     continue
                 }
                 if (!delayDone) {
-                    waitDelay(action.common.delay, action.common.delayUnit)
+                    waitDelay(action.common.delay, action.common.delayUnit, interactionDefaultMs(action))
                 }
 
                 // 执行（含重复）
+                abortReason = null
                 val outcome = executeWithRepeat(action, pc, label, skipped)
                 com.pvz2.auto.core.ScriptRunState.finishAction(pc)
+
+                /*
+                 * ★ 识别不到 → 任务结束（Maa 语义）。
+                 *
+                 *   不是"跳过这一条继续"：那会让整条脚本在几秒内被冲完，
+                 *   界面上还显示"跑完了 N 条"，实际一步都没做。
+                 *   报错要带上"第几条、找什么、为什么没找到"，
+                 *   用户才能判断是阈值、模板还是界面不对。
+                 */
+                if (outcome.abort != null) {
+                    log("[任务结束] ${outcome.abort}")
+                    return Result(executed, skipped, outcome.abort)
+                }
                 if (outcome.jumpTo != null) {
                     val resolved = resolveJump(outcome.jumpTo!!, pc, actions.size)
                     if (resolved == null) {
@@ -223,7 +240,20 @@ class ZExecutor(
 
     // ------------------------------------------------------------ 单个动作
 
-    private data class Outcome(val jumpTo: String? = null, val stop: Boolean = false)
+    private data class Outcome(
+        val jumpTo: String? = null,
+        val stop: Boolean = false,
+        /**
+         * 非 null = **整条任务就此结束**。
+         *
+         * Maa 的语义：一个节点识别不到、又没有失败跳转（on_error / interrupt），
+         * 任务就到此为止 —— 不是"跳过这一条继续下一条"。
+         *
+         * 我们原来是后者。后果很直观：识别全都失败时，整条链会在几秒内被一路跳过，
+         * 界面显示"跑完 42 条"，实际什么都没做。这就是"3、4 秒跑完"的来源。
+         */
+        val abort: String? = null
+    )
 
     /**
      * 执行一个动作，按 `repeatCount` 重复。
@@ -249,7 +279,8 @@ class ZExecutor(
             if (n > 0) waitDelay(action.common.repeatDelayValue, action.common.repeatDelayUnit)
 
             when (val r = executeOnce(action, index, label, skipped)) {
-                null -> return Outcome()       // 执行不了，已经记过原因
+                // 执行不了：若原因是"识别不到"就结束整个任务，否则继续
+                null -> return Outcome(abort = abortReason)
                 else -> if (r.jumpTo != null || r.stop) return r
             }
         }
@@ -544,6 +575,8 @@ class ZExecutor(
             val msg = "${prefix}没有匹配到目标" + (why?.let { "：$it" } ?: "")
             skipped.add(Result.Skip(index, label, msg))
             log("[动作 $index] $label — $msg")
+            // 识别不到 → 按 Maa 的语义整个任务结束（这条没有失败跳转可走）
+            abortReason = "第 ${index + 1} 条「$label」$msg"
             return null
         }
 
@@ -604,6 +637,9 @@ class ZExecutor(
 
     /** 由 [run] 填好，供 [resolveJump] 用。 */
     private var jumpTableOf: Map<String, Int> = emptyMap()
+
+    /** 最近一次 locate 失败的原因；非 null 表示"识别不到"，任务应结束。 */
+    private var abortReason: String? = null
 
     private fun estimateMs(a: Z.Action): Int {
         fun num(s: String?): Int =
@@ -765,22 +801,50 @@ class ZExecutor(
      * `delay` 支持区间写法 `"1-3"`（协议里表示范围内随机），
      * 这时取一个随机值 —— 用在"每次等待时长不同"的反检测场景。
      */
-    private fun waitDelay(value: String?, unit: Z.TimeUnit) {
-        val n = randomIn(value) ?: return
-        val total = when (unit) {
-            Z.TimeUnit.MILLISECONDS -> n
-            Z.TimeUnit.SECONDS -> n * 1000
-            Z.TimeUnit.MINUTES -> n * 60_000
-            Z.TimeUnit.HOURS -> n * 3_600_000
+    /**
+     * 等待。
+     *
+     * [defaultMs]：没写 delay 时用多少毫秒。
+     *
+     * Maa 的 pre_delay / post_delay 默认都是 200ms，所以「真的去操作画面」的动作
+     * 走默认 200ms；控制流动作（跳转、等待候选）传 0 —— 否则「无限循环 + 每步 200ms」
+     * 的脚本会在死循环保护生效前爬几小时，测试里那个死循环用例直接跑不完。
+     */
+    private fun waitDelay(value: String?, unit: Z.TimeUnit, defaultMs: Int = 0) {
+        val n = randomIn(value)
+        val total: Long = if (n == null) {
+            defaultMs.toLong()
+        } else {
+            when (unit) {
+                Z.TimeUnit.MILLISECONDS -> n
+                Z.TimeUnit.SECONDS -> n * 1000
+                Z.TimeUnit.MINUTES -> n * 60_000
+                Z.TimeUnit.HOURS -> n * 3_600_000
+            }.toLong()
         }
-        if (total > 0) {
-            try {
-                Thread.sleep(total.toLong())
-            } catch (e: InterruptedException) {
-                stopped = true
+        if (total <= 0) return
+        // 分片睡眠：否则 delay 填成「分钟/小时」时，点停止要等满整段才生效
+        var left = total
+        try {
+            while (left > 0 && !stopped) {
+                val step = minOf(20L, left)
+                Thread.sleep(step)
+                left -= step
             }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            stopped = true
         }
     }
+
+    /**
+     * 交互动作的缺省等待：Maa 的 pre_delay/post_delay 默认 200ms。
+     *
+     * 只给「真的去操作画面」的动作（有位置/起终点），控制流不算 ——
+     * 让死循环保护还能正常生效。
+     */
+    private fun interactionDefaultMs(a: Z.Action): Int =
+        if (a.posData != null || a.startPos != null) DEFAULT_DELAY_MS else 0
 
     /** 解析数字或区间 `"1-3"`，取随机。解析不了返回 null。 */
     private fun randomIn(value: String?): Double? {

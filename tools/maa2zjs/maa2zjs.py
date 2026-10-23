@@ -534,8 +534,13 @@ class Converter:
             node = dict(node)
             node["name"] = name
 
-            delay = carried + int(node.get("pre_delay") or 0)
-            carried = int(node.get("post_delay") or 0)
+            # ★ Maa 的 pre_delay / post_delay 默认都是 **200ms**，不是 0。
+            #
+            #   写成 0 的后果：整条脚本 0 间隔连击，42 个节点三四秒冲完，
+            #   而同一份脚本在 Maa 里要跑几分钟 —— 游戏动画、加载根本跟不上，
+            #   每一步都点在"上一个界面还没消失"的画面上，于是识别全失败。
+            delay = carried + int(node.get("pre_delay", 200))
+            carried = int(node.get("post_delay", 200))
 
             act = self.build_action(node, delay)
 
