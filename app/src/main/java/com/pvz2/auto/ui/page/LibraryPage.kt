@@ -199,7 +199,18 @@ class LibraryPage(
                     // 运行前先保存内存里的编辑：用户可能刚在第 3 页改过
                     // 但没点保存，直接跑会是旧版本 —— 那种"我明明改了"最难查。
                     flushEditorIfSame(item.name)
+
+                    // 运行后直接翻到第 3 页：那一页会把"跑到哪一条、
+                    // 跑了几次"直接画在节点上 —— 用户不用在这一页和
+                    // 预览之间来回找。
+                    //
+                    // 先把这份脚本装进编辑器状态，否则第 3 页显示的是
+                    // 上一次打开的那份，进度会画到错的节点上。
+                    ZjsRunner.loadSaved(item.file)?.let { s ->
+                        ZjsEditState.open(item.file.name, s)
+                    }
                     AutomationService.zjsRun(host, item.file.absolutePath)
+                    (host as? MainActivity)?.gotoPage(2)
                 }
                 // 立刻按一下，别等下一次状态回调才变字
                 host.lifecycleScope.launch {

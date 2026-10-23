@@ -146,11 +146,17 @@ class ZExecutor(
                     continue
                 }
 
+                // 上报"现在跑到哪一条"，界面据此在这一条上画进度条。
+                // 放在等待之前：用户要看的是"这一条正在跑"，
+                // 而不是等完之后才出现。
+                com.pvz2.auto.core.ScriptRunState.enterAction(pc, label, estimateMs(action))
+
                 // 前置等待
                 waitDelay(action.common.delay, action.common.delayUnit)
 
                 // 执行（含重复）
                 val outcome = executeWithRepeat(action, pc, label, skipped)
+                com.pvz2.auto.core.ScriptRunState.finishAction(pc)
                 if (outcome.jumpTo != null) {
                     // 跳转：跳到目标；找不到就当脚本结束
                     val target = jumpTable[outcome.jumpTo]
@@ -490,6 +496,33 @@ class ZExecutor(
             x = (hit.x + ox).toInt().coerceIn(0, screen.width - 1),
             y = (hit.y + oy).toInt().coerceIn(0, screen.height - 1)
         )
+    }
+
+    /**
+     * 估一条动作要花多久（毫秒），只用来画进度条。
+     *
+     * 宁可估粗也不要估 0：估 0 的话进度条永远是满的或不动，
+     * 用户看不出"这一条正在跑"还是"卡住了"。
+     */
+    private fun estimateMs(a: Z.Action): Int {
+        fun num(s: String?): Int =
+            s?.substringBefore('-')?.trim()?.toIntOrNull() ?: 0
+
+        fun toMs(value: Int, unit: Z.TimeUnit): Int = when (unit.wire) {
+            0 -> value            // 毫秒
+            1 -> value * 1000     // 秒
+            2 -> value * 60_000   // 分
+            else -> value
+        }
+
+        val preMs = toMs(num(a.common.delay), a.common.delayUnit)
+        val durMs = num(a.common.duration).takeIf { it > 0 }
+            ?: if (a.type == Z.ActionType.SWIPE) 1000 else 100
+        val repeatGapMs = toMs(num(a.common.repeatDelayValue), a.common.repeatDelayUnit)
+        val reps = (a.common.repeatCount ?: 1).let { if (it <= 0) 1 else it }
+        // 候选等待的时长取决于画面什么时候出现，估不出来
+        if (a.type == Z.ActionType.WAIT_CANDIDATES) return 0
+        return (preMs + reps * (durMs + repeatGapMs)).coerceIn(1, 600_000)
     }
 
     /** 按位置类型找一遍。抽出来是因为重试要重复调用它。 */

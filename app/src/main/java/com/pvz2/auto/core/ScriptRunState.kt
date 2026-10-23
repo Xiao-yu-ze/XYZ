@@ -44,8 +44,28 @@ object ScriptRunState {
         val round: Long = 0,
         val lastRoundMs: Double = 0.0,
         val hits: Map<String, Long> = emptyMap(),
-        val message: String = "未运行"
+        val message: String = "未运行",
+        /** 当前正在执行的动作下标（zjs）。-1 = 没在跑。 */
+        val currentIndex: Int = -1,
+        /** 当前动作的名字，界面直接显示。 */
+        val currentLabel: String = "",
+        /** 当前动作开始的时间（`SystemClock.uptimeMillis`）。 */
+        val actionStartedAt: Long = 0L,
+        /** 这个动作预计要花多久（毫秒）。0 = 估计不出来（例如候选等待）。 */
+        val expectedMs: Int = 0,
+        /** 每个动作已经执行过几次。key = 动作下标。 */
+        val counts: Map<Int, Long> = emptyMap()
     ) {
+        /**
+         * 当前动作的完成度 0~1，界面拿它画进度条。
+         *
+         * 估计不出来（等待候选这类，时长取决于画面什么时候出现）就返回 -1，
+         * 界面改画不确定进度——总比画一条永远停在 0 的条子强。
+         */
+        fun actionProgress(now: Long = android.os.SystemClock.uptimeMillis()): Float {
+            if (actionStartedAt <= 0L || expectedMs <= 0) return -1f
+            return ((now - actionStartedAt).toFloat() / expectedMs).coerceIn(0f, 1f)
+        }
         /** 最近命中的节点（命中最多的那个），给界面显示一行摘要用。 */
         val hottest: Pair<String, Long>?
             get() = hits.maxByOrNull { it.value }?.toPair()
@@ -62,6 +82,26 @@ object ScriptRunState {
     }
 
     /** 开始一次运行。 */
+    /** 开始执行第 [index] 个动作。[expectedMs] 用来画进度条，估不出来传 0。 */
+    fun enterAction(index: Int, label: String, expectedMs: Int) {
+        update {
+            it.copy(
+                currentIndex = index,
+                currentLabel = label,
+                actionStartedAt = android.os.SystemClock.uptimeMillis(),
+                expectedMs = expectedMs,
+                message = label
+            )
+        }
+    }
+
+    /** 第 [index] 个动作执行完一次（跳转、跳过、成功都算）。 */
+    fun finishAction(index: Int) {
+        update {
+            it.copy(counts = it.counts + (index to (it.counts[index] ?: 0L) + 1L))
+        }
+    }
+
     fun begin(scriptName: String, entry: String) {
         shared.updateAndGet {
             State(

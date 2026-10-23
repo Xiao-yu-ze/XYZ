@@ -20,6 +20,7 @@ import com.pvz2.auto.zjs.ZFieldEditor
 import com.pvz2.auto.zjs.ZScriptIO
 import com.pvz2.auto.zjs.ZjsRunner
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
@@ -978,12 +979,48 @@ class ZjsEditorPage(
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsAddAction)
             .setOnClickListener { promptAddAction() }
 
+        /*
+         * 订阅运行状态：翻到这一页就能看到"跑到哪一条、跑了几次"。
+         *
+         * 进度条要平滑，而状态只在动作边界更新（一次跳一大截），
+         * 所以在跑的时候额外起一个 120ms 的定时器重画当前那一条。
+         * 只刷一条，不做整表刷新。
+         */
+        host.lifecycleScope.launch {
+            host.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                var ticker: Job? = null
+                com.pvz2.auto.core.ScriptRunState.state.collect { st ->
+                    adapter.updateRunState(st)
+                    if (st.running) {
+                        if (ticker == null) {
+                            ticker = launch {
+                                while (true) {
+                                    kotlinx.coroutines.delay(120)
+                                    adapter.refreshProgress()
+                                }
+                            }
+                        }
+                    } else {
+                        ticker?.cancel()
+                        ticker = null
+                    }
+                }
+            }
+        }
+
         // 从脚本库打开另一份时，这一页可能还活着（翻页不保证销毁）。
         // 只靠 bind() 里那次 load() 不够 —— 它早就跑完了，界面还是旧脚本。
         // 所以订阅代号变化，变了就整体重画。
         host.lifecycleScope.launch {
             host.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                ZjsEditState.generation.drop(1).collect {
+                // ★ 不用 drop(1)。
+                //
+                //   drop(1) 是为了"bind 之后不要多画一次"，但它会连
+                //   **页面重新订阅时的当前值**一起丢掉：从脚本库点运行、
+                //   页面刚好被重建时，那次 open() 就再也收不到 ——
+                //   于是第 3 页一直显示上一份脚本，进度画到错的节点上。
+                //   改成按文件名比对：内容一样就不重画，不一样就换。
+                ZjsEditState.generation.collect {
                     val s = ZjsEditState.script ?: return@collect
                     navStack.clear()
                     expandedIndex = -1
@@ -1209,10 +1246,31 @@ class ZjsEditorPage(
 
         private var items: List<Z.Action> = emptyList()
 
+        /** 运行状态：界面靠它决定哪一条亮起来、进度条到哪、跑了几次。 */
+        private var runState: com.pvz2.auto.core.ScriptRunState.State =
+            com.pvz2.auto.core.ScriptRunState.State()
+
         fun submit(actions: List<Z.Action>?) {
             items = actions.orEmpty()
             expandedIndex = -1
+            // 换了一组动作就退回未运行态。不重置的话，编辑另一个脚本时
+            // 第 5 条会莫名亮着 —— 那是上一个脚本的进度。
+            runState = com.pvz2.auto.core.ScriptRunState.State()
             notifyDataSetChanged()
+        }
+
+        /** 收到新状态：只重画"上一条 + 这一条"，别整表刷新。 */
+        fun updateRunState(s: com.pvz2.auto.core.ScriptRunState.State) {
+            val prev = runState.currentIndex
+            runState = s
+            if (prev >= 0 && prev < items.size) notifyItemChanged(prev)
+            if (s.currentIndex in items.indices) notifyItemChanged(s.currentIndex)
+        }
+
+        /** 进度条要平滑走，靠定时重画当前这一条。 */
+        fun refreshProgress() {
+            val i = runState.currentIndex
+            if (i in items.indices) notifyItemChanged(i)
         }
 
         override fun getItemCount(): Int = items.size
@@ -1231,6 +1289,9 @@ class ZjsEditorPage(
             private val tvLabel: TextView = v.findViewById(R.id.tvActionLabel)
             private val tvBadge: TextView = v.findViewById(R.id.tvActionBadge)
             private val llFields: LinearLayout = v.findViewById(R.id.llActionFields)
+            private val llProgress: LinearLayout = v.findViewById(R.id.llActionProgress)
+            private val pbAction: android.widget.ProgressBar = v.findViewById(R.id.pbAction)
+            private val tvRunCount: TextView = v.findViewById(R.id.tvActionRunCount)
 
             fun bind(index: Int, action: Z.Action, expanded: Boolean) {
                 tvIndex.text = (index + 1).toString()
@@ -1245,6 +1306,33 @@ class ZjsEditorPage(
                 }
 
                 llFields.removeAllViews()
+                /*
+                 * 运行进度。
+                 *
+                 * 正在跑的那一条按估算时长走进度；估不出来（候选等待，时长取决于
+                 * 画面什么时候出现）走不确定进度 —— 一条永远停在 0 的进度条
+                 * 比没有更糟。跑过的条数留记号，用户能确认"这条真的重复执行了"。
+                 */
+                val isCurrent = runState.running && runState.currentIndex == index
+                val done = runState.counts[index] ?: 0L
+                llProgress.visibility =
+                    if (isCurrent || (runState.running && done > 0)) View.VISIBLE else View.GONE
+                if (isCurrent) {
+                    val p = runState.actionProgress()
+                    if (p < 0f) {
+                        pbAction.isIndeterminate = true
+                        tvRunCount.text = "运行中"
+                    } else {
+                        pbAction.isIndeterminate = false
+                        pbAction.progress = (p * pbAction.max).toInt()
+                        tvRunCount.text = "第 ${done + 1} 次"
+                    }
+                } else if (llProgress.visibility == View.VISIBLE) {
+                    pbAction.isIndeterminate = false
+                    pbAction.progress = pbAction.max
+                    tvRunCount.text = "已 $done 次"
+                }
+
                 llFields.visibility = if (expanded) View.VISIBLE else View.GONE
 
                 if (expanded) {
