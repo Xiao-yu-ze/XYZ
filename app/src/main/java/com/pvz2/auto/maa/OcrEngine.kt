@@ -247,11 +247,40 @@ class OcrEngine(private val context: Context) : AutoCloseable {
             for (contour in contours) {
                 val r = Imgproc.boundingRect(contour)
                 if (r.width < MIN_BOX_WIDTH || r.height < MIN_BOX_HEIGHT) continue
-                // 加一点边距，避免 rec 吃掉贴边的笔画。
-                val x0 = (r.x - BOX_PAD).coerceAtLeast(0)
-                val y0 = (r.y - BOX_PAD).coerceAtLeast(0)
-                val x1 = (r.x + r.width + BOX_PAD).coerceAtMost(srcW)
-                val y1 = (r.y + r.height + BOX_PAD).coerceAtMost(srcH)
+
+                /*
+                 * ★ DB 的 unclip —— 这一步不能省。
+                 *
+                 * DB（Differentiable Binarization）训练时，概率图的目标是
+                 * **按 unclip_ratio 收缩过的文字核**，不是文字的完整外接框。
+                 * 官方后处理因此必须反过来把框**扩大**：
+                 *
+                 *     distance = area * unclip_ratio / perimeter
+                 *     把框四边各外扩 distance
+                 *
+                 * 不做这一步，裁出来的是"字的中间一条带"：
+                 * 中文上下结构（例如「维信」）上下都被切掉，
+                 * 识别模型只能看到水平中段笔画，输出的就是
+                 * 「CADHSCADHSE」这种乱码 —— 之前一直误以为是模型不行。
+                 *
+                 * 原来的固定 2px 边距远远不够：distance 通常在 3~10px 量级。
+                 */
+                val area = Imgproc.contourArea(contour)
+                val peri = run {
+                    val pts = org.opencv.core.MatOfPoint2f(*contour.toArray())
+                    try {
+                        Imgproc.arcLength(pts, true)
+                    } finally {
+                        pts.release()
+                    }
+                }
+                val unclip = if (peri > 1.0) (area * UNCLIP_RATIO / peri) else 0.0
+                val pad = (unclip + BOX_PAD).toInt()
+
+                val x0 = (r.x - pad).coerceAtLeast(0)
+                val y0 = (r.y - pad).coerceAtLeast(0)
+                val x1 = (r.x + r.width + pad).coerceAtMost(srcW)
+                val y1 = (r.y + r.height + pad).coerceAtMost(srcH)
                 if (x1 - x0 < MIN_BOX_WIDTH || y1 - y0 < MIN_BOX_HEIGHT) continue
                 boxes.add(TextBox(x0, y0, x1, y1))
             }
@@ -404,7 +433,15 @@ class OcrEngine(private val context: Context) : AutoCloseable {
         const val REC_MEAN = 0.5f
         const val REC_SCALE = 2.0f
 
-        const val DILATE_WIDTH = 9
+        /**
+     * DB 后处理的 unclip 比例。
+     *
+     * PaddleOCR 默认 1.5；不扩大就会裁到"文字的收缩核"（中间一条带），
+     * 中文上下结构被切掉，识别结果变乱码。
+     */
+    const val UNCLIP_RATIO = 1.5
+
+    const val DILATE_WIDTH = 5
         const val DILATE_HEIGHT = 3
         const val BOX_PAD = 2
         const val MIN_BOX_WIDTH = 6
