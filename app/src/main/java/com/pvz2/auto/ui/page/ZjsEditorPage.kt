@@ -1145,7 +1145,8 @@ class ZjsEditorPage(
             .setTitle("添加什么动作")
             .setItems(labels) { dlg, which ->
                 dlg.dismiss()
-                addAction(sorted[which])
+                // ★ 必须把插入位置传下去，否则「在上方插入」实际还是追加到末尾
+                addAction(sorted[which], insertAt)
             }
             .setNegativeButton("取消", null)
             .show()

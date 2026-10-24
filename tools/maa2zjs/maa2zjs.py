@@ -78,6 +78,10 @@ TARGET_H = 720
 # 想回到百分比可传 --percent。
 USE_PX = True
 
+# 固定每个动作的等待时间（毫秒）。None = 用 Maa 的 pre_delay/post_delay。
+# --delay 200 就是把所有节点统一成 200ms，忽略源脚本里的 0 / 3000 这些值。
+FIXED_DELAY = None
+
 
 def c_x(v):
     if USE_PX:
@@ -486,6 +490,8 @@ class Converter:
         return a
 
     def jump_action(self, target_name, delay_ms=0):
+        if FIXED_DELAY is not None:
+            delay_ms = FIXED_DELAY
         return {
             "type": "控制执行",
             "controlRunType": "jumpTo",
@@ -574,8 +580,12 @@ class Converter:
             #   写成 0 的后果：整条脚本 0 间隔连击，42 个节点三四秒冲完，
             #   而同一份脚本在 Maa 里要跑几分钟 —— 游戏动画、加载根本跟不上，
             #   每一步都点在"上一个界面还没消失"的画面上，于是识别全失败。
-            delay = carried + int(node.get("pre_delay", 200))
-            carried = int(node.get("post_delay", 200))
+            if FIXED_DELAY is not None:
+                delay = FIXED_DELAY
+                carried = 0
+            else:
+                delay = carried + int(node.get("pre_delay", 200))
+                carried = int(node.get("post_delay", 200))
 
             act = self.build_action(node, delay)
 
@@ -604,12 +614,14 @@ class Converter:
                 # 下一个节点刚好就是列表里的下一条 → 让它自然往下走
                 if idx + 1 < len(self.order) and self.order[idx + 1] == nxt[0]:
                     continue
-                self.actions.append(self.jump_action(nxt[0]))
+                self.actions.append(self.jump_action(nxt[0], FIXED_DELAY or 0))
                 continue
 
             # 多候选 → 一条「等待候选」。由执行器按顺序轮询，语义和 Maa 一致。
             # 把 post_delay 交给它：候选命中后会立刻跳走，间隔只能挂在这里。
-            self.actions.append(self.wait_action(node, nxt, carried))
+            self.actions.append(self.wait_action(
+                node, nxt, FIXED_DELAY if FIXED_DELAY is not None else carried
+            ))
             carried = 0
 
         return self.actions
@@ -679,7 +691,12 @@ def main():
         print(__doc__)
         sys.exit(1)
 
-    global OCR_FIXED_CLICK, USE_PX
+    global OCR_FIXED_CLICK, USE_PX, FIXED_DELAY
+    if "--delay" in sys.argv:
+        i = sys.argv.index("--delay")
+        FIXED_DELAY = int(sys.argv[i + 1])
+        del sys.argv[i:i + 2]
+
     if "--percent" in sys.argv:
         USE_PX = False
         sys.argv = [a for a in sys.argv if a != "--percent"]
