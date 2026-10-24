@@ -187,11 +187,48 @@ def grep_action(node):
     return (act.get("type"), act.get("param") or {})
 
 
+# ★ 默认值全部来自 maa 5.14.2 的 pipeline.py（JPipelineData），不是猜的：
+#     rate_limit = 1000ms   timeout = 20000ms   pre_delay/post_delay = 200ms
+#   注意 rate_limit 的 **0 是"不限速"**，不能用 `or` 兜底（0 会被吞成默认值）。
+DEFAULT_RATE_LIMIT = 1000
+DEFAULT_TIMEOUT = 20000
+DEFAULT_DELAY = 200
+
+
+def int_field(node, key, default):
+    v = node.get(key)
+    if v is None:
+        return default
+    return int(v)
+
+
+def next_names(node):
+    """next 的元素是 JNodeAttr：字符串，或 {name, jump_back, anchor}。"""
+    raw = node.get("next")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raw = [raw]
+    out = []
+    for item in raw:
+        if isinstance(item, str):
+            out.append(item)
+        elif isinstance(item, dict):
+            name = item.get("name")
+            if item.get("anchor"):
+                # Maa 的 `anchor: true` 等价于 [Anchor]名字 写法
+                out.append("[Anchor]" + str(name))
+            else:
+                out.append(name)
+    return [x for x in out if x]
+
+
 def common(node):
     """通用字段：延迟、重复、jumpId。"""
     c = {}
-    if node.get("pre_delay"):
-        c["delay"] = str(int(node["pre_delay"]))
+    pre = int_field(node, "pre_delay", DEFAULT_DELAY)
+    if pre > 0:
+        c["delay"] = str(pre)
     if node.get("repeat"):
         c["repeatCount"] = int(node["repeat"])
     if node.get("repeat_delay") is not None:
@@ -326,7 +363,7 @@ def build(files, pts):
         out.append(zjs_action(atype, act_param, node, pts, name))
 
         # post_delay：Maa 是"动作后等多久"，我们插一个等待节点
-        post = int(node.get("post_delay") or 0)
+        post = int_field(node, "post_delay", DEFAULT_DELAY)
         if post > 0:
             out.append({
                 "type": "控制执行", "controlRunType": "waitDelay",
@@ -334,11 +371,10 @@ def build(files, pts):
                 "desc": "%s 收尾等待 %dms" % (name, post),
             })
 
-        nxt = node.get("next")
+        nxt = next_names(node)
         if not nxt:
-            # 没有 next：要么是终点，要么靠 [Anchor] 回跳
             continue
-        if isinstance(nxt, list) and all(x in entry_skip for x in nxt):
+        if all(x in entry_skip for x in nxt):
             # 入口的"走点位表"那条：改成按 anchor 进真正的第一步
             anchors = node.get("anchor") or {}
             target = anchors.get("初始化")
@@ -382,8 +418,12 @@ def build(files, pts):
                 "condition": ccond,
                 "jumpTo": child,
             })
-        timeout = node.get("timeout")
-        interval = int(node.get("rate_limit") or 100)
+        # -1 = 无限（我们 0 表示一直等）；缺省 20s
+        t = node.get("timeout")
+        timeout = 0 if (t is not None and int(t) == -1) else int_field(node, "timeout", DEFAULT_TIMEOUT)
+        # rate_limit 显式 0 = 不限速；我们给 1ms 免得忙等
+        rl = int_field(node, "rate_limit", DEFAULT_RATE_LIMIT)
+        interval = max(1, rl)
         out.append({
             "type": "控制执行", "controlRunType": "waitDelay",   # 占位类型，下面覆盖
             "delay": "0", "delayUnit": 0,
@@ -393,9 +433,33 @@ def build(files, pts):
         waiter["type"] = "等待候选"
         waiter["candidates"] = cands
         # timeout -1 = 一直等（我们 0 表示一直等）；其它值按毫秒
-        waiter["waitTimeoutMs"] = 0 if (timeout == -1 or timeout is None) else int(timeout)
+        waiter["waitTimeoutMs"] = timeout
         waiter["waitIntervalMs"] = interval
         out.append(waiter)
+
+        # ★ Maa 里 next 扫到超时 = 这个节点失败，走 on_error（默认空 = 任务失败）。
+        #   绝不能"继续执行文件里的下一条"—— 那会跑飞到无关节点上。
+        on_error = next_names({"next": node.get("on_error")}) if node.get("on_error") else []
+        if on_error:
+            resolved = [resolve_ref(x) for x in on_error]
+            resolved = [x for x in resolved if x]
+            cands_err = [{"jumpTo": r} for r in resolved]
+            out.append({
+                "type": "等待候选",
+                "candidates": cands_err,
+                "waitTimeoutMs": timeout,
+                "waitIntervalMs": interval,
+                "desc": "%s 的 on_error" % name,
+            })
+            out.append({
+                "type": "控制执行", "controlRunType": "stop",
+                "desc": "on_error 也没命中 → 结束（Maa 语义：任务失败）",
+            })
+        else:
+            out.append({
+                "type": "控制执行", "controlRunType": "stop",
+                "desc": "%s 的 next 等满 %dms 没命中 → 结束（Maa 语义：任务失败）" % (name, timeout),
+            })
 
     return out
 
