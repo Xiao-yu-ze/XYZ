@@ -932,7 +932,7 @@ return PosGroup(rec, par, oth)
         Z.ActionType.SET_VARS -> {
             val pairs = varsPairsOf(e)
             rows += Row(
-                "变量（名字=值，多个用 ; 分隔）",
+                "变量",
                 if (pairs.isEmpty()) "（空）" else pairs.joinToString("; ") { "${it.first}=${it.second}" },
                 Kind.TEXT,
                 field = "vars"
@@ -943,14 +943,14 @@ return PosGroup(rec, par, oth)
              */
             val askNames = varsFlagNames(e, "showInput")
             rows += Row(
-                "运行时输入的变量（名字，多个用 ; 分隔）",
+                "运行时输入",
                 if (askNames.isEmpty()) "（无，全部用配置值）" else askNames.joinToString("; "),
                 Kind.TEXT,
                 field = "vars.input"
             )
             val optional = varsFlagNames(e, "mustInput", wantFalse = true)
             rows += Row(
-                "不必填的变量（名字）",
+                "不必填",
                 if (optional.isEmpty()) "（都必填）" else optional.joinToString("; "),
                 Kind.TEXT,
                 field = "vars.mustInput"
@@ -1005,7 +1005,42 @@ return PosGroup(rec, par, oth)
                 )
             }
 
-            // 控制执行·跳转到（10.18）：目标位置，语法见 SPEC 6.5
+            /*
+         * 设置变量的交互弹窗（协议 10.24 的 dialog*）。
+         *
+         * 这六个字段执行器早就支持了（点确定赋值、点取消跑取消动作、
+         * 只问一次、到点自动点），但界面一直没有行 —— 等于配不了。
+         */
+        Z.ActionType.SET_VARS -> {
+            rows += Row("弹窗标题", anyStr(e, "dialogTitle").orEmpty(), Kind.TEXT, field = "dialogTitle")
+            rows += Row("确定按钮", anyStr(e, "dialogOKText").orEmpty(), Kind.TEXT, field = "dialogOKText")
+            rows += Row("取消按钮", anyStr(e, "dialogCancelText").orEmpty(), Kind.TEXT, field = "dialogCancelText")
+            rows += Row(
+                "自动点",
+                anyStr(e, "dialogAutoClickBtn").orEmpty().ifBlank { "（不自动）" },
+                Kind.ENUM, listOf("（不自动）", "ok", "cancel"),
+                field = "dialogAutoClickBtn"
+            )
+            rows += Row(
+                "只问一次",
+                if (anyBool(e, "dialogShowOnce")) "是" else "否",
+                Kind.SWITCH, field = "dialogShowOnce"
+            )
+            if (e["dialogCancelAction"] != null) {
+                rows += Row(
+                    "取消动作",
+                    "已配置（点取消时执行）",
+                    Kind.READONLY
+                )
+            }
+            rows += Row(
+                "说明",
+                "标题/按钮都留空 = 不弹窗，直接赋值。取消动作目前只能在文件里写。",
+                Kind.READONLY
+            )
+        }
+
+        // 控制执行·跳转到（10.18）：目标位置，语法见 SPEC 6.5
             Z.ActionType.CONTROL_JUMP -> rows += Row(
                 "跳转目标",
                 anyStr(e, "jumpToPosition").orEmpty(),

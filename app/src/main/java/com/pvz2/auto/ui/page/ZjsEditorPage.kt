@@ -912,11 +912,17 @@ class ZjsEditorPage(
         }
 
         // 标签窄一点、淡一点。它是"这行是什么"，不是内容本身。
+        /*
+         * 标签宽度固定 84dp，长文案会挤成三行，把整行撑高、还和值错位。
+         * 限两行 + 尾部省略：完整意思在「?」里，标签只负责"这是哪个字段"。
+         */
         val label = TextView(ctx).apply {
             text = row.label
             textSize = 12f
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
             setTextColor(ctx.getColor(R.color.ink_muted))
-            layoutParams = LinearLayout.LayoutParams(dp(84), LinearLayout.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(dp(96), LinearLayout.LayoutParams.WRAP_CONTENT)
         }
         line.addView(label)
 

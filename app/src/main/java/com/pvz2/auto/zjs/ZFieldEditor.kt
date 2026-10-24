@@ -448,7 +448,9 @@ object ZFieldEditor {
         "highSpeedTap", "clearBeforeInput", "ContinueParentExecute",
         "closeBeforeOpen", "onlyClose",
         // 执行脚本：跑完子脚本要不要回到本脚本（缺省 false = 整条任务结束）
-        "continueCurrentAfterFinish"
+        "continueCurrentAfterFinish",
+        // 设置变量：弹窗只问一次
+        "dialogShowOnce"
     )
 
     /** 整型 extra。`keyCode` 就是 Android KeyEvent keycode（FIELDS.md 10.10）。 */
@@ -460,7 +462,9 @@ object ZFieldEditor {
         "link", "promptType", "promptText", "inputText",
         // ★ 运行JS代码 / 执行脚本 的参数。没有这两项时，界面上改完会弹
         //   「值不合法，未保存」—— 用户以为改了，其实文件没动。
-        "jsCode", "filePath", "promptTitle"
+        "jsCode", "filePath", "promptTitle",
+        // 设置变量的交互弹窗（FIELDS 576-580）
+        "dialogTitle", "dialogOKText", "dialogCancelText", "dialogAutoClickBtn"
     )
 
     /** 取出（或新建）`extra["vars"]` 数组，改完写回；空数组就把键删掉。 */
