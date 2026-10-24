@@ -365,6 +365,7 @@ object ZActionDescriber {
         // 以前是"有什么显示什么"，没设过 delay 的动作就没有那一行，
         // 用户分不清"字段不存在"和"它等于默认值"。
         rows += section("其他")
+        rows += typeOtherRows(action)
         rows += posOthers
         rows += Row("备注", c.desc.orEmpty(), editKind("desc", c), field = "desc")
         rows += Row("跳转标识", c.jumpId.orEmpty(), editKind("jumpId", c), field = "jumpId")
@@ -548,16 +549,18 @@ object ZActionDescriber {
                     Kind.PERCENT, field = "$prefix.minSimilarPercent"
                 )
                 // 调优开关归到「其他」
+                // 本机刻意不实现（只影响速度、不影响判定），所以不给开关：
+                // 拨了不生效的开关比没有这个字段更糟。
                 oth += Row(
                     "${p}快速搜图",
-                    if (extraBool(pos, "quickSearch")) "是" else "否",
-                    Kind.SWITCH, field = "$prefix.quickSearch"
+                    if (extraBool(pos, "quickSearch")) "是（本机未实现，不影响识别）" else "否（本机未实现）",
+                    Kind.READONLY
                 )
                 oth += Row(
                     "${p}搜索模式",
                     extraStr(pos, "searchMode") ?: "color_2.21",
                     Kind.ENUM,
-                    listOf("color_2.21", "outline_2.21", "COLOR", "HOG"),
+                    listOf("color_2.21", "outline_2.21", "COLOR"),
                     field = "$prefix.searchMode"
                 )
                 oth += Row(
@@ -680,19 +683,41 @@ object ZActionDescriber {
      *
      * 只做最小可用集（够把动作跑起来），其余字段仍以只读行兜底展示。
      */
+    /**
+     * 类型专属的「调优开关」，归到「其他」小节。
+     *
+     * ★ 这里全部是**只读**：它们在协议里存在、我们也能原样存取，
+     *   但本机的执行路径根本不读它们。做成可点的开关等于骗人 ——
+     *   用户拨成"是"、以为更快了，实际什么都没变，而且更容易把
+     *   "脚本没变快"归因到别处。
+     */
+    private fun typeOtherRows(action: Z.Action): List<Row> {
+        val e = action.extra
+        val rows = ArrayList<Row>()
+        if (action.type in CLICK_FAMILY) {
+            // 极速点击（10.1）：按下立即抬起、不等回执。本机注入本来就异步，不需要它。
+            rows += Row(
+                "极速点击",
+                if (anyBool(e, "highSpeedTap")) "是（本机未实现，不影响速度）" else "否（本机未实现）",
+                Kind.READONLY
+            )
+        }
+        if (action.type == Z.ActionType.INPUT_TEXT) {
+            // clearBeforeInput（10.11）：先清空再输入。本机是"直接输入"，
+            // 不清空 —— 是否清空取决于目标输入框本身。
+            rows += Row(
+                "先清空",
+                if (anyBool(e, "clearBeforeInput")) "是（本机未实现，直接输入）" else "否（本机未实现）",
+                Kind.READONLY
+            )
+        }
+        return rows
+    }
+
     private fun typeRows(action: Z.Action): List<Row> {
         val e = action.extra
         val rows = ArrayList<Row>()
 
-        // 极速点击（10.1）：按下立即抬起，不等系统回执。整族共用。
-        if (action.type in CLICK_FAMILY) {
-            rows += Row(
-                "极速点击",
-                if (anyBool(e, "highSpeedTap")) "是" else "否",
-                Kind.SWITCH,
-                field = "highSpeedTap"
-            )
-        }
 
         /*
          * 「运行多个动作」的子动作。
@@ -701,21 +726,6 @@ object ZActionDescriber {
          * 一行，用户完全不知道里面装了什么，等价于黑盒。
          * 先给只读摘要（能看见、有多少个），编辑留到后面。
          */
-        if (action.type == Z.ActionType.RUN_MULTI) {
-            val n = action.scriptSet.size + action.scriptSetRaw.size
-            rows += Row(
-                "子动作",
-                when {
-                    action.scriptSet.isEmpty() && action.scriptSetRaw.isEmpty() ->
-                        "（空，本机不会执行任何动作）"
-                    action.scriptSetRaw.isNotEmpty() ->
-                        "共 $n 个（其中 ${action.scriptSetRaw.size} 个格式不认识，已原样保留）"
-                    else -> "共 $n 个，按顺序执行"
-                },
-                Kind.READONLY
-            )
-        }
-
         when (action.type) {
             // 按键（10.10）：Android KeyEvent keycode，0~288。
             // 用纯数字而不是下拉 —— 键名表 288 项，塞进下拉反而更难找，

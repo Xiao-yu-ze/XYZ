@@ -521,6 +521,18 @@ object ZFieldEditor {
      *   删掉的话，别人脚本里已有的 AI 点击会因为"未知类型"而解析失败，
      *   整份文件打不开（协议 P8() 对未知 type 是抛异常）。
      */
+    /**
+     * 「能加/能换」的动作类型列表（界面专用）。
+     *
+     * 统一在一处过滤：AI 点击要调云端接口，本机跑不了；
+     * 各处如果各自 `ActionType.entries.sortedBy{}`，过滤就会漏掉某一处，
+     * 于是"添加动作"里还能选到它 —— 选了之后是一条永远不执行的节点。
+     */
+    fun addableActionTypes(includeRunMulti: Boolean = true): List<Z.ActionType> =
+        Z.ActionType.entries
+            .filter { it != Z.ActionType.AI_CLICK && (includeRunMulti || it != Z.ActionType.RUN_MULTI) }
+            .sortedBy { if (it.executable) 0 else 1 }
+
     fun actionTypeLabels(): List<String> =
         Z.ActionType.entries.filter { it != Z.ActionType.AI_CLICK }.map { actionTypeLabel(it) }
 

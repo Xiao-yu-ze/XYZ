@@ -159,6 +159,9 @@ class ZExecutor(
     private var subShellDepth = 0
 
     /** 子列表嵌套上限。协议没有这一条，纯粹防止脚本自引用成无限递归。 */
+    /** 子列表内 `&` 跳转的次数上限：防止 `&-1` 这种写法变成死循环。 */
+    private val MAX_SUB_JUMPS = 10000
+
     private val MAX_SUB_SHELL_DEPTH = 8
 
     /**
@@ -1110,7 +1113,8 @@ class ZExecutor(
         // ★ 必须和"不存在"分开报：这是我们自己的缺口，不是脚本写错了。
         if (t.startsWith("&")) {
             return JumpResult.Unsupported(
-                "子动作列表跳转「$t」尚未实现（需要先支持「运行多个动作」）"
+                "「$t」是**子动作列表内部**的跳转（`&` 前缀），只在「运行多个动作」" +
+                    "的子动作里有效；写在外层动作上会被忽略"
             )
         }
 
@@ -1565,36 +1569,46 @@ class ZExecutor(
         val childSkips = ArrayList<Result.Skip>()
         subShellDepth++
         try {
-            for ((ci, kid) in kids.withIndex()) {
+            /*
+             * ★ 用 while 而不是 for：子列表内的 `&N` 跳转要能**往回跳**。
+             *
+             *   协议（SPEC.md 5.2/5.3）：在子列表里拿到 `&` 跳转时，
+             *   语义是「**当前这个子列表**从第 N 条重新开始」，
+             *   相对写法是相对当前子动作的下标。
+             *   以前这里一律打一行「跳转被忽略」就过去了 —— 于是真实脚本里
+             *   用 `&-3` 做循环的子列表会**只跑一遍**，而且日志看起来像正常执行。
+             */
+            var ci = 0
+            var jumps = 0
+            while (ci < kids.size) {
                 if (stopped) break
                 if (limit > 0 && counted >= limit) {
                     log("[$index] $label 已跑够 limitRunCount=$limit 个，结束本列表")
                     break
                 }
+                val kid = kids[ci]
                 val kidLabel = "$label › 子${ci + 1}「${ZScriptIO.actionLabel(kid)}」"
                 ran++
                 // 子动作：识别失败只跳过这一条（不牵连外层任务）
-            val outcome = executeWithRepeat(
-                kid, index, kidLabel, childSkips, abortOnRecognitionFail = false
-            )
-
+                val outcome = executeWithRepeat(
+                    kid, index, kidLabel, childSkips, abortOnRecognitionFail = false
+                )
+            
                 // 停止：协议默认语义就是全停，子列表不能把它吞掉
                 if (outcome.stop) {
                     log("[$index] $kidLabel 请求停止整个脚本")
                     return Outcome(stop = true)
                 }
-
+            
                 // 名额：只有开启 limitRunCountOnlySuc 时失败才不占名额
                 val success = outcome.abort == null
                 if (!onlySuc || success) counted++
-
+            
                 if (outcome.breakShell) {
                     log("[$index] $kidLabel 要求只结束本子列表（ContinueParentExecute）")
                     break
                 }
-                if (outcome.jumpTo != null) {
-                    log("[$index] $kidLabel 的跳转「${outcome.jumpTo}」被忽略（作用域是子列表）")
-                }
+            
                 if (outcome.abort != null) {
                     /*
                      * 子动作识别失败**不终止整条任务**：列表里某一条没认出来，
@@ -1604,11 +1618,38 @@ class ZExecutor(
                     log("[$index] $kidLabel 识别失败（子动作，不终止任务）：${outcome.abort}")
                     abortReason = null
                 }
-
+            
+                // ---- 子列表内跳转（`&N` / `&+N` / `&-N`）
+                val jump = outcome.jumpTo
+                if (jump != null) {
+                    val spec = jump.trim().removePrefix("&")
+                    if (jump.trim().startsWith("&")) {
+                        val target = if (spec.startsWith("+") || spec.startsWith("-")) {
+                            ci + (spec.toIntOrNull() ?: 0)
+                        } else {
+                            (spec.toIntOrNull() ?: 0) - 1   // 1 基
+                        }
+                        if (target in kids.indices) {
+                            jumps++
+                            if (jumps > MAX_SUB_JUMPS) {
+                                log("[$index] $label 子列表跳转超过 $MAX_SUB_JUMPS 次，强制结束（八成是死循环）")
+                                break
+                            }
+                            log("[$index] $kidLabel 子列表跳转到第 ${target + 1} 条（$jump）")
+                            ci = target
+                            continue
+                        }
+                        log("[$index] $kidLabel 子列表跳转「$jump」超出本列表范围（共 ${kids.size} 条），忽略")
+                    } else {
+                        log("[$index] $kidLabel 的跳转「$jump」指向外层脚本，被忽略（作用域是子列表）")
+                    }
+                }
+            
                 if (breakCond != null && evaluate(breakCond, index, childSkips)) {
                     log("[$index] $label 中止条件（breakCondition）命中，结束本列表")
                     break
                 }
+                ci++
             }
         } finally {
             subShellDepth--

@@ -291,7 +291,7 @@ class ZjsEditorPage(
              * 没模板的点击，和普通条目的样子完全不同 —— 用户会以为监听里的
              * 节点是另一种东西。其实同一套组件，只是被塞了个空壳。
              */
-            val sorted = Z.ActionType.entries.filter { it.executable && it != Z.ActionType.RUN_MULTI }
+            val sorted = ZFieldEditor.addableActionTypes(includeRunMulti = false).filter { it.executable }
             val labels = sorted.map { typeLabel(it) }.toTypedArray()
             androidx.appcompat.app.AlertDialog.Builder(host)
                 .setTitle("「${slot.label}」里要放什么动作")
@@ -576,7 +576,7 @@ class ZjsEditorPage(
      */
     private fun replaceActionAt(index: Int) {
         if (script == null) return
-        val sorted = Z.ActionType.entries.sortedBy { if (it.executable) 0 else 1 }
+        val sorted = ZFieldEditor.addableActionTypes()
         val labels = sorted.map { typeLabel(it) }.toTypedArray()
         androidx.appcompat.app.AlertDialog.Builder(host)
             .setTitle("换成什么动作")
@@ -1836,7 +1836,7 @@ class ZjsEditorPage(
         val cur = script ?: return
 
         // 可执行的排前面，同组内保持协议顺序
-        val sorted = Z.ActionType.entries.sortedBy { if (it.executable) 0 else 1 }
+        val sorted = ZFieldEditor.addableActionTypes()
         val labels = sorted.map { typeLabel(it) }.toTypedArray()
 
         androidx.appcompat.app.AlertDialog.Builder(host)
