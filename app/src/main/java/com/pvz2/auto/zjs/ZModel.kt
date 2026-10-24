@@ -221,7 +221,15 @@ object Z {
          */
         private fun textForJson(): Any? {
             val obj = textRaw ?: return text
-            return if (text != null && text != obj.toString()) text else obj
+            /*
+             * 被清空（text == null）→ 连正则对象一起清掉。
+             *
+             * 否则用户在编辑器里把文字删掉，界面上是空的，
+             * 存盘时旧的正则对象又被原样写回 —— 表现为「删不掉」。
+             * （parse 里 textRaw 非空时 text 必非空，所以这里只可能是用户清空）
+             */
+            if (text == null) return null
+            return if (text != obj.toString()) text else obj
         }
 
         fun toJson(): JSONObject = JSONObject().apply {

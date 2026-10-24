@@ -236,13 +236,6 @@ class ZExecutor(
                 }
                 val action = varsApplied.action
 
-                // 禁用：跳过，不算失败
-                if (action.common.disabled) {
-                    skipped.add(Result.Skip(pc, label, "已禁用"))
-                    pc++
-                    continue
-                }
-
                 /*
                  * 条件。
                  *
@@ -263,50 +256,12 @@ class ZExecutor(
                 //   用户看到的就是"卡在第一个节点"。
                 com.pvz2.auto.core.ScriptRunState.enterAction(pc, label, estimateMs(action))
 
-                val cond = action.common.condition
-                val mustCheck = cond != null && cond.disabled.not()
-                var delayDone = false
-                if (mustCheck && !cond!!.checkBeforeDelay) {
-                    val pre = preDelay(action)
-                    waitDelay(pre.first, pre.second, delayDefaultMs(action))
-                    delayDone = true
-                }
-                if (mustCheck && !evaluateWithRetry(cond!!, pc, skipped)) {
-                    /*
-                     * ★ 条件（本质就是节点的识别）不成立 → 任务结束，不是跳过。
-                     *
-                     *   颜色/图片/文字条件跑完了重试次数还是没出现，说明这个节点
-                     *   进不去。Maa 里这时任务就停在那里，不会"跳过这一条继续下一条"。
-                     *   我们原来是跳过 —— 于是整条链在一瞬间被冲完，
-                     *   界面显示"跑完 N 条"，实际一步没做（实测 3~4 秒）。
-                     *
-                     *   报错要能定位：第几条、找的是什么、为什么没找到。
-                     */
-                    val why = matcher.lastReason() ?: "条件不成立"
-                    val msg = "第 ${pc + 1} 条「$label」条件不满足：$why"
-                    skipped.add(Result.Skip(pc, label, msg))
-                    /*
-                     * 分成两种：
-                     *
-                     *   识别类条件（颜色/图片/文字）不成立 → 这个节点进不去，
-                     *   任务结束。这是 Maa 的行为，也是用户明确要求的。
-                     *
-                     *   我们还没实现的条件类型（jsExpression / conditionSet …）
-                     *   不成立是**我们的能力缺口**，不是脚本的问题 ——
-                     *   那种情况只跳过这一条并明确警告，不该把整个任务杀掉。
-                     */
-                    if (isRecognitionCondition(cond!!)) {
-                        log("[任务结束] $msg")
-                        return Result(executed, skipped, msg)
-                    }
-                    log("[跳过] $msg（这个条件类型还没实现，不据此终止任务）")
-                    pc++
-                    continue
-                }
-                if (!delayDone) {
-                    val pre = preDelay(action)
-                    waitDelay(pre.first, pre.second, delayDefaultMs(action))
-                }
+                /*
+                 * 禁用 / 条件（含识别次数与"先等待再检查"）/ 前置等待
+                 * 已经统一收进 executeWithRepeat ——
+                 * 「运行多个动作」的子动作和监听槽位里的动作同样是完整动作，
+                 * 它们的这几个字段必须一样生效。
+                 */
 
                 // 执行（含重复）
                 abortReason = null
@@ -417,12 +372,60 @@ class ZExecutor(
      * `fastRepeatMode`（FIELDS.md:118）跳过条件/坐标重算，只重放第一次的结果 ——
      * 对"连点同一个位置"能省掉每次的解析开销。
      */
+    /**
+     * 执行一条动作（含重复）。
+     *
+     * ★ 「禁用 → 条件 → 前置等待」放在这里，而不是只写在顶层循环里。
+     *
+     *   `运行多个动作` 的子动作、监听槽位里的动作**都是完整动作**，
+     *   它们的 disabled / condition / delay 必须同样生效。
+     *   原来这三段只在 `run()` 里，子动作直接进本函数 ——
+     *   导入一份带条件的真实脚本，子动作会**无条件执行**：
+     *   该等的不等、不该点的照点，属于跑错，不是少功能。
+     *
+     * @param abortOnRecognitionFail 识别类条件不成立时是否结束整条任务。
+     *        顶层动作为 true（Maa 语义：节点进不去就停）；
+     *        子动作/监听里为 false —— 只跳过这一条，不牵连外层。
+     */
     private fun executeWithRepeat(
         action: Z.Action,
         index: Int,
         label: String,
-        skipped: MutableList<Result.Skip>
+        skipped: MutableList<Result.Skip>,
+        abortOnRecognitionFail: Boolean = true
     ): Outcome {
+        // ---- 前置阶段：禁用 / 条件（含重试与"先等待再检查"）/ 前置等待 ----
+        if (action.common.disabled) {
+            skipped.add(Result.Skip(index, label, "已禁用"))
+            return Outcome()
+        }
+        run {
+            val cond = action.common.condition
+            val mustCheck = cond != null && cond.disabled.not()
+            var delayDone = false
+            if (mustCheck && !cond!!.checkBeforeDelay) {
+                val pre = preDelay(action)
+                waitDelay(pre.first, pre.second, delayDefaultMs(action))
+                delayDone = true
+            }
+            if (mustCheck && !evaluateWithRetry(cond!!, index, skipped)) {
+                val why = matcher.lastReason() ?: "条件不成立"
+                val msg = "第 ${index + 1} 条「$label」条件不满足：$why"
+                skipped.add(Result.Skip(index, label, msg))
+                if (abortOnRecognitionFail && isRecognitionCondition(cond!!)) {
+                    // 识别类条件不成立 = 这个节点进不去 → 整条任务结束
+                    log("[任务结束] $msg")
+                    return Outcome(abort = msg)
+                }
+                log("[跳过] $msg")
+                return Outcome()
+            }
+            if (!delayDone) {
+                val pre = preDelay(action)
+                waitDelay(pre.first, pre.second, delayDefaultMs(action))
+            }
+        }
+
         val repeat = action.common.repeatCount ?: 1
         /*
          * repeatCount = 0 在协议里是**无限**（FIELDS.md:115）。
@@ -538,6 +541,15 @@ class ZExecutor(
         skipped: MutableList<Result.Skip>,
         memo: RepeatMemo
     ): Outcome? {
+        /*
+         * 每次进入动作先归零"上一次的失败原因"。
+         *
+         * abortReason 是可变字段：locate 失败会写它、runMulti 会清它，
+         * 而监听里的动作失败后没人清 —— 后续一条"缺位置"之类的非识别失败
+         * 就会带着陈旧原因让整条任务以错误的名义终止。
+         * 改成"谁进入谁负责"：进来先清。
+         */
+        abortReason = null
         val c = action.common
         // duration 支持区间 "100-300"（FIELDS.md:112），取区间内随机；
         // 以前直接 toIntOrNull()，写区间就变 null → 静默掉回默认值。
@@ -1561,7 +1573,10 @@ class ZExecutor(
                 }
                 val kidLabel = "$label › 子${ci + 1}「${ZScriptIO.actionLabel(kid)}」"
                 ran++
-                val outcome = executeWithRepeat(kid, index, kidLabel, childSkips)
+                // 子动作：识别失败只跳过这一条（不牵连外层任务）
+            val outcome = executeWithRepeat(
+                kid, index, kidLabel, childSkips, abortOnRecognitionFail = false
+            )
 
                 // 停止：协议默认语义就是全停，子列表不能把它吞掉
                 if (outcome.stop) {

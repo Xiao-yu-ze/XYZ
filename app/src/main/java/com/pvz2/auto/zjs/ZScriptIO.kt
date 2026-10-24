@@ -187,7 +187,7 @@ object ZScriptIO {
             // 文件里只写了 `{"type":"控制执行"}` 时，ofWire 只能兜底成「等待」，
             // 而落盘会补成 `controlRunType:"waitDelay"` —— 等于我们替用户编了
             // 一个子类型。以前这种情况既不提示、文件还被改了。
-            if (action.controlRunTypeMissing) {
+            if (action.controlRunTypeMissing && action.type == Z.ActionType.CONTROL_WAIT) {
                 issues.add("$where 「控制执行」缺 controlRunType（本机按等待处理，保存会补成 waitDelay）")
             }
 

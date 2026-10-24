@@ -494,6 +494,35 @@ class ZjsEditorPage(
                 val list = currentActions().toMutableList()
                 if (index !in list.indices) return@setItems
                 val old = list[index]
+                /*
+                 * ★ 换类型会丢模板/识别范围，必须先问一句。
+                 *
+                 *   模板是框选 + PNG 编码出来的，没有撤销；
+                 *   这条路径以前是静默丢弃，用户在界面上看不出区别，
+                 *   直到运行时永远匹配不到才发现。
+                 *   （与「类型」下拉那条是同一个判断，复用同一个函数）
+                 */
+                if (ZFieldEditor.changeTypeWouldLoseTemplate(old, sorted[which])) {
+                    androidx.appcompat.app.AlertDialog.Builder(host)
+                        .setTitle("换类型会丢模板")
+                        .setMessage(
+                            "换成「${typeLabel(sorted[which])}」会丢掉当前位置的模板或识别范围，" +
+                                "无法撤销。继续吗？"
+                        )
+                        .setPositiveButton("继续") { _, _ ->
+                            val l2 = currentActions().toMutableList()
+                            if (index !in l2.indices) return@setPositiveButton
+                            l2[index] = newAction(sorted[which]).copy(common = old.common)
+                            commitActions(l2)
+                            adapter.submit(currentActions())
+                            expandedIndex = index
+                            adapter.notifyItemChanged(index)
+                            toast("已换成「${sorted[which].wire}」")
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
+                    return@setItems
+                }
                 list[index] = newAction(sorted[which]).copy(common = old.common)
                 commitActions(list)
                 adapter.submit(currentActions())
@@ -1966,9 +1995,16 @@ class ZjsEditorPage(
         }
 
         /** 进度条要平滑走，靠定时重画当前这一条。 */
+        /**
+         * 每 120ms 刷新"正在跑的那一条"的进度。
+         *
+         * 跳过用户**正展开着**的那一行：重建视图会打断他正在拖的滑块
+         * （展开态以前每次编辑都会被重置，所以这个组合碰不到；
+         * 现在编辑会保持展开，就撞上了）。
+         */
         fun refreshProgress() {
             val i = runState.currentIndex
-            if (i in items.indices) notifyItemChanged(i)
+            if (i in items.indices && i != expandedIndex) notifyItemChanged(i)
         }
 
         override fun getItemCount(): Int = items.size
