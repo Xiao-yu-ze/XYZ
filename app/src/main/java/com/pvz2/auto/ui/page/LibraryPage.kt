@@ -15,6 +15,7 @@ import com.pvz2.auto.MainActivity
 import com.pvz2.auto.R
 import com.pvz2.auto.core.ScriptRunState
 import com.pvz2.auto.service.AutomationService
+import com.pvz2.auto.zjs.ZjsInputs
 import com.pvz2.auto.zjs.ZjsRunner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -245,10 +246,22 @@ class LibraryPage(
                     //
                     // 先把这份脚本装进编辑器状态，否则第 3 页显示的是
                     // 上一次打开的那份，进度会画到错的节点上。
-                    ZjsRunner.loadSaved(item.file)?.let { s ->
-                        ZjsEditState.open(item.file.name, s)
+                    val runScript = ZjsRunner.loadSaved(item.file)
+                    if (runScript != null) ZjsEditState.open(item.file.name, runScript)
+                    
+                    /*
+                     * 「从键盘输入」的变量：点运行先弹窗问值，再真的开跑。
+                     *
+                     * 自动精灵就是这个流程（`value.showInput` → 运行前输入页，
+                     * 预填上次记住的值；留空且非必填 = 删掉这个变量）。
+                     * 没有这类变量时直接开跑，不多一次点击。
+                     */
+                    val inputItems = runScript?.let { ZjsInputs.collect(it) }.orEmpty()
+                    if (inputItems.isEmpty()) {
+                        AutomationService.zjsRun(host, item.file.absolutePath)
+                    } else {
+                        promptRunInputs(item.file.absolutePath, inputItems)
                     }
-                    AutomationService.zjsRun(host, item.file.absolutePath)
                     (host as? MainActivity)?.gotoPage(2)
                 }
                 // 立刻按一下，别等下一次状态回调才变字
@@ -305,6 +318,75 @@ class LibraryPage(
      * 不这么做的话，用户在第 3 页改完直接切过来点运行，跑的是磁盘上的旧版本 ——
      * 而他刚才明明看到界面变了。
      */
+    /**
+     * 运行前问「从键盘输入」的那些变量。
+     *
+     * 每个变量一个输入框，预填「上次记住的值」或脚本里配的值；
+     * 必填留空就不让开跑（自动精灵的 mustInput 默认是 true）。
+     */
+    private fun promptRunInputs(path: String, items: List<ZjsInputs.Item>) {
+        val prefs = host.getSharedPreferences("zjs_input_memory", android.content.Context.MODE_PRIVATE)
+        val dp = host.resources.displayMetrics.density
+        val box = android.widget.LinearLayout(host).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), 0)
+        }
+        val edits = ArrayList<Pair<ZjsInputs.Item, android.widget.EditText>>()
+        for (item in items) {
+            box.addView(
+                android.widget.TextView(host).apply {
+                    text = item.label + if (item.mustInput) " *" else "（可空）"
+                    setPadding(0, (10 * dp).toInt(), 0, (2 * dp).toInt())
+                }
+            )
+            if (item.desc.isNotEmpty()) {
+                box.addView(
+                    android.widget.TextView(host).apply {
+                        text = item.desc
+                        textSize = 12f
+                        setTextColor(0xFF888888.toInt())
+                    }
+                )
+            }
+            val et = android.widget.EditText(host).apply {
+                setSingleLine(true)
+                hint = item.defaultValue
+                val remembered = if (item.remember) prefs.getString(item.name, null) else null
+                setText(remembered ?: item.defaultValue)
+            }
+            box.addView(et)
+            edits.add(item to et)
+        }
+        val dlg = androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle("运行前设置变量")
+            .setView(android.widget.ScrollView(host).apply { addView(box) })
+            .setPositiveButton("开始", null)
+            .setNegativeButton("取消", null)
+            .create()
+        dlg.setOnShowListener {
+            dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val values = LinkedHashMap<String, String>()
+                for ((item, et) in edits) {
+                    val v = et.text.toString().trim()
+                    if (v.isEmpty() && item.mustInput) {
+                        et.error = "必填"
+                        et.requestFocus()
+                        return@setOnClickListener
+                    }
+                    values[item.name] = v
+                    if (item.remember) {
+                        if (v.isEmpty()) prefs.edit().remove(item.name).apply()
+                        else prefs.edit().putString(item.name, v).apply()
+                    }
+                }
+                dlg.dismiss()
+                AutomationService.zjsRun(host, path, values)
+            }
+        }
+        dlg.show()
+    }
+
+
     private fun flushEditorIfSame(name: String) {
         val st = ZjsEditState
         if (st.fileName.removeSuffix(".zjs") != name) return

@@ -68,6 +68,14 @@ class ZExecutor(
      */
     var scriptLoader: ((String) -> Z.Script?)? = null
 
+    /**
+     * 点运行时用户在弹窗里填的值（对应变量的 `value.showInput`）。
+     *
+     * 自动精灵的语义：勾了"从键盘输入"的变量，值来自这个弹窗；
+     * 弹窗里留空且不是必填 → **变量被删掉**（`zdjl.VAR_DELETE_MARK`）。
+     */
+    var initialInputs: Map<String, String> = emptyMap()
+
     /** JS 的持久化存储（zdjl.getStorage/setStorage）。null = 未接通道 */
     var jsStorage: JsStorage? = null
 
@@ -270,6 +278,8 @@ class ZExecutor(
         var steps = 0
         // 「设置变量」写入的运行时变量：每次 run 从空开始（协议里变量属于一次运行）
         scriptVars.clear()
+        // 弹窗里填的值就是这些变量的初值（自动精灵里"从键盘输入"就是这个意思）
+        initialInputs.forEach { (k, v) -> if (v.isNotEmpty()) scriptVars[k] = v }
         runStartedAt = System.currentTimeMillis()
         runActions = actions
         com.pvz2.auto.core.ScriptRunState.requestResume()
@@ -1117,6 +1127,25 @@ class ZExecutor(
                     val name = item.optString("name").trim()
                     if (name.isEmpty()) continue
                     val def = item.optJSONObject("value")
+
+                    /*
+                     * 勾了「从键盘输入」(`showInput`) 的变量：值来自运行前的弹窗。
+                     *  - 弹窗给了值        → 用弹窗的值（覆盖配置值）
+                     *  - 留空 && 必填      → 记一条跳过原因（界面本该拦住，兜一下）
+                     *  - 留空 && 不必填    → **删掉这个变量**（自动精灵的 VAR_DELETE_MARK）
+                     */
+                    if (def != null && def.optBoolean("showInput", false)) {
+                        val typed = initialInputs[name]
+                        val must = if (def.has("mustInput")) def.optBoolean("mustInput") else true
+                        when {
+                            typed == null -> Unit            // 没走弹窗（例如子脚本）：用配置值
+                            typed.isNotEmpty() -> { scriptVars[name] = typed; okCount++ }
+                            must -> bad.add("$name（必填但为空）")
+                            else -> scriptVars.remove(name)  // 与协议一致：删变量
+                        }
+                        if (typed != null) continue
+                    }
+
                     val lit = def?.let { literalOf(it) }
                     if (lit == null) {
                         // 求不出来的变量（表达式/随机数/取文本…）明确说出来，

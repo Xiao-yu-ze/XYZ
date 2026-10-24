@@ -740,6 +740,52 @@ object ZActionDescriber {
         return rows
     }
 
+    /** 取 `value` 里某个布尔标记为 true（或 wantFalse 时为 false）的变量名。 */
+    private fun varsFlagNames(
+        e: Map<String, Any?>,
+        key: String,
+        wantFalse: Boolean = false
+    ): List<String> {
+        val raw = e["vars"] ?: return emptyList()
+        val arr = runCatching {
+            when (raw) {
+                is org.json.JSONArray -> raw
+                is String -> org.json.JSONArray(raw)
+                else -> org.json.JSONArray(raw.toString())
+            }
+        }.getOrNull() ?: return emptyList()
+        val out = ArrayList<String>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val name = o.optString("name").trim()
+            if (name.isEmpty()) continue
+            val v = o.optJSONObject("value") ?: continue
+            val flag = when {
+                !v.has(key) -> false
+                else -> v.optBoolean(key, false)
+            }
+            if ((!wantFalse && flag) || (wantFalse && v.has(key) && !flag)) out.add(name)
+        }
+        return out
+    }
+
+    /** 有没有任何一个变量勾了"记住输入值"。 */
+    private fun varsRemember(e: Map<String, Any?>): Boolean {
+        val raw = e["vars"] ?: return false
+        val arr = runCatching {
+            when (raw) {
+                is org.json.JSONArray -> raw
+                is String -> org.json.JSONArray(raw)
+                else -> org.json.JSONArray(raw.toString())
+            }
+        }.getOrNull() ?: return false
+        for (i in 0 until arr.length()) {
+            val v = arr.optJSONObject(i)?.optJSONObject("value") ?: continue
+            if (v.optBoolean("rememberInputValue", false)) return true
+        }
+        return false
+    }
+
     /** 把 `extra["vars"]`（[{name, value:{varType,valueExp}}]）摊成 name=value。 */
     private fun varsPairsOf(e: Map<String, Any?>): List<Pair<String, String>> {
         val raw = e["vars"] ?: return emptyList()
@@ -821,6 +867,30 @@ object ZActionDescriber {
                 if (pairs.isEmpty()) "（空）" else pairs.joinToString("; ") { "${it.first}=${it.second}" },
                 Kind.TEXT,
                 field = "vars"
+            )
+            /*
+             * 「从键盘输入」= 协议里的 `value.showInput`（FIELDS §8.2）。
+             * 勾上的变量在**点运行时**会弹窗问值，弹窗预填下面这行的配置值。
+             */
+            val askNames = varsFlagNames(e, "showInput")
+            rows += Row(
+                "运行时输入的变量（名字，多个用 ; 分隔）",
+                if (askNames.isEmpty()) "（无，全部用配置值）" else askNames.joinToString("; "),
+                Kind.TEXT,
+                field = "vars.input"
+            )
+            val optional = varsFlagNames(e, "mustInput", wantFalse = true)
+            rows += Row(
+                "不必填的变量（名字）",
+                if (optional.isEmpty()) "（都必填）" else optional.joinToString("; "),
+                Kind.TEXT,
+                field = "vars.mustInput"
+            )
+            rows += Row(
+                "记住输入值",
+                if (varsRemember(e)) "是" else "否",
+                Kind.SWITCH,
+                field = "vars.remember"
             )
             rows += Row(
                 "说明",

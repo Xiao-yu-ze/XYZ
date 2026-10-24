@@ -458,6 +458,25 @@ object ZFieldEditor {
         "link", "promptType", "promptText", "inputText"
     )
 
+    /** 取出（或新建）`extra["vars"]` 数组，改完写回；空数组就把键删掉。 */
+    private fun withVars(action: Z.Action, block: (org.json.JSONArray) -> Unit): Z.Action {
+        val raw = action.extra["vars"]
+        val arr = runCatching {
+            when (raw) {
+                is org.json.JSONArray -> raw
+                is String -> org.json.JSONArray(raw)
+                null -> org.json.JSONArray()
+                else -> org.json.JSONArray(raw.toString())
+            }
+        }.getOrNull() ?: org.json.JSONArray()
+        block(arr)
+        return action.copy(
+            extra = action.extra.toMutableMap().apply {
+                if (arr.length() == 0) remove("vars") else put("vars", arr)
+            }
+        )
+    }
+
     /** 动作专属字段的写回。不认识的键返回 null（调用方会提示"值不合法"）。 */
     private fun applyExtra(action: Z.Action, field: String, value: String): Z.Action? = when {
         // 布尔：关掉时**删键**而不是写 false。
@@ -472,11 +491,22 @@ object ZFieldEditor {
         /*
          * `vars`（设置变量）：界面用 `名字=值;名字2=值2` 表达。
          *
+         * ★ 必须**合并**而不是重建：`value` 里还有 showInput / mustInput /
+         *   rememberInputValue / showInputLabel 这些字段（FIELDS.md §8.2），
+         *   重建会把"运行时问用户"的设置整块丢掉。
+         *
          * 值能当数字就按 number 存、否则 string —— 协议里 varType 决定后面
          * 怎么求值，类型存错会让「关卡+1」变成字符串拼接。
          */
-        field == "vars" -> {
-            val arr = org.json.JSONArray()
+        field == "vars" -> withVars(action) { arr ->
+            val byName = HashMap<String, org.json.JSONObject>()
+            for (i in 0 until arr.length()) {
+                arr.optJSONObject(i)?.let { o ->
+                    val n = o.optString("name").trim()
+                    if (n.isNotEmpty()) byName[n] = o
+                }
+            }
+            val keep = ArrayList<org.json.JSONObject>()
             value.split(';', '\n', '；').forEach { piece ->
                 val seg = piece.trim()
                 if (seg.isEmpty()) return@forEach
@@ -486,21 +516,51 @@ object ZFieldEditor {
                 val raw = seg.substring(eq + 1).trim()
                 if (name.isEmpty()) return@forEach
                 val isNum = raw.toDoubleOrNull() != null
-                arr.put(
-                    org.json.JSONObject().apply {
-                        put("name", name)
-                        put("value", org.json.JSONObject().apply {
-                            put("varType", if (isNum) "number" else "string")
-                            put("valueExp", if (isNum) raw else "\"" + raw + "\"")
-                        })
-                    }
-                )
+                val o = byName[name] ?: org.json.JSONObject().apply { put("name", name) }
+                val v = o.optJSONObject("value") ?: org.json.JSONObject()
+                v.put("varType", if (isNum) "number" else "string")
+                v.put("valueExp", if (isNum) raw else "\"" + raw + "\"")
+                o.put("value", v)
+                keep.add(o)
             }
-            action.copy(
-                extra = action.extra.toMutableMap().apply {
-                    if (arr.length() == 0) remove("vars") else put("vars", arr)
-                }
-            )
+            keep.forEachIndexed { i, o -> arr.put(i, o) }
+            while (arr.length() > keep.size) arr.remove(arr.length() - 1)
+        }
+
+        // 哪些变量要在"点运行"时问用户（showInput = 从键盘输入）
+        field == "vars.input" -> withVars(action) { arr ->
+            val want = value.split(';', '\n', '；', ',', '，')
+                .map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val n = o.optString("name").trim()
+                val v = o.optJSONObject("value") ?: org.json.JSONObject()
+                if (n in want) v.put("showInput", true) else v.remove("showInput")
+                o.put("value", v)
+            }
+        }
+
+        // 哪些是"不必填"（协议里 mustInput 默认 true）
+        field == "vars.mustInput" -> withVars(action) { arr ->
+            val optional = value.split(';', '\n', '；', ',', '，')
+                .map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val n = o.optString("name").trim()
+                val v = o.optJSONObject("value") ?: org.json.JSONObject()
+                if (n in optional) v.put("mustInput", false) else v.remove("mustInput")
+                o.put("value", v)
+            }
+        }
+
+        // 记住上次输入（对所有"要问"的变量生效）
+        field == "vars.remember" -> withVars(action) { arr ->
+            val on = truthy(value)
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val v = o.optJSONObject("value") ?: continue
+                if (on) v.put("rememberInputValue", true) else v.remove("rememberInputValue")
+            }
         }
 
         field in EXTRA_STRINGS ->

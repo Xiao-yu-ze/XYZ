@@ -197,6 +197,11 @@ class AutomationService : Service() {
                 Log.i(TAG, "[zjs] 收到运行请求")
                 startForegroundCompat()
                 val path = intent.getStringExtra(EXTRA_ZJS_PATH)
+                // 「从键盘输入」的变量：界面弹窗里填的值从这里进来
+                pendingJsInputs =
+                    intent.getBundleExtra(EXTRA_ZJS_INPUTS)?.let { b ->
+                        b.keySet().associateWith { k -> b.getString(k).orEmpty() }
+                    }.orEmpty()
                 Log.i(TAG, "[zjs] path=$path")
                 if (path.isNullOrBlank()) {
                     ScriptRunState.finish("没有指定脚本文件")
@@ -725,6 +730,8 @@ class AutomationService : Service() {
                     ?.let { com.pvz2.auto.zjs.ZjsRunner.loadSaved(it.file) }
             }.getOrNull()
         }
+        executor.initialInputs = pendingJsInputs
+        pendingJsInputs = emptyMap()
         zjsExecutor = executor
         // ★ scriptName 必须是**脚本文件名**，不能是字面量 "zjs"。
         //
@@ -877,6 +884,19 @@ class AutomationService : Service() {
     private const val ACTION_ZJS_RUN = "com.pvz2.auto.ZJS_RUN"
     private const val ACTION_ZJS_STOP = "com.pvz2.auto.ZJS_STOP"
     private const val EXTRA_ZJS_PATH = "zjs_path"
+
+    /** 「从键盘输入」的变量值（Bundle<String,String>） */
+    private const val EXTRA_ZJS_INPUTS = "zjs_inputs"
+
+    /**
+     * 「从键盘输入」的变量值，从 intent 传到执行器创建处。
+     *
+     * 两个位置不在同一作用域（一个是 onStartCommand 的 when 分支，
+     * 一个是创建执行器的地方），只能用一个字段过渡；用完立刻清空，
+     * 免得下一次运行吃到上一轮的值。
+     */
+    @Volatile
+    private var pendingJsInputs: Map<String, String> = emptyMap()
     private const val ACTION_MANUAL_TAP = "com.pvz2.auto.MANUAL_TAP"
     private const val EXTRA_TAP_X = "tap_x"
     private const val EXTRA_TAP_Y = "tap_y"
@@ -943,8 +963,24 @@ class AutomationService : Service() {
          * @param path   `.zjs` 文件路径
          */
         fun zjsRun(context: Context, path: String) {
+            zjsRun(context, path, emptyMap())
+        }
+
+        /**
+         * 运行脚本，并带上「从键盘输入」那些变量的值。
+         *
+         * 这些值对应 `value.showInput=true` 的变量 —— 自动精灵的做法是
+         * 点运行时弹窗问用户，确认后再跑（见 ZjsInputs 的注释）。
+         */
+        fun zjsRun(context: Context, path: String, jsInputs: Map<String, String>) {
             val i = intent(context, ACTION_ZJS_RUN)
             i.putExtra(EXTRA_ZJS_PATH, path)
+            if (jsInputs.isNotEmpty()) {
+                i.putExtra(
+                    EXTRA_ZJS_INPUTS,
+                    android.os.Bundle().apply { jsInputs.forEach { (k, v) -> putString(k, v) } }
+                )
+            }
             ContextCompat.startForegroundService(context, i)
         }
 

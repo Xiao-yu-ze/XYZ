@@ -186,6 +186,42 @@ class ZExecutorControlFlowTest {
     }
 
     @Test
+    fun `从键盘输入的变量：点运行时收集、必填校验、空且非必填就删掉`() {
+        val src = listOf(
+            """{"type":"设置变量","delayUnit":0,"vars":[""" +
+                """{"name":"关卡","value":{"varType":"number","valueExp":"1","showInput":true,"showInputLabel":"起始关卡","rememberInputValue":true}},""" +
+                """{"name":"备注","value":{"varType":"string","valueExp":"\"默认\"","showInput":true,"mustInput":false}}]}""",
+            """{"type":"运行JS代码","delayUnit":0,"jsCode":"console.log('关卡=' + zdjl.getVar('关卡') + ' 备注=' + zdjl.getVar('备注'))"}"""
+        )
+        val sc = script(*src.toTypedArray())
+
+        // 1) 收集：两个都要问，标签/必填/记住/默认值都对
+        val items = ZjsInputs.collect(sc)
+        assertEquals(2, items.size)
+        val k = items.first { it.name == "关卡" }
+        assertEquals("起始关卡", k.label)
+        assertTrue("mustInput 缺省应为 true", k.mustInput)
+        assertTrue("remember 应为 true", k.remember)
+        assertEquals("1", k.defaultValue)
+        val note = items.first { it.name == "备注" }
+        assertTrue("显式 false 应当保留", !note.mustInput)
+        assertEquals("默认", note.defaultValue)
+
+        // 2) 弹窗填 5 → 变量就是 5
+        val logs = ArrayList<String>()
+        executor(logs).let { ex ->
+            ex.initialInputs = mapOf("关卡" to "5", "备注" to "")
+            val r = ex.run(sc)
+            assertEquals(0, r.skipped.size)
+        }
+        assertTrue("应当用弹窗的值：$logs", logs.any { it.contains("关卡=5") })
+        assertTrue(
+            "空且非必填 → 变量被删（getVar 得到空）：$logs",
+            logs.any { it.contains("备注=") && !it.contains("备注=默认") }
+        )
+    }
+
+    @Test
     fun `JS 语法错误要报出来，不能装作跑过`() {
         val logs = ArrayList<String>()
         val r = executor(logs).run(
