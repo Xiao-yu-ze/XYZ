@@ -91,6 +91,15 @@ class ZExecutor(
         fun findNode(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit>
 
         /**
+         * 把 [rect] 里**所有**文字识别出来（「识别屏幕」动作用）。
+         *
+         * 和 [findText] 的区别：那里是「找一句指定的话、返回位置」，
+         * 这里是「把看到的字都读出来」—— 要的是文本本身，不是坐标。
+         * 默认返回空表示这个匹配器做不到（单测里的假实现就不用管它）。
+         */
+        fun ocrTexts(rect: IntArray): List<String> = emptyList()
+
+        /**
          * 上一次查找没命中的**具体原因**。null = 就是没找到。
          *
          * 区分这两件事很重要：「没找到」该去调阈值或换模板；
@@ -812,6 +821,64 @@ class ZExecutor(
                 }
                 if (subResult.error != null) {
                     skipped.add(Result.Skip(index, label, "子脚本中止：${subResult.error}"))
+                }
+                Outcome()
+            }
+
+            // ---- 识别屏幕（10.12 m21687）
+            //
+            // 协议：config.recognitionMode（ocr_local / ocr_local_comp / ocr_online /
+            // image_captcha / get_image_data / position_by_human）+ useResultMode
+            // （clipboard / input，默认 clipboard）。
+            //
+            // 本机能做的是**本地 OCR**；云端识别、验证码识图、取图像数据、
+            // 人工定位这四种没有对应能力，明确报出来，不做成"跑过了但什么也没发生"。
+            Z.ActionType.RECOGNIZE_SCREEN -> {
+                val cfg = action.extra["config"]
+                val mode = runCatching {
+                    val o = when (cfg) {
+                        is org.json.JSONObject -> cfg
+                        is String -> org.json.JSONObject(cfg)
+                        else -> org.json.JSONObject()
+                    }
+                    o.optString("recognitionMode")
+                }.getOrNull()?.ifBlank { null } ?: "ocr_local"
+                if (mode != "ocr_local" && mode != "ocr_local_comp") {
+                    skipped.add(
+                        Result.Skip(index, label, "识别屏幕：模式「$mode」本机不支持（只支持本地 OCR）")
+                    )
+                    return null
+                }
+                val rect = intArrayOf(0, 0, screen.width, screen.height)
+                val texts = try {
+                    matcher.ocrTexts(rect)
+                } catch (e: Throwable) {
+                    skipped.add(Result.Skip(index, label, "识别屏幕失败：${e.message}"))
+                    return null
+                }
+                if (texts.isEmpty()) {
+                    skipped.add(
+                        Result.Skip(index, label, "识别屏幕：没识别出文字（${matcher.lastReason() ?: "画面无字"}）")
+                    )
+                    return null
+                }
+                val joined = texts.joinToString("\n")
+                log("[$index] $label 识别屏幕：${texts.size} 行，共 ${joined.length} 字")
+                val useResult = action.extra["useResultMode"]?.toString()?.trim().orEmpty()
+                    .ifBlank { "clipboard" }
+                if (useResult == "input") {
+                    try {
+                        inject.inputText(joined)
+                    } catch (e: Throwable) {
+                        skipped.add(Result.Skip(index, label, "识别屏幕：输入失败（${e.message}）"))
+                        return null
+                    }
+                } else {
+                    // clipboard：剪贴板是 UI 侧能力，执行器没有这个通道，如实报
+                    skipped.add(
+                        Result.Skip(index, label, "识别屏幕：结果模式「clipboard」本机未接剪贴板通道")
+                    )
+                    log("[$index] $label 识别到的文字：${joined.take(120)}")
                 }
                 Outcome()
             }

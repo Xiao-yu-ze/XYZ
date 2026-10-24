@@ -386,7 +386,8 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
         MULTI_SWIPE("多指手势", executable = true),
         KEY("按键", executable = true),
         INPUT_TEXT("输入内容", executable = true),
-        RECOGNIZE_SCREEN("识别屏幕"),
+        /* 识别屏幕：本地 OCR 读出整屏文字；clipboard 模式本机未接通道。 */
+    RECOGNIZE_SCREEN("识别屏幕", executable = true),
         OPEN_APP("打开应用", executable = true),
         OPEN_LINK("打开链接", executable = true),
         /* 执行脚本：filePath 指向另一个脚本文件，由 AutomationService 接的加载通道读出来跑。 */
@@ -407,7 +408,8 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          *     · pause 被跳过 → 该停的地方**继续点**，比停下来更危险。
          *   标回 false：界面如实显示"暂不支持"，保存前校验也会提示。
          */
-        CONTROL_SET_JUMP_ID("控制执行", "setJumpId"),
+        /* 设置跳转标识=纯标签（协议里无独有字段），执行器已有分支（什么都不做）。 */
+    CONTROL_SET_JUMP_ID("控制执行", "setJumpId", executable = true),
         /* 暂停：执行器现在真的会停下来等「继续」（ScriptRunState.paused）。 */
     CONTROL_PAUSE("控制执行", "pause", executable = true),
         CONTROL_STOP("控制执行", "stop", executable = true),

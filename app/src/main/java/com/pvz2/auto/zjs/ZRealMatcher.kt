@@ -339,6 +339,36 @@ class ZRealMatcher(
      * 相似度 90 只认很确定的识别结果，50 放宽。写死一个值的话，
      * 用户调了滑块却没有任何效果 —— 那比不给这个滑块更糟。
      */
+    /**
+     * 整块区域的文字识别（「识别屏幕」动作用）。
+     *
+     * 复用 findText 的那套 OCR 引擎，但**不做相似度比较** ——
+     * 这里要的是"画面上的字都是什么"，不是"有没有我要找的那句"。
+     */
+    override fun ocrTexts(rect: IntArray): List<String> {
+        val ctx = context ?: run {
+            lastUnsupported = "文字识别缺少 Context（内部错误）"
+            return emptyList()
+        }
+        val m = nextFrame() ?: run {
+            lastUnsupported = "拿不到当前帧"
+            return emptyList()
+        }
+        val engine = ocrEngine(ctx) ?: run {
+            lastUnsupported = "OCR 模型加载失败（assets/ocr）"
+            return emptyList()
+        }
+        val roi = clampRect(rect, m.width(), m.height())
+        val region = m.submat(
+            org.opencv.core.Rect(roi[0], roi[1], roi[2] - roi[0], roi[3] - roi[1])
+        )
+        return try {
+            engine.recognize(region, 0.3).map { it.text }.filter { it.isNotBlank() }
+        } finally {
+            region.release()
+        }
+    }
+
     override fun findText(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit> {
         val want = pos.text?.trim().orEmpty()
         if (want.isEmpty()) {
