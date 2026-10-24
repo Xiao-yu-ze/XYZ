@@ -15,6 +15,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.pvz2.auto.R
 import com.pvz2.auto.zjs.Z
 import com.pvz2.auto.zjs.ZActionDescriber
+import com.pvz2.auto.zjs.ZFieldHelp
 import com.pvz2.auto.zjs.ZConditionEditor
 import com.pvz2.auto.zjs.ZFieldEditor
 import com.pvz2.auto.zjs.ZScriptIO
@@ -827,7 +828,56 @@ class ZjsEditorPage(
      *
      * 所以渲染只写一份，点击/开关/滑块各自传进来。
      */
+    /**
+     * 行渲染的**外壳**：先按原样画出来，再在行尾补一个「?」。
+     *
+     * 为什么包一层而不是在里面每个分支各加一次 —— 里面有多处提前 return
+     * （开关、滑块、缩略图各一条），逐处加必然漏掉一个分支；
+     * 包一层就与分支无关，**每个带 field 的行都会自动有问号**。
+     */
     private fun buildRowView(
+        row: ZActionDescriber.Row,
+        imageData: Z.ImageData?,
+        onClick: () -> Unit,
+        onToggle: (Boolean) -> Unit,
+        onPercent: (Int) -> Unit
+    ): View {
+        val v = buildRowViewInner(row, imageData, onClick, onToggle, onPercent)
+        val help = row.help ?: ZFieldHelp.of(row.field)
+        if (help != null && v is LinearLayout) {
+            v.addView(helpGlyph(row.label, help))
+        }
+        return v
+    }
+
+    /** 行尾的「?」：点开一个说明弹窗。 */
+    private fun helpGlyph(label: String, help: String): View {
+        val ctx = host
+        return TextView(ctx).apply {
+            text = "?"
+            textSize = 12f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(ctx.getColor(R.color.ink_muted))
+            layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply {
+                marginStart = dp(4)
+            }
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setStroke(dp(1), ctx.getColor(R.color.ink_faint))
+            }
+            isClickable = true
+            contentDescription = "$label 的说明"
+            setOnClickListener {
+                androidx.appcompat.app.AlertDialog.Builder(ctx)
+                    .setTitle(label)
+                    .setMessage(help)
+                    .setPositiveButton("知道了", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun buildRowViewInner(
         row: ZActionDescriber.Row,
         imageData: Z.ImageData?,
         onClick: () -> Unit,

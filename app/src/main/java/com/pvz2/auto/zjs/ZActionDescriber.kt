@@ -82,7 +82,14 @@ object ZActionDescriber {
         /** 枚举选项，仅 [Kind.ENUM] 有。 */
         val options: List<String> = emptyList(),
         /** 这一行对应模型里的哪个字段，写回时用。空 = 只读。 */
-        val field: String = ""
+        val field: String = "",
+        /**
+         * 这一行字段的说明，界面上「?」点开显示的就是它。
+         *
+         * 默认取 [ZFieldHelp]（按 [field] 查，与前缀无关）；
+         * 需要覆盖时才在这里显式给。
+         */
+        val help: String? = null
     )
 
     /** 时间单位的显示名，与 [Z.TimeUnit] 一一对应。 */
