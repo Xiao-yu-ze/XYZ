@@ -209,6 +209,14 @@ object ZConditionEditor {
 
                 Z.PosType.COLOR -> {
                     rows += Row("颜色", pos.color.orEmpty(), Kind.TEXT, field = "cond.color")
+            // 颜色从屏幕取，不靠手输（理由同动作侧）
+            rows += Row(
+                "从屏幕取色",
+                if (pos.color.isNullOrBlank()) "点右边按钮在画面上取一个颜色"
+                else "重新取色（当前 #${pos.color}）",
+                Kind.COORD,
+                field = "cond.colorPick"
+            )
                     rows += Row(
                         "相似度",
                         pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",

@@ -1235,6 +1235,22 @@ class ZjsEditorPage(
 
     /** 改条件里的一个字段，然后回到条件编辑列表。 */
     private fun editConditionRow(t: CondTarget, row: ZActionDescriber.Row) {
+        // 取色：与动作侧共用同一套准星，读当前帧像素写回 cond.color
+        if (row.field == "cond.colorPick") {
+            val c = t.condition ?: return
+            val cx = c.posData?.extra?.get("limitPosX")?.toString()?.toIntOrNull()
+            val cy = c.posData?.extra?.get("limitPosY")?.toString()?.toIntOrNull()
+            pickColorThen(cx, cy) { hex, _, _ ->
+                commitConditionField(
+                    t,
+                    ZActionDescriber.Row("颜色", hex, ZActionDescriber.Kind.TEXT, field = "cond.color"),
+                    hex
+                )
+                toast("已取色 #$hex")
+            }
+            return
+        }
+
         val condition = t.condition ?: return
 
         /*
@@ -2692,6 +2708,56 @@ class ZjsEditorPage(
      *
      * @param field 被点的那一行字段，形如 `位置.x` / `起点.x` / `位置.limitPosX`
      */
+    /**
+     * 从画面上取一个颜色。
+     *
+     * 复用现有的准星取点器（和位置取点同一套交互），拿到坐标后**直接读当前帧那一像素**，
+     * 而不是让用户手输 `#RRGGBB`——手输要么靠截图去别处取（压缩后色值已经偏了），
+     * 要么填错一个字符就永远匹配不到，而失败信息里只有"没找到这个颜色"。
+     */
+    private fun pickColorThen(
+        initialX: Int?,
+        initialY: Int?,
+        onPicked: (hex: String, xPct: String, yPct: String) -> Unit
+    ) {
+        host.lifecycleScope.launch {
+            val bitmap = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
+            if (bitmap == null || bitmap.isRecycled) {
+                toast("没有画面可取样：先在首页把游戏启动到虚拟屏")
+                return@launch
+            }
+            val deferred = host.lifecycleScope.async {
+                com.pvz2.auto.core.PreviewPicker.result.firstOrNull {
+                    it.mode == com.pvz2.auto.core.PreviewPicker.Mode.POINT
+                }
+            }
+            val initial = if (initialX != null && initialY != null) {
+                com.pvz2.auto.core.PreviewPicker.Point(initialX, initialY)
+            } else null
+            com.pvz2.auto.core.PreviewPicker.arm(
+                com.pvz2.auto.core.PreviewPicker.Mode.POINT,
+                initial = initial,
+                frozenFrame = bitmap
+            )
+            toast("把准星拖到要取色的位置，点确定")
+            val r = deferred.await() ?: return@launch
+            val bmp = com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value ?: bitmap
+            val px = r.x.coerceIn(0, bmp.width - 1)
+            val py = r.y.coerceIn(0, bmp.height - 1)
+            val c = bmp.getPixel(px, py)
+            val hex = "%02X%02X%02X".format(
+                android.graphics.Color.red(c),
+                android.graphics.Color.green(c),
+                android.graphics.Color.blue(c)
+            )
+            onPicked(
+                hex,
+                "%.2f%%".format(100.0 * r.x / r.screenWidth),
+                "%.2f%%".format(100.0 * r.y / r.screenHeight)
+            )
+        }
+    }
+
     private fun onPickPoint(field: String, actionIndex: Int) {
         val cur = script ?: return
         val action = currentActions().getOrNull(actionIndex) ?: return
@@ -2705,6 +2771,36 @@ class ZjsEditorPage(
          * 就算挂了取点按钮，取到的值也只会写到 x/y 上 —— 用户看到的是
          * "点了取点没反应"（其实改的是另一对字段）。
          */
+        /*
+         * 取色：同一个准星，但拿到的点用来读像素而不是写坐标。
+         * 顺便把「指定位置」写成这个点 —— 协议里 limitPos 设置后会忽略 limitArea，
+         * 语义正是"只看这一个点是不是这个颜色"。
+         */
+        if (field.endsWith(".colorPick")) {
+            val cPrefix = field.removeSuffix(".colorPick")
+            val cPos = when (cPrefix) {
+                "起点" -> action.startPos
+                "终点" -> action.endPos
+                else -> action.posData
+            }
+            val cx = cPos?.extra?.get("limitPosX")?.toString()?.toIntOrNull()
+            val cy = cPos?.extra?.get("limitPosY")?.toString()?.toIntOrNull()
+            pickColorThen(cx, cy) { hex, xp, yp ->
+                var updated = ZFieldEditor.apply(action, "$cPrefix.color", hex) ?: action
+                updated = ZFieldEditor.apply(updated, "${cPrefix}limitPosX", xp) ?: updated
+                updated = ZFieldEditor.apply(updated, "${cPrefix}limitPosY", yp) ?: updated
+                val l = currentActions().toMutableList()
+                if (actionIndex !in l.indices) return@pickColorThen
+                l[actionIndex] = updated
+                commitActions(l)
+                adapter.submit(currentActions())
+                expandedIndex = actionIndex
+                adapter.notifyItemChanged(actionIndex)
+                toast("已取色 #$hex")
+            }
+            return
+        }
+
         val limitPos = field.endsWith("limitPosX") || field.endsWith("limitPosY")
         // 带点的前缀：`位置.` / `起点.` / `终点.`（limitPos 的键名挂在它后面）
         val prefix = if (limitPos) field.substringBeforeLast("limitPos") else field.removeSuffix(".x")

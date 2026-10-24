@@ -538,6 +538,21 @@ object ZActionDescriber {
 
             Z.PosType.COLOR -> {
                 rows += Row("${p}颜色", pos.color.orEmpty(), Kind.TEXT, field = "$prefix.color")
+            /*
+             * ★ 颜色必须能从画面上取，不能让用户手输 #RRGGBB。
+             *
+             *   手输有两个坑：用户没有吸管工具，只能靠截图后到别处取色，
+             *   而截图经过压缩/缩放之后色值本来就偏；填错一个字符就永远匹配不到，
+             *   且失败信息里只有"没找到这个颜色"，看不出是色值本身就错。
+             *   取色直接读当前帧那一像素，所见即所得。
+             */
+            rows += Row(
+                "${p}从屏幕取色",
+                if (pos.color.isNullOrBlank()) "点右边按钮在画面上取一个颜色"
+                else "重新取色（当前 #${pos.color}）",
+                Kind.COORD,
+                field = "$prefix.colorPick"
+            )
                 rows += Row(
                     "${p}相似度",
                     pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",

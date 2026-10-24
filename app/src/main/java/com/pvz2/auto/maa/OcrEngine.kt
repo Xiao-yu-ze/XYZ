@@ -110,17 +110,104 @@ class OcrEngine(private val context: Context) : AutoCloseable {
         val rec = recSession ?: return emptyList()
         if (region.empty()) return emptyList()
 
-        return try {
-            val boxes = detect(environment, det, region)
-            if (boxes.isEmpty()) return emptyList()
-
-            boxes.mapNotNull { box ->
-                recognizeBox(environment, rec, region, box, minConfidence)
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "OCR 推理失败", t)
-            emptyList()
+        /*
+         * ★ 一次识别不成，就换几种"看这张图的方式"再试。
+         *
+         *   PP-OCR 的检测头是在"浅底深字"的文档图上训出来的。
+         *   游戏里大量按钮是**深底浅字**，或者字与背景亮度接近 ——
+         *   这时检测概率图整体偏弱，二值化后一个框都没有，
+         *   于是报"这一块里没识别出任何文字"，而画面里明明全是字。
+         *   用户会去调相似度阈值，越调越偏。
+         *
+         *   四种看法，顺序有讲究：
+         *     ① 原图      —— 绝大多数情况一次就成，不增加开销
+         *     ② 反色      —— 深底浅字 → 浅底深字，最有效的一次补试
+         *     ③ 灰度拉伸  —— 字与背景对比度低时，把动态范围拉到 0~255
+         *     ④ 反色拉伸  —— 两种组合
+         *   命中即返回，不做无谓的后续尝试。
+         */
+        val variants = ArrayList<Pair<String, Mat>>(4)
+        fun add(name: String, m: Mat) {
+            if (!m.empty()) variants.add(name to m)
         }
+        return try {
+            add("原图", region)
+            add("反色", invertMat(region))
+            add("灰度拉伸", stretchMat(region))
+            add("反色拉伸", stretchMat(invertMat(region)))
+
+            for ((name, m) in variants) {
+                val lines = try {
+                    val boxes = detect(environment, det, m)
+                    boxes.mapNotNull { box -> recognizeBox(environment, rec, m, box, minConfidence) }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "OCR 检测失败（$name）", t)
+                    emptyList()
+                }
+                if (lines.isNotEmpty()) {
+                    if (name != "原图") Log.i(TAG, "OCR 用「$name」命中 ${lines.size} 行")
+                    return lines
+                }
+            }
+
+            /*
+             * ★ 整块兜底：检测框没框出来时，直接把整个区域当成一行文字送去识别。
+             *
+             *   用户框的往往就是一个按钮，区域里本来就只有一行字 ——
+             *   这时检测是多余的，识别网络单独也能认。
+             *   只对小区域启用：大区域整块送识别会出乱码，而且慢。
+             */
+            if (region.width() <= WHOLE_MAX_W && region.height() <= WHOLE_MAX_H) {
+                val whole = TextBox(0, 0, region.width(), region.height())
+                for ((name, m) in variants) {
+                    val line = try {
+                        recognizeBox(environment, rec, m, whole, minConfidence)
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "OCR 整块识别失败（$name）", t)
+                        null
+                    }
+                    if (line != null) {
+                        Log.i(TAG, "OCR 整块兜底命中（$name）：${line.text}")
+                        return listOf(line)
+                    }
+                }
+            }
+            emptyList()
+        } finally {
+            // 中间图必须显式释放：识别是 200ms 级循环，漏一块就攒一块
+            for ((name, m) in variants) {
+                if (name != "原图") runCatching { m.release() }
+            }
+        }
+    }
+
+    /** 反色：深底浅字 ↔ 浅底深字。 */
+    private fun invertMat(src: Mat): Mat {
+        val out = Mat()
+        return runCatching { org.opencv.core.Core.bitwise_not(src, out); out }
+            .getOrElse { runCatching { out.release() }; Mat() }
+    }
+
+    /**
+     * 灰度 + 对比度拉伸到 0~255。
+     *
+     * 字与背景亮度接近时检测头的概率图很弱，先把动态范围拉开，
+     * 相当于替它做一步增强。输出 BGR 三通道，检测与识别两条路径都吃。
+     */
+    private fun stretchMat(src: Mat): Mat {
+        val gray = Mat()
+        val norm = Mat()
+        val out = Mat()
+        val ok = runCatching {
+            val code = if (src.channels() == 4) Imgproc.COLOR_RGBA2GRAY else Imgproc.COLOR_BGR2GRAY
+            Imgproc.cvtColor(src, gray, code)
+            org.opencv.core.Core.normalize(gray, norm, 0.0, 255.0, org.opencv.core.Core.NORM_MINMAX)
+            Imgproc.cvtColor(norm, out, Imgproc.COLOR_GRAY2BGR)
+        }.isSuccess
+        runCatching { gray.release() }
+        runCatching { norm.release() }
+        if (!ok) { runCatching { out.release() }; return Mat() }
+        return out
     }
 
     // ------------------------------------------------------------ 文本检测
@@ -325,7 +412,9 @@ class OcrEngine(private val context: Context) : AutoCloseable {
              */
             val code = if (normalized.channels() == 4) Imgproc.COLOR_RGBA2BGR else -1
             if (code >= 0) Imgproc.cvtColor(normalized, rgb, code) else normalized.copyTo(rgb)
-            Imgproc.cvtColor(normalized, rgb, code)
+            // 只转一次。原来这里多了一行无条件的 cvtColor：
+            // 3 通道输入时 code 是 -1，cvtColor 直接抛异常 →
+            // 整行被 mapNotNull 吞掉 → 表现为「这一块识别不出文字」。
 
             val data = MatToTensor.nchw(rgb, mean = REC_MEAN, scale = REC_SCALE)
             // 右侧补 0 到 REC_MAX_WIDTH，宽度归一化后位置编码才稳定。
@@ -437,6 +526,10 @@ class OcrEngine(private val context: Context) : AutoCloseable {
         val DET_MEAN_RGB = floatArrayOf(0.485f, 0.456f, 0.406f)
         val DET_STD_RGB = floatArrayOf(0.229f, 0.224f, 0.225f)
         const val DET_BINARY_THRESHOLD = 0.3f
+
+        /** 整块兜底的最大尺寸：再大就不该整块送识别（出乱码且慢）。 */
+        const val WHOLE_MAX_W = 600
+        const val WHOLE_MAX_H = 160
 
         /** 识别输入高度固定 48，宽度上限 320。 */
         const val REC_HEIGHT = 48
