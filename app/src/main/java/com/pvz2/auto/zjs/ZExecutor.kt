@@ -739,10 +739,26 @@ class ZExecutor(
         val c = action.common
         // duration 支持区间 "100-300"（FIELDS.md:112），取区间内随机；
         // 以前直接 toIntOrNull()，写区间就变 null → 静默掉回默认值。
-        val hold = randomIn(c.duration)?.toInt() ?: when (action.type) {
+        val holdRaw = randomIn(c.duration)?.toInt() ?: when (action.type) {
             Z.ActionType.SWIPE -> 1000
             else -> 100
         }
+        /*
+         * 「极速点击模式」（协议 10.1 `highSpeedTap`）。
+         *
+         * 自动精灵的原话：「开启后，会忽略默认的额外点击结束等待（5~30ms），
+         * 但是会导致连续极速点击动作中少部分点击失效」。
+         *
+         * 我们这边对应的是注入层 `MODE_WAIT_FOR_FINISH`：等事件真的进管线才返回。
+         * 所以 hold 传 **0** 当信号（见 Injector.tap 的约定），
+         * 由注入层改成异步发 + 1ms 间隔。只对点击族有意义，滑动不受影响。
+         */
+        val clickFamily = action.type == Z.ActionType.CLICK ||
+            action.type == Z.ActionType.CLICK_IMAGE ||
+            action.type == Z.ActionType.CLICK_TEXT ||
+            action.type == Z.ActionType.CLICK_COLOR
+        val fast = clickFamily && boolExtra(action, "highSpeedTap")
+        val hold = if (fast) 0 else holdRaw
 
         return when (action.type) {
             // ---- 点击系列
@@ -2346,7 +2362,10 @@ class ZExecutor(
         hits.forEachIndexed { i, hit ->
             if (stopped) return
             if (i > 0) waitMultiGap(action)
-            log("   点击 (${hit.x},${hit.y}) 按住 ${hold}ms")
+            log(
+            if (hold <= 0) "   点击 (${hit.x},${hit.y}) 极速模式（不等点击结束）"
+            else "   点击 (${hit.x},${hit.y}) 按住 ${hold}ms"
+        )
             try {
                 inject.tap(hit.x, hit.y, hold)
             } catch (e: Throwable) {

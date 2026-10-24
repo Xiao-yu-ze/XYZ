@@ -772,11 +772,23 @@ return PosGroup(rec, par, oth)
         val rows = ArrayList<Row>()
         if (action.type in CLICK_FAMILY) {
             // 极速点击（10.1）：按下立即抬起、不等回执。本机注入本来就异步，不需要它。
+            /*
+             * 极速点击（协议 10.1）。现在**真的生效**了：
+             * 注入层不再等 `MODE_WAIT_FOR_FINISH`，按下/抬起间隔压到 1ms。
+             * 代价照自动精灵的原文写出来 —— 连点会少量丢点，用户得知道。
+             */
             rows += Row(
-                "极速点击（本机不生效）",
+                "极速点击模式",
                 if (anyBool(e, "highSpeedTap")) "是" else "否",
                 Kind.SWITCH, field = "highSpeedTap"
             )
+            if (anyBool(e, "highSpeedTap")) {
+                rows += Row(
+                    "说明",
+                    "极速模式不等点击结束（省 5~30ms）；连续快速点击可能少部分点击失效",
+                    Kind.READONLY
+                )
+            }
         }
         if (action.type == Z.ActionType.INPUT_TEXT) {
             // clearBeforeInput（10.11）：先清空再输入。本机是"直接输入"，

@@ -262,7 +262,17 @@ internal object InputInjector {
      *   真睡会占住 Binder 线程，而 InputDispatcher 判速度用的是时间戳。
      */
     fun tap(displayId: Int, x: Int, y: Int, holdMs: Int): Boolean {
-        val hold = holdMs.coerceIn(1, 2_000).toLong()
+        /*
+         * ★ holdMs <= 0 = **极速模式**（对应自动精灵的「极速点击模式」）。
+         *
+         *   自动精灵的帮助文案：「开启后，会忽略默认的额外点击结束等待（5~30ms），
+         *   但是会导致连续极速点击动作中少部分点击失效」。
+         *   那"额外等待"就是下面 DOWN 的 MODE_WAIT_FOR_FINISH —— 等事件真的
+         *   进管线再返回。极速模式下改成异步发，间隔压到 1ms，
+         *   代价与协议一致：连点时可能丢一部分。
+         */
+        val fast = holdMs <= 0
+        val hold = if (fast) 1L else holdMs.coerceIn(1, 2_000).toLong()
         val downTime = SystemClock.uptimeMillis()
         val fx = x.toFloat()
         val fy = y.toFloat()
@@ -272,7 +282,7 @@ internal object InputInjector {
         val downOk = injectEvent(
             buildEvent(downTime, downTime, MotionEvent.ACTION_DOWN, fx, fy),
             displayId,
-            MODE_WAIT_FOR_FINISH
+            if (fast) MODE_ASYNC else MODE_WAIT_FOR_FINISH
         )
         if (!downOk) {
             Log.w(TAG, "点击被拒（DOWN）display=$displayId ($x,$y)")

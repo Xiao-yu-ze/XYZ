@@ -7,6 +7,14 @@ interface TouchInjector {
 
     fun tap(x: Float, y: Float)
 
+    /**
+     * 带按下时长的点击。[holdMs] <= 0 表示**极速模式**（不等事件结束）。
+     *
+     * 默认实现忽略时长直接调 [tap] —— 只用于测试替身；
+     * 真机后端应当覆盖它，把时长和极速模式传下去。
+     */
+    fun tap(x: Float, y: Float, holdMs: Int) = tap(x, y)
+
     fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long)
 
     /**

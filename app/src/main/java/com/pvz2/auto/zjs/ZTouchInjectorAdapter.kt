@@ -19,8 +19,11 @@ class ZTouchInjectorAdapter(
 ) : ZExecutor.Injector {
 
     override fun tap(x: Int, y: Int, holdMs: Int) {
-        if (holdMs <= 60) {
-            touch.tap(x.toFloat(), y.toFloat())
+        // holdMs <= 0 = 极速模式；0<hold<=60 走快速 tap；更长的当长按（同点 swipe）
+        if (holdMs <= 0) {
+            touch.tap(x.toFloat(), y.toFloat(), 0)
+        } else if (holdMs <= 60) {
+            touch.tap(x.toFloat(), y.toFloat(), holdMs)
         } else {
             // 同一点之间的 swipe = 按住不放
             touch.swipe(x.toFloat(), y.toFloat(), x.toFloat(), y.toFloat(), holdMs.toLong())

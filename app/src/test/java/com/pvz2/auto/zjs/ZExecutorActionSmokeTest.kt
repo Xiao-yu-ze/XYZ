@@ -24,7 +24,7 @@ class ZExecutorActionSmokeTest {
     private class Rec : ZExecutor.Injector {
         val calls = ArrayList<String>()
         var clipboard: String? = null
-        override fun tap(x: Int, y: Int, holdMs: Int) { calls.add("tap($x,$y)") }
+        override fun tap(x: Int, y: Int, holdMs: Int) { calls.add("tap($x,$y,$holdMs)") }
         override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int) {
             calls.add("swipe($x1,$y1,$x2,$y2)")
         }
@@ -72,7 +72,7 @@ class ZExecutorActionSmokeTest {
     @Test
     fun `点击——按坐标注入`() {
         val (r, rec) = run("""{"type":"点击","posData":{"type":"location","x":"10","y":"20"}}""")
-        assertEquals(listOf("tap(10,20)"), rec.calls)
+        assertEquals(listOf("tap(10,20,100)"), rec.calls)
         assertEquals(0, r.skipped.size)
     }
 
@@ -81,21 +81,21 @@ class ZExecutorActionSmokeTest {
         val (r, rec) = run(
             """{"type":"点击图片","posData":{"type":"image","imageData":{"data":"AA","width":1,"height":1}}}"""
         )
-        assertEquals(listOf("tap(100,200)"), rec.calls)
+        assertEquals(listOf("tap(100,200,100)"), rec.calls)
         assertEquals(0, r.skipped.size)
     }
 
     @Test
     fun `点击文字——命中后注入`() {
         val (r, rec) = run("""{"type":"点击文字","posData":{"type":"text","text":"开始"}}""")
-        assertEquals(listOf("tap(100,200)"), rec.calls)
+        assertEquals(listOf("tap(100,200,100)"), rec.calls)
         assertEquals(0, r.skipped.size)
     }
 
     @Test
     fun `点击颜色——命中后注入`() {
         val (r, rec) = run("""{"type":"点击颜色","posData":{"type":"color","color":16711680}}""")
-        assertEquals(listOf("tap(100,200)"), rec.calls)
+        assertEquals(listOf("tap(100,200,100)"), rec.calls)
         assertEquals(0, r.skipped.size)
     }
 
@@ -114,6 +114,24 @@ class ZExecutorActionSmokeTest {
         val (r, rec) = run("""{"type":"AI点击","posData":{"type":"aiLoc","text":"x"}}""")
         assertEquals(0, rec.calls.size)
         assertTrue("要说清不支持：${r.skipped}", r.skipped.any { it.reason.contains("不支持") })
+    }
+
+    @Test
+    fun `极速点击——把 hold 传成 0（注入层据此跳过等待）`() {
+        val (r, rec) = run(
+            """{"type":"点击","highSpeedTap":true,"posData":{"type":"location","x":"10","y":"20"}}"""
+        )
+        assertEquals(listOf("tap(10,20,0)"), rec.calls)
+        assertEquals(0, r.skipped.size)
+    }
+
+    @Test
+    fun `普通点击——把 duration 当按住时长传下去`() {
+        val (r, rec) = run(
+            """{"type":"点击","duration":"150","posData":{"type":"location","x":"10","y":"20"}}"""
+        )
+        assertEquals(listOf("tap(10,20,150)"), rec.calls)
+        assertEquals(0, r.skipped.size)
     }
 
     // ---------------------------------------------------------------- 手势
@@ -135,7 +153,7 @@ class ZExecutorActionSmokeTest {
                 """{"type":"点击","posData":{"type":"location","x":"1","y":"1"}},""" +
                 """{"type":"点击","posData":{"type":"location","x":"2","y":"2"}}]}"""
         )
-        assertEquals(listOf("tap(1,1)", "tap(2,2)"), rec.calls)
+        assertEquals(listOf("tap(1,1,100)", "tap(2,2,100)"), rec.calls)
         assertEquals(0, r.skipped.size)
     }
 
@@ -225,7 +243,7 @@ class ZExecutorActionSmokeTest {
             """{"type":"点击","posData":{"type":"location","x":"9","y":"9"}}""",
             """{"type":"点击","jumpId":"B","posData":{"type":"location","x":"1","y":"1"}}"""
         )
-        assertEquals(listOf("tap(1,1)"), rec.calls)
+        assertEquals(listOf("tap(1,1,100)"), rec.calls)
         assertEquals(0, r.skipped.size)
     }
 
@@ -304,7 +322,7 @@ class ZExecutorActionSmokeTest {
                 """{"type":"点击","posData":{"type":"location","x":"1","y":"1"}},""" +
                 """{"type":"点击","posData":{"type":"location","x":"2","y":"2"}}]}"""
         )
-        assertEquals(listOf("tap(1,1)", "tap(2,2)"), rec.calls)
+        assertEquals(listOf("tap(1,1,100)", "tap(2,2,100)"), rec.calls)
         assertEquals(0, r.skipped.size)
     }
 
@@ -318,7 +336,7 @@ class ZExecutorActionSmokeTest {
             """{"type":"执行脚本","filePath":"子.zjs","continueCurrentAfterFinish":true}""",
             loader = { child }
         )
-        assertEquals(listOf("tap(5,5)"), rec.calls)
+        assertEquals(listOf("tap(5,5,100)"), rec.calls)
         assertEquals(0, r.skipped.size)
     }
 }

@@ -76,6 +76,27 @@ class ShizukuTouchInjector(
      * 现在用 `tapOnDisplay`（返回 Boolean）并一律打日志。
      * 上层若需要感知，可读 [lastTapOk]。
      */
+    /**
+     * 带按下时长的点击。[holdMs] <= 0 = 极速模式（不等事件结束）。
+     *
+     * 以前这里固定传 `DEFAULT_HOLD_MS`，于是动作里的 `duration` 对点击**完全无效**：
+     * 长按被压成 60ms、极速模式也无从实现。
+     */
+    override fun tap(x: Float, y: Float, holdMs: Int) {
+        val service = client.peek()
+        val target = displayIdProvider()
+        if (service == null) {
+            Log.w(TAG, "点击 (${x.toInt()},${y.toInt()}) 失败：Shizuku 服务未连接")
+            lastTapOk = false
+            return
+        }
+        val ok = runCatching { service.tapOnDisplay(target, x.toInt(), y.toInt(), holdMs) }
+            .onFailure { Log.w(TAG, "点击 (${x.toInt()},${y.toInt()}) 抛异常", it) }
+            .getOrDefault(false)
+        lastTapOk = ok
+        if (!ok) Log.w(TAG, "点击 (${x.toInt()},${y.toInt()}) 未被系统接受 display=$target")
+    }
+
     override fun tap(x: Float, y: Float) {
         val service = client.peek()
         val target = displayIdProvider()

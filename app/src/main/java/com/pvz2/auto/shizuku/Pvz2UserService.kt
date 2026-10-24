@@ -94,6 +94,22 @@ class Pvz2UserService : IPvz2Service.Stub() {
      * 这个交换是明确划算的。
      */
     override fun tapOnDisplay(displayId: Int, x: Int, y: Int, holdMs: Int): Boolean {
+        /*
+         * ★ 先走**进程内注入**（InputInjector），它能控制按下时长、也能做极速模式；
+         *   `input -d N tap` 那条路会把 duration 和极速开关全吃掉，而且每次
+         *   spawn 一个 shell 进程（几十毫秒）—— 连点脚本一大半时间花在这上面。
+         *
+         *   滑动那条路一直用的就是 InputInjector（本文件 swipeOnDisplay），
+         *   说明它在副屏上是可用的。点不动时再回落到旧路径，行为不会倒退。
+         */
+        val injected = runCatching { InputInjector.tap(displayId, x, y, holdMs) }
+            .getOrElse {
+                Log.w(TAG, "InputInjector.tap 抛异常，回落到 input tap", it)
+                false
+            }
+        if (injected) return true
+
+        Log.w(TAG, "进程内注入返回 false，回落到 input tap display=$displayId ($x,$y)")
         val out = runCatching {
             runShell("input -d $displayId tap $x $y")
         }.getOrElse {
