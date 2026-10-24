@@ -277,6 +277,47 @@ class ZjsEditorPage(
      * 先确认再删 —— 删错了没有撤销，而脚本可能有上百条，
      * 用户很难记住自己刚才删的是哪一条。
      */
+    /**
+     * 长按某一条：插入 / 复制 / 删除。
+     *
+     * 原来长按只能删除 —— 用户想在中间插一条就只能从头重做。
+     * 自动精灵这类工具的做法是长按出菜单、让你在这条之前/之后插，
+     * 这里按同样的思路给四个动作。
+     */
+    private fun onRowMenu(index: Int) {
+        val action = currentActions().getOrNull(index) ?: return
+        val items = arrayOf("在它上方插入", "在它下方插入", "复制这一条", "删除这一条")
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle("第 ${index + 1} 条：${ZScriptIO.actionLabel(action)}")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> insertActionAt(index)
+                    1 -> insertActionAt(index + 1)
+                    2 -> duplicateAction(index)
+                    3 -> onDeleteRequested(index)
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 在第 [at] 条之前插入一条新动作（弹出动作类型选择）。 */
+    private fun insertActionAt(at: Int) {
+        promptAddAction(insertAt = at)
+    }
+
+    /** 复制某一条到它下面。 */
+    private fun duplicateAction(index: Int) {
+        val list = currentActions().toMutableList()
+        val src = list.getOrNull(index) ?: return
+        list.add(index + 1, src)
+        commitActions(list)
+        adapter.submit(currentActions())
+        expandedIndex = index + 1
+        adapter.notifyItemChanged(index + 1)
+        android.widget.Toast.makeText(host, "已复制", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
     private fun onDeleteRequested(index: Int) {
         val cur = script ?: return
         val action = currentActions().getOrNull(index) ?: return
@@ -1017,9 +1058,31 @@ class ZjsEditorPage(
                      * 用户盯着屏幕却看不到「识别 N 次」在涨，
                      * 就会以为进度显示没生效。
                      */
+                    /*
+                     * 失败时：顶部横幅说清楚第几条失败，并把视图停在那一行。
+                     * 只在 running 时滚动的话，失败瞬间就没人管了，
+                     * 用户还是得自己翻。
+                     */
+                    if (!st.running && st.failedIndex >= 0) {
+                        tvSummary.text = "运行失败：第 ${st.failedIndex + 1} 条 —— ${st.message}"
+                        if (st.failedIndex != lastIndex) {
+                            lastIndex = st.failedIndex
+                            runCatching {
+                                (rvActions.layoutManager as? LinearLayoutManager)
+                                    ?.scrollToPositionWithOffset(st.failedIndex, 0)
+                            }
+                        }
+                    }
                     if (st.running && st.currentIndex >= 0 && st.currentIndex != lastIndex) {
                         lastIndex = st.currentIndex
-                        runCatching { rvActions.scrollToPosition(st.currentIndex) }
+                        runCatching {
+                            (rvActions.layoutManager as? LinearLayoutManager)
+                                ?.scrollToPositionWithOffset(
+                                    st.currentIndex,
+                                    (rvActions.height / 3).coerceAtLeast(0)
+                                )
+                                ?: rvActions.scrollToPosition(st.currentIndex)
+                        }
                     }
                     if (st.running) {
                         if (ticker == null) {
@@ -1068,7 +1131,7 @@ class ZjsEditorPage(
      * 用户在安卓上看到一堆点了没反应的类型会以为程序坏了，
      * 所以把「安卓上暂不支持」的排在后面并标出来。
      */
-    private fun promptAddAction() {
+    private fun promptAddAction(insertAt: Int = -1) {
         val cur = script ?: return
 
         // 可执行的排前面，同组内保持协议顺序
@@ -1088,7 +1151,7 @@ class ZjsEditorPage(
             .show()
     }
 
-    private fun addAction(type: Z.ActionType) {
+    private fun addAction(type: Z.ActionType, insertAt: Int = -1) {
         val cur = script ?: return
 
         // 位置类动作要带一个默认位置，否则展开后什么都没有、校验也报错。
@@ -1112,7 +1175,12 @@ class ZjsEditorPage(
 
         // 加在当前展开的那一条后面。全收起时加到末尾 ——
         // 用户刚看完某条就想在它后面加一条，比滚到底部合理。
-        val at = if (expandedIndex >= 0) expandedIndex + 1 else currentActions().size
+        // 长按菜单里指定了位置就插在那儿；否则加在展开项之后 / 末尾。
+        val at = when {
+            insertAt >= 0 -> insertAt.coerceIn(0, currentActions().size)
+            expandedIndex >= 0 -> expandedIndex + 1
+            else -> currentActions().size
+        }
         val list = currentActions().toMutableList()
         list.add(at, newAction)
         commitActions(list)
@@ -1327,13 +1395,25 @@ class ZjsEditorPage(
                 tvIndex.text = (index + 1).toString()
                 tvLabel.text = ZActionDescriber.title(action)
 
+                // 失败标记要在角标之前算出来（角标要用它）
+                val isFailed = runState.failedIndex == index
+
                 // 角标用来标出"这条跑不了"，比藏在展开区里更显眼。
                 tvBadge.text = when {
+                    /*
+                     * 失败的那一条必须一眼看见 —— 红字 + 顶部横幅。
+                     * 否则用户只知道"停了"，不知道停在哪一条，
+                     * 只能自己在几十条里翻。
+                     */
+                    isFailed -> "运行失败"
                     action.common.disabled -> "已禁用"
                     !action.type.executable -> "不支持"
                     action.common.vars.isNotEmpty() -> "含变量"
                     else -> ""
                 }
+                tvBadge.setTextColor(
+                    if (isFailed) 0xFFC62828.toInt() else tvBadge.currentTextColor
+                )
 
                 llFields.removeAllViews()
                 /*
@@ -1404,7 +1484,7 @@ class ZjsEditorPage(
                 // 长按删除。不用短按 —— 短按是展开/收起，很容易误触，
                 // 而删除是不可撤销的。
                 itemView.setOnLongClickListener {
-                    onDeleteRequested(index)
+                    onRowMenu(index)
                     true
                 }
             }

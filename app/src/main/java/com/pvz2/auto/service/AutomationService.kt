@@ -656,7 +656,12 @@ class AutomationService : Service() {
             r.skipped.take(20).forEach {
                 Log.w(TAG, "[zjs] 跳过第 ${it.index + 1} 个（${it.label}）：${it.reason}")
             }
-            ScriptRunState.finish(msg)
+            // 失败时把"第几条"一起交给界面，好把那条标红
+            if (r.error != null) {
+                ScriptRunState.fail(r.skipped.lastOrNull()?.index ?: -1, msg)
+            } else {
+                ScriptRunState.finish(msg)
+            }
         }.onFailure { t ->
             Log.e(TAG, "[zjs] 执行异常", t)
             ScriptRunState.finish("执行异常：${t.message}")

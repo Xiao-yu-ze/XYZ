@@ -64,7 +64,9 @@ object ScriptRunState {
          */
         val retryCount: Int = 0,
         /** 最近一次重试失败的具体原因（实测到的色值/文字）。 */
-        val retryReason: String = ""
+        val retryReason: String = "",
+        /** 失败在第几条（0 基）。-1 = 没失败。界面用它把那条标红。 */
+        val failedIndex: Int = -1
     ) {
         /**
          * 当前动作的完成度 0~1，界面拿它画进度条。
@@ -105,6 +107,11 @@ object ScriptRunState {
                 message = label
             )
         }
+    }
+
+    /** 任务失败：记下失败的那一条，界面标红并用它做顶部提示。 */
+    fun fail(index: Int, message: String) {
+        update { it.copy(running = false, failedIndex = index, message = message) }
     }
 
     /** 记录一次识别重试。界面据此显示"识别了多少次、为什么没中"。 */
