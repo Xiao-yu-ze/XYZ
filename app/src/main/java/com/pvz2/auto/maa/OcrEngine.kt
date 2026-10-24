@@ -277,13 +277,29 @@ class OcrEngine(private val context: Context) : AutoCloseable {
          * 上限 [DET_UPSCALE_MAX] 倍。文本框坐标最后会按同一比例缩回原尺寸，
          * 见下方 resize(mask → srcW×srcH)，与 ratio 无关。
          */
-        val maxSide = max(srcW, srcH)
-        val ratio = when {
-            maxSide > DET_LIMIT -> DET_LIMIT.toDouble() / maxSide
-            maxSide in 1 until DET_MIN_SIDE ->
-                kotlin.math.min(DET_UPSCALE_MAX, DET_MIN_SIDE.toDouble() / maxSide)
-            else -> 1.0
-        }
+        /*
+         * ★ 按**短边**放大到 [DET_LIMIT]，不是按长边。
+         *
+         *   这是自动精灵（worker-ocr-bundle.js）的实际参数：
+         *     { limitSideLen: 960, unclipRadio: 1.6 }
+         *   而 limit_side_len 在 PaddleOCR 里配的是 limit_type='min' ——
+         *   短边不足 960 就放大到 960。
+         *
+         *   我们原来按长边、且上限只有 3 倍：201x58 的按钮框只放大到 603x174，
+         *   检测在糊掉的小图上做，框出来的只有 112x34（字实际约 150x40），
+         *   框窄了把字切掉一截 → 识别成「909」。
+         *
+         *   现在：短边等比放大到 960，上限按总像素数（[DET_MAX_PIXELS]）约束，
+         *   免得一张大图把内存和耗时顶爆。
+         */
+        val minSide = kotlin.math.min(srcW, srcH)
+        val byShort = if (minSide in 1 until DET_LIMIT) DET_LIMIT.toDouble() / minSide else 1.0
+        val byLong = if (max(srcW, srcH) > DET_LIMIT * 2) (DET_LIMIT * 2).toDouble() / max(srcW, srcH) else 1.0
+        var ratio = minOf(byShort, byLong)
+        // 总像素上限：放太大没有额外收益，只有耗时
+        val px = (srcW * ratio).toDouble() * (srcH * ratio)
+        if (px > DET_MAX_PIXELS) ratio *= kotlin.math.sqrt(DET_MAX_PIXELS / px)
+        if (ratio < 1.0 / 8) ratio = 1.0 / 8
         val dstW = (srcW * ratio).roundToInt().let { alignUp(it, 32) }.coerceAtLeast(32)
         val dstH = (srcH * ratio).roundToInt().let { alignUp(it, 32) }.coerceAtLeast(32)
 
@@ -604,7 +620,10 @@ class OcrEngine(private val context: Context) : AutoCloseable {
      * PaddleOCR 默认 1.5；不扩大就会裁到"文字的收缩核"（中间一条带），
      * 中文上下结构被切掉，识别结果变乱码。
      */
-    const val UNCLIP_RATIO = 1.5
+    /** det 输入总像素上限：再大收益递减、耗时线性涨。 */
+    const val DET_MAX_PIXELS = 4_000_000.0
+
+    const val UNCLIP_RATIO = 1.6
 
     const val DILATE_WIDTH = 5
         const val DILATE_HEIGHT = 3

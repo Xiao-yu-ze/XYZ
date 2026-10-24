@@ -1,0 +1,14 @@
+len=161931
+== 0.485        hits=0 at []
+== 0.229        hits=0 at []
+== 255.0        hits=0 at []
+== resize       hits=1 at [40029]
+   ...Xe("_emval_take_value has unknown type "+ft(e)),r}(e),yt(e.readValueFromPointer(t))},abort:function(){Oe()},emscripten_memcpy_big:function(e,t,r){C.copyWithin(e,t,t+r)},emscripten_resize_heap:function(e){var t=C.length;S((e>>>=0)>t);var r=2147483648;if(e>r)return _("Cannot enlarge memory, asked to go up to "+e+" bytes, but the limit is "+r+" bytes!"),!1;for(var n=1;n<=4;n*=2){var o=t*(1+.2/n);o=Ma...
+== argmax       hits=0 at []
+== unclip       hits=2 at [160468, 161138]
+   ...oc(i.length);o.HEAPU8.set(t,a),o.HEAPU8.set(r,s),o.HEAPU8.set(i,c),n.setParams(a,t.length,s,r.length,c,i.length),o.__free(a),o.__free(s),o.__free(c)})(e.params),n.setUnclipRatio(e.unclipRadio),n.setLimitSideLen(e.limitSideLen),n.setSplitThres(e.splitThres),n.setSplitOverlap(e.splitOverlap);let a=o.__malloc(i.length);o.HEAPU8.set(i,a),n.OcrRGBA(a,t,r),o.__free(a);let s=n.size(),c=new Array;for(let ...
+== box_thresh   hits=0 at []
+== limit_side   hits=0 at []
+== mean=        hits=0 at []
+== std=         hits=0 at []
+== /255         hits=0 at []
