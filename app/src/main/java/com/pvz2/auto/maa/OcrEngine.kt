@@ -335,8 +335,6 @@ class OcrEngine(private val context: Context) : AutoCloseable {
             ).use { tensor ->
                 session.run(mapOf(session.inputNames.first() to tensor)).use { result ->
                 // 真实输出形状：不是 [1,T,18385] 就说明模型/绑定不对
-                runCatching { Log.i(TAG, "rec 输出形状=${(result[0] as ai.onnxruntime.OnnxTensor).info.shape.contentToString()}") }
-                    @Suppress("UNCHECKED_CAST")
                     val out = result[0].value as Array<Array<Array<FloatArray>>>
                     val prob = out[0][0]   // [dstH][dstW]
 
@@ -479,24 +477,12 @@ class OcrEngine(private val context: Context) : AutoCloseable {
             // 3 通道输入时 code 是 -1，cvtColor 直接抛异常 →
             // 整行被 mapNotNull 吞掉 → 表现为「这一块识别不出文字」。
 
-            // 仪器化：把 rec 真正吃到的输入参数打出来。现场「同一块图 Python 读 0.99、
-            // App 读 0.07」，差就在这个张量上，比尺寸/通道/归一化参数一看便知。
             Log.i(
                 TAG,
-                "rec 输入：box=${box.width}x${box.height} dstW=$dstW " +
                     "norm=${normalized.width()}x${normalized.height()}ch${normalized.channels()} " +
                     "rgb=${rgb.width()}x${rgb.height()}ch${rgb.channels()} " +
                     "mean=$REC_MEAN scale=$REC_SCALE maxW=$REC_MAX_WIDTH h=$REC_HEIGHT"
             )
-            // 把喂进模型的那张 3 通道图和张量前几个数落盘/打日志，
-            // 与 Python 端逐值比对（尺寸参数已确认一致，只剩数值能出问题）。
-            runCatching {
-                val dir = java.io.File(context!!.getExternalFilesDir(null), "ocr_fail")
-                dir.mkdirs()
-                val f = java.io.File(dir, "rec_${System.currentTimeMillis()}.png")
-                org.opencv.imgcodecs.Imgcodecs.imwrite(f.absolutePath, rgb)
-                Log.i(TAG, "rec 输入图已存：${f.absolutePath}")
-            }.onFailure { Log.w(TAG, "存 rec 输入图失败", it) }
             val data = MatToTensor.nchw(rgb, mean = REC_MEAN, scale = REC_SCALE)
             // 右侧补 0 到 REC_MAX_WIDTH，宽度归一化后位置编码才稳定。
             val padded = FloatArray(3 * REC_HEIGHT * REC_MAX_WIDTH)
@@ -522,10 +508,8 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                     )
                 }
 
-                // 张量前 8 个值：与 Python 的 np 数组头几位对齐比较
             }
 
-Log.i(TAG, "张量校验：size=${padded.size} sum=%.4f".format(padded.sumOf { kotlin.math.abs(it.toDouble()) }) + " 采样[p0]=${padded[0]} [p166]=${padded[166]} [p7968]=${padded[7968]} [p40000]=${padded[40000]}")
 
             OnnxTensor.createTensor(
                 environment,
@@ -534,7 +518,6 @@ Log.i(TAG, "张量校验：size=${padded.size} sum=%.4f".format(padded.sumOf { k
             ).use { tensor ->
                 session.run(mapOf(session.inputNames.first() to tensor)).use { result ->
                 // 真实输出形状：不是 [1,T,18385] 就说明模型/绑定不对
-                runCatching { Log.i(TAG, "rec 输出形状=${(result[0] as ai.onnxruntime.OnnxTensor).info.shape.contentToString()}") }
                     @Suppress("UNCHECKED_CAST")
                     // rec 输出 [1][T][numClasses]
                     val out = result[0].value as Array<Array<FloatArray>>

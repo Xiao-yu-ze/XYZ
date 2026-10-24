@@ -2082,8 +2082,14 @@ class ZjsEditorPage(
                  */
                 val isCurrent = runState.running && runState.currentIndex == index
                 val done = runState.counts[index] ?: 0L
-                llProgress.visibility =
-                    if (isCurrent || (runState.running && done > 0)) View.VISIBLE else View.GONE
+                /*
+                 * ★ 进度条**只出现在正在运行的那一条**上。
+                 *
+                 *   原来「跑过的条数」也留着一条满格进度条 + 「已 N 次」，
+                 *   几十条动作的脚本一跑起来满屏都是条，反而看不出当前跑到哪 ——
+                 *   进度条要回答的是「现在在哪」，不是「哪些跑过」。
+                 */
+                llProgress.visibility = if (isCurrent) View.VISIBLE else View.GONE
                 if (isCurrent) {
                     /*
                      * 显示"这一条已经跑了多久"，不是"第几次"。
@@ -2117,10 +2123,6 @@ class ZjsEditorPage(
                     }
                     // 原因太长，塞进这一行会把进度条挤没；它在第 2 页状态行和日志里都有。
 
-                } else if (llProgress.visibility == View.VISIBLE) {
-                    pbAction.isIndeterminate = false
-                    pbAction.progress = pbAction.max
-                    tvRunCount.text = "已 $done 次"
                 }
 
                 llFields.visibility = if (expanded) View.VISIBLE else View.GONE
