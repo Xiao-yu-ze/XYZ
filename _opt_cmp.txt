@@ -1,0 +1,8 @@
+DISABLE_ALL: shape=(1, 40, 18385)
+   -> 「开始战斗」conf=0.99
+BASIC: shape=(1, 40, 18385)
+   -> 「开始战斗」conf=0.99
+EXTENDED: shape=(1, 40, 18385)
+   -> 「开始战斗」conf=0.99
+ALL(App 用的): shape=(1, 40, 18385)
+   -> 「开始战斗」conf=0.99

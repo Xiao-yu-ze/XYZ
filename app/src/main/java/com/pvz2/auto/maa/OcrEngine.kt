@@ -67,6 +67,13 @@ class OcrEngine(private val context: Context) : AutoCloseable {
 
             detSession = environment.createSession(readAsset("$assetDir/$DET_FILE"), options)
             recSession = environment.createSession(readAsset("$assetDir/$REC_FILE"), options)
+        /*
+         * 把两个模型**实际绑定的**输入/输出名打出来。
+         * 「输入参数全对、张量头几位一致、结果却是乱码」时，
+         * 必须先确认 rec 那次会话里装的到底是不是 rec.onnx。
+         */
+        Log.i(TAG, "det 输入=${detSession?.inputNames?.joinToString()} 输出=${detSession?.outputNames?.joinToString()}")
+        Log.i(TAG, "rec 输入=${recSession?.inputNames?.joinToString()} 输出=${recSession?.outputNames?.joinToString()}")
             env = environment
 
             Log.i(TAG, "OCR 已就绪：${detSession?.inputNames} / ${recSession?.inputNames}")
@@ -327,6 +334,8 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                 longArrayOf(1, 3, dstH.toLong(), dstW.toLong())
             ).use { tensor ->
                 session.run(mapOf(session.inputNames.first() to tensor)).use { result ->
+                // 真实输出形状：不是 [1,T,18385] 就说明模型/绑定不对
+                runCatching { Log.i(TAG, "rec 输出形状=${(result[0] as ai.onnxruntime.OnnxTensor).info.shape.contentToString()}") }
                     @Suppress("UNCHECKED_CAST")
                     val out = result[0].value as Array<Array<Array<FloatArray>>>
                     val prob = out[0][0]   // [dstH][dstW]
@@ -470,13 +479,53 @@ class OcrEngine(private val context: Context) : AutoCloseable {
             // 3 通道输入时 code 是 -1，cvtColor 直接抛异常 →
             // 整行被 mapNotNull 吞掉 → 表现为「这一块识别不出文字」。
 
+            // 仪器化：把 rec 真正吃到的输入参数打出来。现场「同一块图 Python 读 0.99、
+            // App 读 0.07」，差就在这个张量上，比尺寸/通道/归一化参数一看便知。
+            Log.i(
+                TAG,
+                "rec 输入：box=${box.width}x${box.height} dstW=$dstW " +
+                    "norm=${normalized.width()}x${normalized.height()}ch${normalized.channels()} " +
+                    "rgb=${rgb.width()}x${rgb.height()}ch${rgb.channels()} " +
+                    "mean=$REC_MEAN scale=$REC_SCALE maxW=$REC_MAX_WIDTH h=$REC_HEIGHT"
+            )
+            // 把喂进模型的那张 3 通道图和张量前几个数落盘/打日志，
+            // 与 Python 端逐值比对（尺寸参数已确认一致，只剩数值能出问题）。
+            runCatching {
+                val dir = java.io.File(context!!.getExternalFilesDir(null), "ocr_fail")
+                dir.mkdirs()
+                val f = java.io.File(dir, "rec_${System.currentTimeMillis()}.png")
+                org.opencv.imgcodecs.Imgcodecs.imwrite(f.absolutePath, rgb)
+                Log.i(TAG, "rec 输入图已存：${f.absolutePath}")
+            }.onFailure { Log.w(TAG, "存 rec 输入图失败", it) }
             val data = MatToTensor.nchw(rgb, mean = REC_MEAN, scale = REC_SCALE)
             // 右侧补 0 到 REC_MAX_WIDTH，宽度归一化后位置编码才稳定。
             val padded = FloatArray(3 * REC_HEIGHT * REC_MAX_WIDTH)
             val planeSize = REC_HEIGHT * REC_MAX_WIDTH
+            /*
+             * ★ 必须**逐行**拷贝。
+             *
+             *   原来是把 166x48 的整块数据连续拷进 320 宽的平面：
+             *     arraycopy(data, c*48*166, padded, c*48*320, 48*166)
+             *   结果第 0 行的 166 个像素后面**没有跳过 154 个 padding 列**，
+             *   第二行的首像素落在了 (0,166) 上 —— 整张图在 320 宽的画布里被斜切错位。
+             *
+             *   模型于是看到一张错位图，只吐得出低置信乱码（实测「ま」conf=0.07）。
+             *   注意 sum 校验和是**布局无关**的，所以它一直是"对的"（2718.3373），
+             *   首像素 p0 也对 —— 只有 p166（应为 0）暴露出问题。
+             */
             for (c in 0 until 3) {
-                System.arraycopy(data, c * REC_HEIGHT * dstW, padded, c * planeSize, REC_HEIGHT * dstW)
+                for (y in 0 until REC_HEIGHT) {
+                    System.arraycopy(
+                        data, c * REC_HEIGHT * dstW + y * dstW,
+                        padded, c * planeSize + y * REC_MAX_WIDTH,
+                        dstW
+                    )
+                }
+
+                // 张量前 8 个值：与 Python 的 np 数组头几位对齐比较
             }
+
+Log.i(TAG, "张量校验：size=${padded.size} sum=%.4f".format(padded.sumOf { kotlin.math.abs(it.toDouble()) }) + " 采样[p0]=${padded[0]} [p166]=${padded[166]} [p7968]=${padded[7968]} [p40000]=${padded[40000]}")
 
             OnnxTensor.createTensor(
                 environment,
@@ -484,6 +533,8 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                 longArrayOf(1, 3, REC_HEIGHT.toLong(), REC_MAX_WIDTH.toLong())
             ).use { tensor ->
                 session.run(mapOf(session.inputNames.first() to tensor)).use { result ->
+                // 真实输出形状：不是 [1,T,18385] 就说明模型/绑定不对
+                runCatching { Log.i(TAG, "rec 输出形状=${(result[0] as ai.onnxruntime.OnnxTensor).info.shape.contentToString()}") }
                     @Suppress("UNCHECKED_CAST")
                     // rec 输出 [1][T][numClasses]
                     val out = result[0].value as Array<Array<FloatArray>>
@@ -675,7 +726,16 @@ internal object MatToTensor {
 
         // 一次性取出整块像素，再在内存里重排；逐像素调用 Mat.get 会慢一个数量级。
         val buffer = ByteArray(channels * w * h)
-        src.get(0, 0, buffer)
+        // ★ 逐行读，不要一次 get(0,0,byte[])。
+        //   Mat.get(row,col,byte[]) 在处理非连续 Mat / 大数组时只可靠地填了首行，
+        //   于是除第一行外全是 0 —— 模型看到的基本是一张全黑的图，
+        //   只能吐一个低置信的乱码（实测「ま」conf=0.07），
+        //   而日志里打出来的前几个值恰好是首行，看起来完全正常。
+        val rowBuf = ByteArray(w * channels)
+        for (y in 0 until h) {
+            src.get(y, 0, rowBuf)
+            System.arraycopy(rowBuf, 0, buffer, y * w * channels, rowBuf.size)
+        }
 
         for (y in 0 until h) {
             for (x in 0 until w) {

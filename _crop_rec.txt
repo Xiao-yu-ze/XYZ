@@ -1,0 +1,6 @@
+原样(色道反)      scale=2.0 -> conf=0.99  text=开始战斗
+原样(色道反)      scale=0.5 -> conf=1.00  text=开始战斗
+还原色道         scale=2.0 -> conf=0.99  text=开始战斗
+还原色道         scale=0.5 -> conf=1.00  text=开始战斗
+原样紧裁         紧裁 -> conf=0.99  text=开始战斗
+还原紧裁         紧裁 -> conf=0.99  text=开始战斗
