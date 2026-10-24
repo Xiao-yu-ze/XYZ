@@ -443,8 +443,28 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                     @Suppress("UNCHECKED_CAST")
                     // rec 输出 [1][T][numClasses]
                     val out = result[0].value as Array<Array<FloatArray>>
-                    val decoded = ctcDecode(out[0]) ?: return null
-                    if (decoded.second < minConfidence) return null
+                    val decoded = ctcDecode(out[0]) ?: run {
+                        Log.i(TAG, "rec 解码为空：box=${box.width}x${box.height}")
+                        return null
+                    }
+                    /*
+                     * ★ 置信度不是「丢不丢」的唯一标准。
+                     *
+                     *   实测：右下角「开始战斗」框得好好的（框=1），但四种读法全部 行=0 ——
+                     *   因为识别出的字置信度低于 0.3，在这里被一刀切掉了。
+                     *   游戏里的艺术字/描边字/发光字置信度天然偏低（0.1~0.3 很常见），
+                     *   而画面里明明写着字。现在低置信只记日志、仍放行，
+                     *   由上层「文字相似度」判断是不是要找的那句话；
+                     *   只有低到接近噪声（< HARD_MIN_CONFIDENCE）才丢。
+                     */
+                    if (decoded.second < minConfidence) {
+                        Log.i(
+                            TAG,
+                            "rec 低置信「${decoded.first}」conf=${"%.2f".format(decoded.second)}" +
+                                "（仍放行，由文字相似度判定）"
+                        )
+                        if (decoded.second < HARD_MIN_CONFIDENCE) return null
+                    }
                     return OcrLine(
                         text = decoded.first,
                         confidence = decoded.second,
@@ -536,6 +556,9 @@ class OcrEngine(private val context: Context) : AutoCloseable {
         val DET_MEAN_RGB = floatArrayOf(0.485f, 0.456f, 0.406f)
         val DET_STD_RGB = floatArrayOf(0.229f, 0.224f, 0.225f)
         const val DET_BINARY_THRESHOLD = 0.3f
+
+        /** 硬下限：低于它认为不是文字（噪声）。 */
+        const val HARD_MIN_CONFIDENCE = 0.02
 
         /** 整块兜底的最大尺寸：再大就不该整块送识别（出乱码且慢）。 */
         const val WHOLE_MAX_W = 600
