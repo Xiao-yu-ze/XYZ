@@ -698,7 +698,19 @@ class ZRealMatcher(
             if (shotW > 0 && frameW > 0) frameW.toDouble() / shotW else null
         fun kByHeight(): Double? =
             if (shotH > 0 && frameH > 0) frameH.toDouble() / shotH else null
-        fun kByDpi(): Double? = if (shotDpi > 0f) 1.0 / shotDpi else null
+        /**
+     * `dpi` 缩放档。
+     *
+     * 协议原文是 `imageWidth * (1 / screenDpi)`，它得到的是**物理尺寸（dp）**，
+     * 而不是像素。只有在"当前屏密度 = 1"（PC / 1x 模拟器，正是自动精灵的主力
+     * 环境）时，dp 才数值上等于像素，所以协议敢这么写。
+     *
+     * 我们的帧是虚拟屏的物理像素（1280x720，密度 1.5），要还原成"本帧里应有的
+     * 像素尺寸"必须再乘当前屏密度：k = density / screenDpi。
+     * 少了这个因子，模板会被缩到应有尺寸的 2/3（面积 44%），分数永远过不了阈值，
+     * 且不报错，只表现为"没找到"。
+     */
+    fun kByDpi(): Double? = if (shotDpi > 0f) (density.toDouble() / shotDpi) else null
         fun one(label: String, k: Double?): ScaleSpec? = k?.let { ScaleSpec(label, it, it) }
 
         val specs: List<ScaleSpec> = when (type) {

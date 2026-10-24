@@ -215,6 +215,17 @@ object Z {
             indexNum?.let { put("indexNum", it) }
             xOffset?.let { put("xOffset", it.raw) }
             yOffset?.let { put("yOffset", it.raw) }
+            /*
+             * ★ 先清掉 extra 里的同名旧值再写。
+             *
+             *   畸形 limitArea（比如只有 {"left":"10%"}）解析失败时，原文被塞进
+             *   extra 兜底；用户随后在界面上把范围改对，只更新了强类型字段，
+             *   extra 里的旧值还在 —— 而 extra 最后写，会把新值盖回去。
+             *   表现是「改好了、保存了、再打开还是旧的」，最难查的一类。
+             */
+            // 解析成功（或被用户改过）时清掉兜底的旧原文；
+            // 解析失败时**必须保留**，否则畸形 limitArea 会被静默丢掉。
+            if (limitArea != null) extra.remove("limitArea")
             extra.forEach { (k, v) -> put(k, v) }
         }
 
@@ -473,6 +484,8 @@ object Z {
          * 换成了私有语义。现在协议字段照协议解析，`multiSwipe` 只是附加。
          */
         val gestureActions: List<Action> = emptyList(),
+        /** `gestureActions` 里解析不出来的原始项，原样回写，避免静默丢动作。 */
+        val gestureRaw: List<JSONObject> = emptyList(),
         /**
          * 未知 `controlRunType` 的原始字符串。
          *
@@ -633,9 +646,11 @@ object Z {
             }
 
             // 协议的轨迹数组（FIELDS.md:459/470）。以前完全没写回。
-            if (gestureActions.isNotEmpty()) {
+            if (gestureActions.isNotEmpty() || gestureRaw.isNotEmpty()) {
                 put("gestureActions", org.json.JSONArray().apply {
                     gestureActions.forEach { put(it.toJson()) }
+                    // 解析不出来的原始项按原样补回，不静默删除
+                    gestureRaw.forEach { put(it) }
                 })
             }
 
@@ -674,12 +689,23 @@ object Z {
                 "gestureActions"
             )
 
-            /** 递归解析动作数组（`gestureActions` 用）。坏一个只丢一个，不连带整份。 */
-            private fun parseActionArray(arr: JSONArray?): List<Action> {
+            /**
+             * 递归解析动作数组（`gestureActions` 用）。
+             *
+             * [rawOut] 收「解析不出来的原始 JSON」：`gestureActions` 现在在 HANDLED 里，
+             * 不再走 extra 兜底。如果这里直接丢掉，遇到未来版本的新动作类型，
+             * 就会从「原样保留」退化成「静默删除」——用户存一次就永久丢轨迹。
+             */
+            private fun parseActionArray(
+                arr: JSONArray?,
+                rawOut: MutableList<JSONObject>? = null
+            ): List<Action> {
                 if (arr == null) return emptyList()
                 val out = ArrayList<Action>(arr.length())
                 for (i in 0 until arr.length()) {
-                    arr.optJSONObject(i)?.let { Action.parse(it) }?.let { out.add(it) }
+                    val o = arr.optJSONObject(i) ?: continue
+                    val a = Action.parse(o)
+                    if (a != null) out.add(a) else rawOut?.add(o)
                 }
                 return out
             }
@@ -696,6 +722,8 @@ object Z {
             }
 
             fun parse(o: JSONObject): Action? {
+            // 解析不出来的子动作原文（未来版本的新类型），回写时原样补回
+            val gestureRawOut = ArrayList<JSONObject>()
                 // 原始 controlRunType 要留下来：未知值会被 ofWire 兜底成"等待"，
                 // 但回写必须写回原串（见 Action.rawControlRunType）。
                 val rawCrt = o.optString("controlRunType").takeIf { it.isNotEmpty() }
@@ -728,7 +756,10 @@ object Z {
                     startPos = o.optJSONObject("startPos")?.let { PosData.parse(it) },
                     endPos = o.optJSONObject("endPos")?.let { PosData.parse(it) },
                     // 协议的轨迹数组：以前根本没读，等于把「多指手势」的语义丢了
-                    gestureActions = parseActionArray(o.optJSONArray("gestureActions")),
+                    gestureActions = parseActionArray(
+                o.optJSONArray("gestureActions"), gestureRawOut
+            ),
+            gestureRaw = gestureRawOut,
                     // 只有"兜底成 CONTROL_WAIT 但原文不是 waitDelay"时才记，
                     // 正常情况保持 null（回写时直接用枚举里的值）
                     rawControlRunType = rawCrt?.takeIf { it != type.controlRunType },

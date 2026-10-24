@@ -255,6 +255,9 @@ object ZFieldEditor {
                 //   按键动作。自动精灵按 type 取字段，多出来的 posData 是垃圾；
                 //   而我们的界面还会继续显示"位置 X/Y"，用户以为自己改错了。
                 type = newType,
+                // 换类型必须清掉它，否则 toJson 会优先写回旧的原串：
+                // 界面显示「控制执行·stop」，文件里还是那个认不出的值。
+                rawControlRunType = null,
                 posData = null
             )
         val current = action.posData
@@ -292,12 +295,17 @@ object ZFieldEditor {
         if (newType == Z.ActionType.SWIPE) {
             return action.copy(
                 type = newType,
+                // 换类型必须清掉它，否则 toJson 会优先写回旧的原串：
+                // 界面显示「控制执行·stop」，文件里还是那个认不出的值。
+                rawControlRunType = null,
                 posData = newPos,
                 startPos = action.startPos ?: newPos,
                 endPos = action.endPos ?: newPos
             )
         }
-        return action.copy(type = newType, posData = newPos)
+        // 换类型要清掉 rawControlRunType：toJson 会优先写回那个旧原串，
+        // 否则界面显示「控制执行·stop」，文件里还是那个认不出的值。
+        return action.copy(type = newType, rawControlRunType = null, posData = newPos)
     }
 
     /** 动作类型要求的位置类型。返回 null = 这个动作没有位置。 */

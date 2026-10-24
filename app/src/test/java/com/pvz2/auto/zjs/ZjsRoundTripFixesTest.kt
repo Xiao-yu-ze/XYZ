@@ -326,4 +326,46 @@ class ZjsRoundTripFixesTest {
         val first = JSONObject(ZjsFileFormat.stringify(s).split("\r\n").first())
         assertEquals(2, first.getInt("count"))
     }
+
+    // ---------------------------------------------------------------- 复审抓到的两个回归
+
+    @Test
+    fun `畸形 limitArea 被改成合法值后，落盘必须是新值`() {
+        /*
+         * 畸形写法解析失败时原文被塞进 extra 兜底，而 extra 最后写 ——
+         * 用户在界面上把范围改对，保存后仍被旧值盖回去。
+         * 「改好了、保存了、再打开还是旧的」，最难查的一类。
+         */
+        val pos = Z.PosData(
+            type = Z.PosType.IMAGE,
+            extra = linkedMapOf("limitArea" to "{\"left\":\"10%\"}"),
+        )
+        val fixed = pos.copy(limitArea = ZArea.parse("10% 20% 30% 40%"))
+        val out = fixed.toJson()
+        assertEquals("10% 20% 30% 40%", out.getString("limitArea"))
+    }
+
+    @Test
+    fun `无法解析的子动作原样保留，不静默删除`() {
+        /*
+         * gestureActions 进了 HANDLED，不再走 extra 兜底。
+         * 遇到未来版本的动作类型时，解析不了不能直接丢 ——
+         * 用户存一次就永久丢轨迹。
+         */
+        val json = org.json.JSONObject(
+            """{"type":"多指手势","delayUnit":0,
+               "gestureActions":[
+                 {"type":"未来才有的动作","foo":1},
+                 {"type":"滑动","startPos":{"type":"location","x":"1","y":"2"},
+                  "endPos":{"type":"location","x":"3","y":"4"}}
+               ]}"""
+        )
+        val a = Z.Action.parse(json)!!
+        val back = a.toJson().getJSONArray("gestureActions")
+        assertEquals("两个都要在（一个能解析、一个原样保留）", 2, back.length())
+        assertTrue(
+            "解析不了的那个必须原样还在",
+            (0 until back.length()).any { back.getJSONObject(it).optString("type") == "未来才有的动作" }
+        )
+    }
 }

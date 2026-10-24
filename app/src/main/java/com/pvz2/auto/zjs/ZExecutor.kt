@@ -566,10 +566,18 @@ class ZExecutor(
                         skipped.add(Result.Skip(index, label, "手指${fi + 1} 缺起点或终点"))
                         return null
                     }
-                    paths.add(
-                        ZPosResolver.resolveLocation(s, screen) to
-                            ZPosResolver.resolveLocation(e, screen)
-                    )
+                    /*
+                     * ★ 手指的起终点也可能是「图片/文字」位置。
+                     *
+                     *   resolveLocation 在 x/y 为空时返回**屏幕中心** —— 多指手势于是
+                     *   就变成「从屏幕中心滑到屏幕中心」：不报错，也不滑对地方。
+                     *   这里和 SWIPE 分支一样走 locate()。
+                     */
+                    val sp = locate(s, index, "$label 手指${fi + 1} 起点", skipped)
+                        ?: return null
+                    val ep = locate(e, index, "$label 手指${fi + 1} 终点", skipped)
+                        ?: return null
+                    paths.add(sp.first() to ep.first())
                 }
                 try {
                     inject.multiSwipe(paths, hold)

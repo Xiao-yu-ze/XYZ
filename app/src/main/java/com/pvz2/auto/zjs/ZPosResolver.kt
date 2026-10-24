@@ -181,16 +181,15 @@ object ZPosResolver {
             )
         }
 
-        // ② 其次：取色点 x/y
-        val px = pos.x
-        val py = pos.y
-        if (px != null && py != null) {
-            return clampPoint(
-                px.toPx(width, density),
-                py.toPx(height, density),
-                width, height
-            )
-        }
+        /*
+         * ★ 取色点 x/y **不参与判定**。
+         *
+         *   协议运行时（m18129 的 S.color）只读 limitArea 和 limitPos，
+         *   根本不读 x/y。x/y 是「用吸管吸色时记下的坐标」，
+         *   只要作者是吸管取色它就一定存在 ——
+         *   拿它当单点判定等于把几乎所有手工颜色位置从「扫 ROI」
+         *   静默改成「只看一个像素」，闸门会大面积误判。
+         */
 
         // ③ 都没配 → 没有单点可言，调用方按 ROI 扫（原来的行为）
         return null
