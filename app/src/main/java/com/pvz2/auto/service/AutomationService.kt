@@ -620,7 +620,7 @@ class AutomationService : Service() {
             inject = adapter,
             screen = screen,
             matcher = matcher,
-            log = { Log.i(TAG, "[zjs] $it") }
+            log = { com.pvz2.auto.core.ZjsLog.add(it) }
         )
         zjsExecutor = executor
         // ★ scriptName 必须是**脚本文件名**，不能是字面量 "zjs"。

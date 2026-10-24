@@ -1007,8 +1007,20 @@ class ZjsEditorPage(
         host.lifecycleScope.launch {
             host.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 var ticker: Job? = null
+                var lastIndex = -2
                 com.pvz2.auto.core.ScriptRunState.state.collect { st ->
                     adapter.updateRunState(st)
+                    /*
+                     * 自动滚到正在跑的那一条。
+                     *
+                     * 脚本一跑起来，当前动作往往在可见区之外 ——
+                     * 用户盯着屏幕却看不到「识别 N 次」在涨，
+                     * 就会以为进度显示没生效。
+                     */
+                    if (st.running && st.currentIndex >= 0 && st.currentIndex != lastIndex) {
+                        lastIndex = st.currentIndex
+                        runCatching { rvActions.scrollToPosition(st.currentIndex) }
+                    }
                     if (st.running) {
                         if (ticker == null) {
                             ticker = launch {

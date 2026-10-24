@@ -1077,6 +1077,23 @@ class MainActivity : AppCompatActivity() {
                         appendLine("时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}")
                         appendLine("设备: ${Build.MANUFACTURER} ${Build.MODEL}  Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
                         appendLine()
+                        /*
+                         * 脚本执行日志放最前面。
+                         *
+                         * logcat 会被系统日志（热限流之类）几十秒冲干净，
+                         * 导出的东西里往往一行脚本日志都没有 ——
+                         * 而"卡在第几条、哪个字段、实测到什么"全在这里。
+                         */
+                        run {
+                            val script = com.pvz2.auto.core.ZjsLog.snapshot()
+                            appendLine("===== 脚本执行日志（${script.size} 行）=====")
+                            if (script.isEmpty()) {
+                                appendLine("（本次会话还没运行过脚本）")
+                            } else {
+                                script.forEach { appendLine(it) }
+                            }
+                            appendLine()
+                        }
                         // 这两行是"成没成"的直接答案，放最前面。
                         appendLine("===== 结论 =====")
                         appendLine("建屏是否成功: ${if (st.displayId > 0) "是（displayId=${st.displayId}）" else "否"}")
