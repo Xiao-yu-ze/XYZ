@@ -1,0 +1,35 @@
+动
+        //
+        // 管理入口放在**每根手指的详情之前** —— 用户展开这个动作，
+        // 第一眼该看到"有几根手指、怎么加"，而不是先滚过一堆坐标。
+        //
+        // ★ 必须给 field，否则 UI 不会挂点击。只给 Kind.ENTER 是不够的：
+        //   makeRow 的判断是 `kind != READONLY && field.isNotEmpty()`，
+        //   field 空着就永远点不动。
+        /*
+         * 「运行多个动作」的子动作列表：必须能点进去增删。
+         * 之前只显示一行「子动作 共 N 个」的只读文字 —— 于是这个动作
+         * 在界面上等于不可用（用户根本没法往里加东西）。
+         */
+        if (action.type == Z.ActionType.RUN_MULTI) {
+            val n = action.scriptSet.size + action.scriptSetRaw.size
+            rows += Row(
+                "子动作",
+                if (n == 0) "（还没有子动作，点击添加）" else "共 $n 个，点击管理",
+                Kind.ENTER,
+                field = "scriptSet"
+            )
+        }
+
+        if (action.type == Z.ActionType.MULTI_SWIPE) {
+            // ★ 三种情况分开说，不能只认我们自己的 fingers。
+            //
+            //   自动精灵原生的「多指手势」轨迹在 `gestureActions`（一个完整动作
+            //   数组，FIELDS.md:470）里，而它现在是**强类型字段**（ZModel.HANDLED
+            //   收着它）—— 所以它既不会出现在 extra 只读兜底里，这里原来也不读它。
+            //   导入这种脚本时界面显示"（还没有手指，点击添加）"，用户会以为数据
+            //   全丢了（其实好好躺在文件里）；他一按"添加"就会写出我们自己的
+            //   multiSwipe，和原生轨迹并存，文件越改越乱。
+            //   先只读显示出来：能看见就不会误判成丢失。编辑能力以后再说。
+            val nativeCount = action.gestureActions.size + action.gestureRaw.size
+          

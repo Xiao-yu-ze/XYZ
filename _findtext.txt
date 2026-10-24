@@ -1,0 +1,43 @@
+    override fun findText(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit> {
+        val want = pos.text?.trim().orEmpty()
+        if (want.isEmpty()) {
+            lastUnsupported = "文字位置没有填要识别的文字"
+            return emptyList()
+        }
+        val ctx = context ?: run {
+            lastUnsupported = "文字识别缺少 Context（内部错误）"
+            return emptyList()
+        }
+        val m = nextFrame() ?: run {
+            lastUnsupported = "拿不到当前帧"
+            return emptyList()
+        }
+        val engine = ocrEngine(ctx) ?: run {
+            lastUnsupported = "OCR 模型加载失败（assets/ocr）"
+            return emptyList()
+        }
+
+        val roi = clampRect(rect, m.width(), m.height())
+        val region = m.submat(org.opencv.core.Rect(roi[0], roi[1], roi[2] - roi[0], roi[3] - roi[1]))
+        val threshold = (pos.similarPercent ?: 90) / 100.0
+        return try {
+            /*
+             * 相似度是**文字相似度**，不是 OCR 置信度。
+             *
+             * 一开始我把它当成置信度下限（90 → 0.84），结果游戏里的艺术字
+             * 置信度普遍 0.5~0.8，全被滤掉，报"这一块里没识别出任何文字" ——
+             * 而画面里明明全是字。用户会去调相似度，越调越低，越低越不对。
+             *
+             * 所以：置信度用一个很低的下限（0.3）把候选都取回来，
+             * 再用相似度判断"这段文字是不是我要找的"。
+             */
+            val lines = engine.recognize(region, 0.3)
+            // 诊断：分不清"画面上没字"和"OCR 没跑起来"时，这行日志能分开
+            runCatching {
+                // 用 getExternalFilesDir：这是应用自己一定可写的位置，
+                // 之前从 savedDir.parentFile 推导，异常被 runCatching 吞掉，一枚图都没落下来。
+                val dir = java.io.File(ctx!!.getExternalFilesDir(null), "ocr_fail")
+                check(dir.isDirectory || dir.mkdirs()) { "建目录失败：$dir" }
+                val file = java.io.File(dir, "fail_${System.currentTimeMillis()}.png")
+                val ok = org.opencv.imgcodecs.Imgcodecs.imwrite(file.absolutePath, region)
+ 

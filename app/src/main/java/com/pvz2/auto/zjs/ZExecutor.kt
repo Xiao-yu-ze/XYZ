@@ -1817,6 +1817,27 @@ class ZExecutor(
         index: Int,
         skipped: MutableList<Result.Skip>
     ): Boolean {
+        /*
+         * ★ 「判不了」和「不成立」必须分开。
+         *
+         *   有 6 种情况 evaluate() 永远返回 false 且不可能变真：
+         *   未实现的类型（aiCloud）、独立使用周围条件、识别类条件没配位置、
+         *   JS 表达式为空/语法错、条件嵌套过深。
+         *   勾了「不成立时反复检查」（协议缺省 limit=0 = 无限）时，
+         *   原来会**无限自旋**：状态行一直显示"正在等条件"，
+         *   跟"正常等画面"完全分不出来，而且每轮往 skipped 里塞一条，
+         *   跑几小时就是几万条。用户只能手动停止。
+         *
+         *   所以先判一次"这个条件本机到底判不判得了"，判不了就直接返回，
+         *   不进循环。
+         */
+        undecidableReason(cond)?.let { why ->
+            val msg = "条件判不了（$why），按不成立处理，不进入反复检查"
+            log("[跳过] $msg")
+            skipped.add(Result.Skip(index, "条件", msg))
+            return false
+        }
+
         val first = evaluate(cond, index, skipped)
         if (first || !cond.repeatWhenFalse) return first
 
@@ -2080,6 +2101,23 @@ class ZExecutor(
             }
         }
         return applyInvert(cond, raw)
+    }
+
+    /**
+     * 这个条件在本机**能不能判**。null = 能判。
+     *
+     * 返回非 null 的条件，evaluate() 必然恒为 false 且不会变真 ——
+     * 拿去反复检查就是死循环（见 [evaluateWithRetry]）。
+     */
+    private fun undecidableReason(cond: Z.Condition): String? = when (cond.type) {
+        Z.ConditionType.AI_CLOUD -> "AI 云识别需要云端接口"
+        Z.ConditionType.AROUND -> "周围条件不能单独当条件用"
+        Z.ConditionType.JS_EXPRESSION ->
+            if (cond.extra["expression"]?.toString().isNullOrBlank()) "JS 表达式为空" else null
+        Z.ConditionType.IMAGE, Z.ConditionType.TEXT,
+        Z.ConditionType.COLOR, Z.ConditionType.NODE ->
+            if (cond.posData == null) "识别类条件没有配位置" else null
+        else -> null
     }
 
     /**
@@ -2822,14 +2860,24 @@ class ZExecutor(
         skipped: MutableList<Result.Skip>
     ) {
         if (action.callbacks.isEmpty()) return
+        /*
+         * ★ 白名单必须包含**实际会执行的那三个**：SUC / FAIL / FINISH。
+         *
+         *   原来漏了 AFTER_EXEC_FAIL —— 它在 :663/:667 是真执行了的，
+         *   却被算进"未执行"，于是用户在跳过列表里看到
+         *   「监听动作未执行…：afterExecFail」，而它明明跑了。
+         *   这种"报假警"比漏报更伤：用户会去删一个正常工作配置。
+         */
         val unsupported = action.callbacks.keys.filter {
-            it != Z.CallbackSlot.AFTER_EXEC_SUC && it != Z.CallbackSlot.AFTER_EXEC_FINISH
+            it != Z.CallbackSlot.AFTER_EXEC_SUC &&
+                it != Z.CallbackSlot.AFTER_EXEC_FAIL &&
+                it != Z.CallbackSlot.AFTER_EXEC_FINISH
         }
         if (unsupported.isEmpty()) return
         // 无限循环里每轮都会走到这里，只报第一次
         if (!warnedCallbackActions.add(index)) return
         val names = unsupported.joinToString("、") { it.wire }
-        val msg = "监听动作未执行（本机只支持 afterExecSuc / afterExecFinish）：$names"
+        val msg = "监听动作未执行（本机只支持 afterExecSuc / afterExecFail / afterExecFinish）：$names"
         skipped.add(Result.Skip(index, label, msg))
         log("[$index] $label — $msg")
     }

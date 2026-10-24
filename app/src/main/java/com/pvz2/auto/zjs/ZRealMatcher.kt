@@ -404,7 +404,19 @@ class ZRealMatcher(
              * 所以：置信度用一个很低的下限（0.3）把候选都取回来，
              * 再用相似度判断"这段文字是不是我要找的"。
              */
-            val lines = engine.recognize(region, 0.3)
+            /*
+         * 「找字滤镜」（协议 `text.filter`，FIELDS:202）。
+         *
+         * 原来滤镜只在 findImage 里套，找文字全程不用滤镜 —— 需要反色/二值化
+         * 才认得出的艺术字**必然**找不到，而界面上连这一行都没有。
+         * 三种滤镜（grey/bw/reverse）的实现是现成的，直接复用。
+         */
+        val fType = filterType(pos)
+        val filtered = if (fType != null) applyFilter(region, fType) else null
+        val ocrInput = filtered ?: region
+        val lines = engine.recognize(ocrInput, 0.3)
+        // 识别完就把滤镜产物放掉；后面只用 lines，不再碰这块 Mat
+        filtered?.release()
             // 诊断：分不清"画面上没字"和"OCR 没跑起来"时，这行日志能分开
             runCatching {
                 // 用 getExternalFilesDir：这是应用自己一定可写的位置，

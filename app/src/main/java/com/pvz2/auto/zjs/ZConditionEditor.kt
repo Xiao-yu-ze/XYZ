@@ -158,7 +158,6 @@ private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
     /** 条件摊平成可编辑的行，UI 直接复用 [ZActionDescriber.Row]。 */
     fun describe(c: Z.Condition): List<ZActionDescriber.Row> {
         val rows = ArrayList<ZActionDescriber.Row>()
-
         /*
          * 条件类型：**必须是 ENUM 且带 field**。
          *
@@ -295,6 +294,16 @@ private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
             )
 
             Z.ConditionType.AI_CLOUD -> {
+                /*
+                 * ★ AI 云识别本机跑不了（要云端接口）。下面这几个字段存得进文件，
+                 *   但**不会被求值** —— 从自动精灵导入的脚本里可能带着这条条件，
+                 *   所以字段保留可编辑，顶上先说清楚。
+                 */
+                rows += Row(
+                    "说明",
+                    "本机不支持 AI 云识别（需要云端接口）→ 下面的字段不会生效",
+                    Kind.READONLY
+                )
                 rows += Row("文字", c.extra["text"]?.toString().orEmpty(), Kind.TEXT, field = "aiText")
                 rows += Row(
                     "速度", labelOf(AI_SPEED, c.extra["aiSpeed"]?.toString()),

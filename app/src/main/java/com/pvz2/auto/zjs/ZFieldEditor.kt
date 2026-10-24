@@ -446,7 +446,9 @@ object ZFieldEditor {
     /** 布尔型 extra。写回 true；清空 = 删掉这个键（缺省即 false）。 */
     private val EXTRA_BOOLS = setOf(
         "highSpeedTap", "clearBeforeInput", "ContinueParentExecute",
-        "closeBeforeOpen", "onlyClose"
+        "closeBeforeOpen", "onlyClose",
+        // 执行脚本：跑完子脚本要不要回到本脚本（缺省 false = 整条任务结束）
+        "continueCurrentAfterFinish"
     )
 
     /** 整型 extra。`keyCode` 就是 Android KeyEvent keycode（FIELDS.md 10.10）。 */
@@ -455,7 +457,10 @@ object ZFieldEditor {
     /** 字符串型 extra。空串 = 删掉这个键。 */
     private val EXTRA_STRINGS = setOf(
         "jumpToPosition", "aimActionPosition", "appPackageName",
-        "link", "promptType", "promptText", "inputText"
+        "link", "promptType", "promptText", "inputText",
+        // ★ 运行JS代码 / 执行脚本 的参数。没有这两项时，界面上改完会弹
+        //   「值不合法，未保存」—— 用户以为改了，其实文件没动。
+        "jsCode", "filePath", "promptTitle"
     )
 
     /** 取出（或新建）`extra["vars"]` 数组，改完写回；空数组就把键删掉。 */
@@ -561,6 +566,29 @@ object ZFieldEditor {
                 val v = o.optJSONObject("value") ?: continue
                 if (on) v.put("rememberInputValue", true) else v.remove("rememberInputValue")
             }
+        }
+
+        /*
+         * 找字滤镜：写 `filter` 键（匹配器的 filterType 先看 imageFilter、再看 filter）。
+         * 「（无）」= 把键删掉，和协议"缺省即不过滤"一致。
+         */
+        field == "filter" -> action.copy(
+            extra = action.extra.toMutableMap(),
+            posData = action.posData
+        ).let { a ->
+            a.posData?.let { pd ->
+                a.copy(
+                    posData = pd.copy(
+                        extra = pd.extra.toMutableMap().apply {
+                            if (value.isBlank() || value == "（无）") {
+                                remove("filter"); remove("imageFilter")
+                            } else {
+                                put("filter", value); remove("imageFilter")
+                            }
+                        }
+                    )
+                )
+            } ?: a
         }
 
         field in EXTRA_STRINGS ->

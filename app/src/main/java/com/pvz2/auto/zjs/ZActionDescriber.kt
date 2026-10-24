@@ -263,6 +263,19 @@ object ZActionDescriber {
                 Kind.ENTER,
                 field = "scriptSet"
             )
+            /*
+             * runMode：协议有 normal / random / multiThread 三种，
+             * 本机只有顺序执行 —— random 不随机、multiThread 不同时。
+             * 只在设了非 normal 时提示，免得平时多一行噪音。
+             */
+            val runMode = action.extra["runMode"]?.toString().orEmpty().trim()
+            if (runMode.isNotEmpty() && runMode != "normal") {
+                rows += Row(
+                    "说明",
+                    "runMode=$runMode 本机按 normal（顺序）执行：不会乱序、也不会真并发",
+                    Kind.READONLY
+                )
+            }
         }
 
         if (action.type == Z.ActionType.MULTI_SWIPE) {
@@ -609,14 +622,37 @@ object ZActionDescriber {
                     add("local_v2"); add("local")
                     if (om !in this) add(om)   // 文件里是 online 时也要能预选回去
                 }
+                /*
+                 * ★ 这个字段运行时不读（ZExecutor/ZRealMatcher 零引用）：
+                 *   本机只有一套本地 OCR，local_v2 / local / online 三个值
+                 *   跑起来完全一样。值照样存取（导给自动精灵还要用），
+                 *   但名字里标出来，别让人以为换了引擎。
+                 */
                 oth += Row(
-                    "${p}OCR 模式",
-                    if (om == "online") "online（云识别，本机按本地跑）" else om,
+                    "${p}OCR 模式（本机不生效）",
+                    if (om == "online") "online（本机按本地跑）" else om,
                     Kind.ENUM, omOpts, field = "$prefix.ocrMode"
                 )
             }
 
-            Z.PosType.COLOR -> {
+            Z.PosType.TEXT -> {
+            /*
+             * 找字滤镜（协议 `text.filter`，FIELDS:202）：OCR 之前对画面做预处理。
+             * 三种实现（grey/bw/reverse）在匹配器里早就有，只是之前只给图片用。
+             */
+            val tf = extraStr(pos, "filter") ?: extraStr(pos, "imageFilter")
+            val tfOpts = buildList {
+                add("（无）"); add("grey"); add("bw"); add("reverse")
+                if (!tf.isNullOrBlank() && tf !in this) add(tf)
+            }
+            oth += Row(
+                "${p}找字滤镜",
+                tf ?: "（无）",
+                Kind.ENUM, tfOpts, field = "$prefix.filter"
+            )
+        }
+
+        Z.PosType.COLOR -> {
                 rec += Row("${p}颜色", pos.color.orEmpty(), Kind.TEXT, field = "$prefix.color")
                 // 颜色必须能从画面上取，不靠手输 #RRGGBB（手输要么靠截图取色已经偏了，
                 // 要么填错一个字符就永远匹配不到，而失败信息里只有"没找到这个颜色"）
@@ -913,6 +949,33 @@ return PosGroup(rec, par, oth)
             )
         }
 
+        /*
+         * 执行脚本（10.15）：filePath 指向另一个脚本文件。
+         *
+         * ★ 以前这里**一行都没有**，而 ZFieldEditor 也没有 filePath 的写回通道 ——
+         *   用户能从「添加动作」里加一条「执行脚本」，然后永远跑不起来
+         *   （skip「缺 filePath」），也没法在界面上填。整条链路是死的。
+         */
+        Z.ActionType.RUN_SCRIPT -> {
+            rows += Row(
+                "脚本文件名",
+                anyStr(e, "filePath").orEmpty(),
+                Kind.TEXT,
+                field = "filePath"
+            )
+            rows += Row(
+                "跑完回到本脚本",
+                if (anyBool(e, "continueCurrentAfterFinish")) "是" else "否",
+                Kind.SWITCH,
+                field = "continueCurrentAfterFinish"
+            )
+            rows += Row(
+                "说明",
+                "留空则跳过；「跑完回到本脚本」为否时，子脚本结束就等于整条任务结束",
+                Kind.READONLY
+            )
+        }
+
         // 输入内容（10.11）
             Z.ActionType.INPUT_TEXT -> {
                 rows += Row(
@@ -920,12 +983,6 @@ return PosGroup(rec, par, oth)
                     anyStr(e, "inputText").orEmpty(),
                     Kind.TEXT,
                     field = "inputText"
-                )
-                rows += Row(
-                    "先清空",
-                    if (anyBool(e, "clearBeforeInput")) "是" else "否",
-                    Kind.SWITCH,
-                    field = "clearBeforeInput"
                 )
             }
 
@@ -945,7 +1002,27 @@ return PosGroup(rec, par, oth)
                 field = "aimActionPosition"
             )
 
-            // 控制执行·停止（10.21）：字段名首字母大写，别改
+            // 系统提示（10.23）：三种 promptType 本机都只弹 toast
+        Z.ActionType.PROMPT -> {
+            rows += Row("提示内容", anyStr(e, "promptText").orEmpty(), Kind.TEXT, field = "promptText")
+            rows += Row("标题", anyStr(e, "promptTitle").orEmpty(), Kind.TEXT, field = "promptTitle")
+            val pt = anyStr(e, "promptType").orEmpty().trim().ifBlank { "toast" }
+            rows += Row(
+                "提示方式",
+                pt,
+                Kind.ENUM, listOf("toast", "alert", "notification"),
+                field = "promptType"
+            )
+            if (pt != "toast") {
+                rows += Row(
+                    "说明",
+                    "本机只实现 toast：选 $pt 也会按 toast 弹，且**不会阻塞**等按钮",
+                    Kind.READONLY
+                )
+            }
+        }
+
+        // 控制执行·停止（10.21）：字段名首字母大写，别改
             Z.ActionType.CONTROL_STOP -> rows += Row(
                 "只结束当前子脚本",
                 if (anyBool(e, "ContinueParentExecute")) "是" else "否",
