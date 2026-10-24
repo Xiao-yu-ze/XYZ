@@ -67,6 +67,35 @@ class LibraryPage(
             AutomationService.zjsStop(host)
         }
 
+        /*
+         * 新建：造一份**空脚本**直接进编辑器。
+         *
+         * 之前没有入口 —— 想写脚本只能导入一个别人的再改，
+         * 与「这是个脚本编辑器」这件事不符。
+         *
+         * 骨架走 ZjsFileFormat.parse 而不是手搓 Z.Script：
+         * baseInfo 的字段默认值、类型、单位只有解析器那一处是权威，
+         * 在这里再造一份必然和它漂移（历史上就是这么漂的）。
+         */
+        root.findViewById<MaterialButton>(R.id.btnLibraryNew).setOnClickListener {
+            val skeleton = """
+                {"repeatCount":1,"delay":"200","delayUnit":0,"pauseOnFail":true,"screenWidth":1280,"screenHeight":720,"description":"新脚本"}
+            """.trimIndent()
+            val parsed = com.pvz2.auto.zjs.ZjsFileFormat.parse(skeleton)
+            val fresh = parsed.script ?: run {
+                android.widget.Toast.makeText(
+                    host, "新建失败：${parsed.error ?: "骨架脚本无法解析"}", android.widget.Toast.LENGTH_LONG
+                ).show()
+                return@setOnClickListener
+            }
+            // 文件名先空着：编辑器的「保存」会问名字，用户自己定
+            ZjsEditState.open("", fresh)
+            (host as? MainActivity)?.gotoPage(2)
+            android.widget.Toast.makeText(
+                host, "已新建，编辑完点「保存」再起名字", android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+
         // 导入：交给 Activity 的 SAF 启动器。放这里注册会违反
         // registerForActivityResult 的生命周期约束（可能已经 STARTED）。
         root.findViewById<MaterialButton>(R.id.btnLibraryImport).setOnClickListener {

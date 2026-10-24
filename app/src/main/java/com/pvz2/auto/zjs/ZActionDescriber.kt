@@ -197,7 +197,21 @@ object ZActionDescriber {
         val posLines = ArrayList<Row>()
         // 主位置不带「位置」前缀 —— 外面已经有「识别」小节，
         // 每行再来一个「位置」只是重复两个字，还占掉标签宽度。
-        action.posData?.let { posLines += posRows("位置", it, showPrefix = false) }
+        /*
+         * ★ 「位置」只给**真的有位置字段**的动作显示。
+         *
+         *   滑动/多指手势用的是 startPos / endPos（FIELDS.md 10.7），
+         *   执行器也只读这两个（ZExecutor 的 SWIPE 分支）。
+         *   原来这里无条件把 posData 也摊出来，于是一条滑动会同时出现
+         *   「位置 x,y」和「起点/终点」——两套坐标并排，用户分不清哪个生效，
+         *   而「位置」在滑动里其实被完全忽略（是转换/换类型时留下的残留）。
+         *   藏掉它，界面就不再自相矛盾。
+         */
+        val usesStartEnd = action.type == Z.ActionType.SWIPE ||
+            action.type == Z.ActionType.MULTI_SWIPE
+        if (!usesStartEnd) {
+            action.posData?.let { posLines += posRows("位置", it, showPrefix = false) }
+        }
         action.startPos?.let { posLines += posRows("起点", it) }
         action.endPos?.let { posLines += posRows("终点", it) }
         if (posLines.isNotEmpty()) {

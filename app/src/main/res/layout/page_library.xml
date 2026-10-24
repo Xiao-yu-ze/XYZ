@@ -100,12 +100,23 @@
         android:layout_marginTop="6dp"
         android:orientation="horizontal">
 
+        <!-- 新建：三颗按钮同一行。要先能建，才谈得上导入导出；
+             原来没有入口，只能靠导入别人的脚本来改。 -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnLibraryNew"
+            style="@style/AppButton.Outline"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/library_new" />
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnLibraryImport"
             style="@style/AppButton.Outline"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:layout_marginStart="8dp"
             android:text="@string/library_import" />
 
         <com.google.android.material.button.MaterialButton
