@@ -362,7 +362,11 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
         CLICK_NODE("点击节点", executable = true),
         AI_CLICK("AI点击"),
         SWIPE("滑动", executable = true),
-        GESTURE("单指手势"),
+        /*
+     * 单指手势现在能跑了：轨迹点在 `gestureActions` 里，是一串普通动作，
+     * 执行器按顺序逐点执行（runActionList → runMulti 那套循环）。
+     */
+    GESTURE("单指手势", executable = true),
         /**
          * 多指手势。
          *
@@ -407,7 +411,12 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
         CONTROL_STOP("控制执行", "stop", executable = true),
         CONTROL_WAIT("控制执行", "waitDelay", executable = true),
         PROMPT("系统提示", executable = true),
-        SET_VARS("设置变量"),
+        /*
+     * 设置变量现在能跑字面量赋值：vars: [{name, value}] 里 value 是
+     * number/string 时写入运行时变量表，`${名字}` 会在查找文字/输入内容里代换。
+     * 表达式、随机、取文本等其余 20 种 VarValue 仍求不出来（会明确报出来）。
+     */
+    SET_VARS("设置变量", executable = true),
         RUN_JS("运行JS代码"),
         ENCRYPTED("加密动作"),
 

@@ -162,6 +162,15 @@ class ZExecutor(
     /** 子列表内 `&` 跳转的次数上限：防止 `&-1` 这种写法变成死循环。 */
     private val MAX_SUB_JUMPS = 10000
 
+    /** 周围条件挂在位置对象上的键名（协议：posData.filterByAroundConditionSet）。 */
+    private val AROUND_KEY = "filterByAroundConditionSet"
+
+    /** 周围条件里允许出现的子条件类型（自动精灵 getSupportItemConditionTypes()）。 */
+    private val AROUND_SUB_TYPES = setOf(
+        Z.ConditionType.IMAGE, Z.ConditionType.TEXT,
+        Z.ConditionType.COLOR, Z.ConditionType.NODE
+    )
+
     private val MAX_SUB_SHELL_DEPTH = 8
 
     /**
@@ -180,6 +189,8 @@ class ZExecutor(
         val skipped = ArrayList<Result.Skip>()
         var executed = 0
         var steps = 0
+        // 「设置变量」写入的运行时变量：每次 run 从空开始（协议里变量属于一次运行）
+        scriptVars.clear()
 
         // jumpId → 下标，跳转时用
         val jumpTable = HashMap<String, Int>()
@@ -237,7 +248,8 @@ class ZExecutor(
                     pc++
                     continue
                 }
-                val action = varsApplied.action
+                // 运行时变量（「设置变量」写的）→ `${名字}` 代换进查找文字/输入内容
+        val action = applyScriptVars(varsApplied.action)
 
                 /*
                  * 条件。
@@ -636,9 +648,27 @@ class ZExecutor(
 
             // ---- 多指滑动
             Z.ActionType.MULTI_SWIPE -> {
+                /*
+                 * ★ 协议里多指手势的轨迹在 `gestureActions`（FIELDS.md 10.9），
+                 *   而 `fingers` 是我们自己的私有扩展。从自动精灵导入的脚本
+                 *   只有 gestureActions，于是以前一律判「没有手指」被跳过 ——
+                 *   缩放/双指类脚本必然跑不动，界面上却看不出问题。
+                 *
+                 *   gestureActions 的语义是"逐点执行的普通动作"，按顺序跑即可
+                 *   （本机没有真正的多指并发注入，这点如实写进日志，不假装）。
+                 */
                 if (action.fingers.isEmpty()) {
-                    skipped.add(Result.Skip(index, label, "没有手指"))
-                    return null
+                    if (action.gestureActions.isEmpty()) {
+                        val why = if (action.gestureRaw.isNotEmpty()) {
+                            "轨迹点里有 ${action.gestureRaw.size} 项格式不认识，已原样保留"
+                        } else {
+                            "没有手指，也没有轨迹点"
+                        }
+                        skipped.add(Result.Skip(index, label, why))
+                        return null
+                    }
+                    log("[$index] $label 用协议轨迹 gestureActions 逐点执行（本机不是真并发多指）")
+                    return runActionList(action, action.gestureActions, index, label, skipped)
                 }
                 val paths = ArrayList<Pair<ZPosResolver.Hit, ZPosResolver.Hit>>()
                 for ((fi, f) in action.fingers.withIndex()) {
@@ -668,6 +698,20 @@ class ZExecutor(
                     return null
                 }
                 Outcome()
+            }
+
+            // ---- 单指手势（10.8）：轨迹点是普通动作，逐点执行
+            Z.ActionType.GESTURE -> {
+                if (action.gestureActions.isEmpty()) {
+                    val why = if (action.gestureRaw.isNotEmpty()) {
+                        "轨迹点里有 ${action.gestureRaw.size} 项格式不认识，已原样保留"
+                    } else {
+                        "没有轨迹点（gestureActions 为空）"
+                    }
+                    skipped.add(Result.Skip(index, label, why))
+                    return null
+                }
+                return runActionList(action, action.gestureActions, index, label, skipped)
             }
 
             // ---- 按键
@@ -700,6 +744,42 @@ class ZExecutor(
                 } catch (e: Throwable) {
                     skipped.add(Result.Skip(index, label, "输入失败：${e.message}"))
                     return null
+                }
+                Outcome()
+            }
+
+            // ---- 设置变量（10.24 m36077）：vars: [{name, value: VarValue}]
+            Z.ActionType.SET_VARS -> {
+                val arr = varsArrayOf(action)
+                if (arr == null) {
+                    skipped.add(Result.Skip(index, label, "设置变量：vars 字段缺失或格式不对"))
+                    return null
+                }
+                var okCount = 0
+                val bad = ArrayList<String>()
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i) ?: continue
+                    val name = item.optString("name").trim()
+                    if (name.isEmpty()) continue
+                    val def = item.optJSONObject("value")
+                    val lit = def?.let { literalOf(it) }
+                    if (lit == null) {
+                        // 求不出来的变量（表达式/随机数/取文本…）明确说出来，
+                        // 别让它静默变成空值 —— 后面用它拼出来的文字会全错。
+                        bad.add(name)
+                        continue
+                    }
+                    scriptVars[name] = lit.text
+                    okCount++
+                }
+                log(
+                    "[$index] $label 设置变量：成功 $okCount 个" +
+                        (if (bad.isEmpty()) "" else "；${bad.joinToString("、")} 求不出值（本机只支持字面量）")
+                )
+                if (bad.isNotEmpty()) {
+                    skipped.add(
+                        Result.Skip(index, label, "变量 ${bad.joinToString("、")} 不是字面量，未赋值")
+                    )
                 }
                 Outcome()
             }
@@ -959,6 +1039,112 @@ class ZExecutor(
      * @param intervalMs 每轮间隔
      * @return 选中的命中点（至少一个）；null = 找不到 / 下标全越界（已记跳过原因）
      */
+    /**
+     * 「位置周围条件」（`posData.filterByAroundConditionSet`）。
+     *
+     * ## 语义来自自动精灵自己的帮助文案
+     *
+     * 反编译产物里（renderer-script-run-area-bundle.js）：
+     * ```
+     * getTypeDesc()  → "设置后可以过滤掉周围信息不满足条件的点位，以更精确的匹配到目标点位"
+     * basePosX 帮助  → "即假定找到的目标坐标，底下条件列表中的 限制区域/指定位置
+     *                   会根据和此坐标的相对关系，检查匹配到的点位是否满足周围条件"
+     * ```
+     * 也就是说：`basePosX/basePosY` 是**假定**的目标坐标，子条件的区域按它与基准的
+     * 相对关系摆放。所以对每个真实命中点 P：
+     *
+     *     offset = P − basePos
+     *     子条件区域/指定位置 + offset → 评估这些子条件
+     *
+     * 满足（and / or / count 由 matchMode 决定）的点位保留，其余丢弃。
+     *
+     * 子条件只支持 image / textFount / colorFound / nodeFound
+     * （同一份产物里 `getSupportItemConditionTypes()` 就是这么返回的）。
+     */
+    private fun applyAroundFilter(
+        pos: Z.PosData,
+        hits: List<ZPosResolver.Hit>,
+        index: Int,
+        skipped: MutableList<Result.Skip>
+    ): List<ZPosResolver.Hit> {
+        val raw = pos.extra[AROUND_KEY] ?: return hits
+        val obj = runCatching {
+            if (raw is org.json.JSONObject) raw else org.json.JSONObject(raw.toString())
+        }.getOrNull() ?: return hits
+        if (obj.optString("type") != "AroundCondition") return hits
+
+        val arr = obj.optJSONArray("conditions") ?: return hits
+        val subs = ArrayList<Z.Condition>()
+        for (i in 0 until arr.length()) {
+            arr.optJSONObject(i)?.let { o -> Z.Condition.parse(o)?.let { subs.add(it) } }
+        }
+        if (subs.isEmpty()) return hits
+
+        val mode = obj.optString("matchMode").ifBlank { "and" }
+        val need = obj.optInt("matchCount", subs.size).coerceAtLeast(1)
+        val baseX = aroundPx(obj.opt("basePosX"), isX = true)
+        val baseY = aroundPx(obj.opt("basePosY"), isX = false)
+
+        val tmpSkips = ArrayList<Result.Skip>()
+        val kept = hits.filter { hit ->
+            val dx = hit.x - baseX
+            val dy = hit.y - baseY
+            var okCount = 0
+            for (sub in subs) {
+                // 子条件只认这四种；其它类型（含我们自己加的）不参与判定
+                if (sub.type !in AROUND_SUB_TYPES) continue
+                if (evaluate(shiftCondition(sub, dx, dy), index, tmpSkips)) okCount++
+            }
+            when (mode) {
+                "or" -> okCount > 0
+                "count" -> okCount >= need
+                else -> okCount == subs.count { it.type in AROUND_SUB_TYPES }
+            }
+        }
+        if (kept.size != hits.size) {
+            log(
+                "   周围条件：命中 ${hits.size} 处，过滤后 ${kept.size} 处" +
+                    "（基准 $baseX,$baseY，模式 $mode）"
+            )
+        }
+        if (kept.isEmpty()) {
+            skipped.add(Result.Skip(index, "位置", "周围条件把 ${hits.size} 个候选点位全部过滤掉了"))
+        }
+        return kept
+    }
+
+    /** 把子条件里的区域/指定位置整体平移 (dx, dy)。 */
+    private fun shiftCondition(cond: Z.Condition, dx: Int, dy: Int): Z.Condition {
+        val p = cond.posData ?: return cond
+        val area = p.limitArea
+        val shiftedArea = if (area == null) {
+            null
+        } else {
+            val r = area.toPxRect(screen.width, screen.height, screen.density)
+            ZArea.fromPxRect(
+                r[0] + dx, r[1] + dy,
+                (r[2] - r[0]).coerceAtLeast(1), (r[3] - r[1]).coerceAtLeast(1),
+                screen.width, screen.height
+            )
+        }
+        // 指定位置（limitPosX/Y）也要跟着平移，否则"只看一个点"的子条件会原地不动
+        val newExtra = p.extra.toMutableMap()
+        for ((key, isX) in listOf("limitPosX" to true, "limitPosY" to false)) {
+            val cur = newExtra[key]?.toString() ?: continue
+            val base = if (isX) screen.width else screen.height
+            val px = ZValue.parse(cur).toPx(base, screen.density) + (if (isX) dx else dy)
+            newExtra[key] = "%.2f%%".format(100.0 * px / base)
+        }
+        return cond.copy(posData = p.copy(limitArea = shiftedArea ?: area, extra = newExtra))
+    }
+
+    private fun aroundPx(v: Any?, isX: Boolean): Int {
+        val text = v?.toString()?.trim().orEmpty()
+        val parsed = if (text.isEmpty()) null else ZValue.parse(text)
+        val base = if (isX) screen.width else screen.height
+        return parsed?.toPx(base, screen.density)?.toInt() ?: 0
+    }
+
     private fun locate(
         pos: Z.PosData,
         index: Int,
@@ -1029,6 +1215,12 @@ class ZExecutor(
          *   于是"画面里有两个同样的图标，点分数更高的那个"变成了"点最上面那个"。
          *   分数全 0（matcher 还没传 score）时 `maxByOrNull` 取第一个，等价旧行为。
          */
+    // ★ 位置周围条件：在「选第几个」**之前**过滤候选点。
+    //   （作者语义：不满足的点位先被剔除，indexNum 数的才是剩下的那些）
+    if (hits.isNotEmpty()) {
+        hits = applyAroundFilter(pos, hits, index, skipped)
+    }
+
         val chosen: List<ZPosResolver.Hit> = if (pos.indexNum.isNullOrBlank()) {
             listOfNotNull(hits.maxByOrNull { it.score })
         } else {
@@ -1520,6 +1712,26 @@ class ZExecutor(
      *    只有 `true` 才只结束本列表（那一条在 [executeOnce] 里已经折成 breakShell）。
      *  - **识别失败不出去**：只有顶层动作识别失败才按 Maa 语义终止任务。
      */
+    /**
+     * 跑一串动作（手势轨迹 `gestureActions` 用）。
+     *
+     * 复用 [runMulti] 的那套循环：limitRunCount / breakCondition / `&` 子列表跳转 /
+     * ContinueParentExecute 语义全都一样 —— 协议的 `gestureActions` 本来就是
+     * "逐个执行的普通动作数组"（FIELDS.md 10.8/10.9），不该另写一套。
+     */
+    private fun runActionList(
+        owner: Z.Action,
+        list: List<Z.Action>,
+        index: Int,
+        label: String,
+        skipped: MutableList<Result.Skip>
+    ): Outcome? = runMulti(
+        owner.copy(scriptSet = list),
+        index,
+        label,
+        skipped
+    )
+
     private fun runMulti(
         action: Z.Action,
         index: Int,
@@ -1708,6 +1920,59 @@ class ZExecutor(
      * 其余字段（desc、limitArea…）变量化不代换也不影响执行，不要因此把动作跳掉。
      */
     private val WATCHED_VAR_FIELDS = listOf("delay", "duration", "repeatCount", "posData")
+
+    /**
+     * 运行时变量表 —— 「设置变量」写、`${名字}` 读。
+     *
+     * 只做**字面量**：协议里 VarValue 有 22 种（表达式、随机、取文本、JS…），
+     * 那些需要一套变量运行时。这里能保证的是"设了字面量就能用上"，
+     * 求不出来的变量会在设置那一步明确报出来，不会静默变成空串。
+     */
+    private val scriptVars = HashMap<String, String>()
+
+    /** 从动作里取 `vars` 数组（可能是 JSONArray，也可能是 JSON 文本）。 */
+    private fun varsArrayOf(action: Z.Action): org.json.JSONArray? {
+        val raw = action.extra["vars"] ?: return null
+        return runCatching {
+            when (raw) {
+                is org.json.JSONArray -> raw
+                is String -> org.json.JSONArray(raw)
+                else -> org.json.JSONArray(raw.toString())
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * 把 `${变量名}` 代换成运行时变量。
+     *
+     * 用在「点击文字」的查找文字和「输入内容」的输入文本上 ——
+     * 这两处是"设置变量"最常见的用途（按关卡名/数量去点、去输入）。
+     * 变量不存在时**原样保留**并记一条日志：拼错的变量名会立刻看得见，
+     * 而不是变成空字符串去匹配任意文字。
+     */
+    private fun applyScriptVars(action: Z.Action): Z.Action {
+        if (scriptVars.isEmpty()) return action
+        var missing = false
+        fun sub(text: String?): String? {
+            if (text == null || !text.contains("${'$'}{")) return text
+            var out: String = text
+            for ((k, v) in scriptVars) {
+                out = out.replace("${'$'}{$k}", v)
+            }
+            if (out.contains("${'$'}{")) missing = true
+            return out
+        }
+        val newPos = action.posData?.let { it.copy(text = sub(it.text)) }
+        val newStart = action.startPos?.let { it.copy(text = sub(it.text)) }
+        val newEnd = action.endPos?.let { it.copy(text = sub(it.text)) }
+        val newExtra = action.extra.toMutableMap().apply {
+            (this["inputText"] as? String)?.let { put("inputText", sub(it)) }
+        }
+        if (missing) log("   变量：有 ${'$'}{名字} 没有对应的运行时变量，原样保留")
+        return action.copy(
+            posData = newPos, startPos = newStart, endPos = newEnd, extra = newExtra
+        )
+    }
 
     /** [applyLiteralVars] 的结果：[blockedField] 非 null = 这个字段是变量且求不出来。 */
     private class VarsApplied(val action: Z.Action, val blockedField: String? = null)

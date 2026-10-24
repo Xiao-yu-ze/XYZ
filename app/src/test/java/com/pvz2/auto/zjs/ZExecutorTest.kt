@@ -210,7 +210,7 @@ class ZExecutorTest {
 
     @Test
     fun `安卓不支持的动作跳过并记原因`() {
-        val (r, inj) = exec("""{"actions":[{"type":"设置变量","delayUnit":0}]}""")
+        val (r, inj) = exec("""{"actions":[{"type":"运行JS代码","delayUnit":0}]}""")
         assertEquals(0, inj.taps.size)
         assertTrue("应说明不支持：${r.skipped}", r.skipped.any { it.reason.contains("暂不支持") })
     }
