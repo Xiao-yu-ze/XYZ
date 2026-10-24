@@ -375,12 +375,17 @@ class ZRealMatcher(
             val lines = engine.recognize(region, 0.3)
             // 诊断：分不清"画面上没字"和"OCR 没跑起来"时，这行日志能分开
             runCatching {
-                val mean = org.opencv.core.Core.mean(region)
-                Log.i(
-                    TAG,
-                    "OCR 区域 ${region.width()}x${region.height()} " +
-                        "ch=${region.channels()} 均值=$mean 行数=${lines.size}"
-                )
+                // 用 getExternalFilesDir：这是应用自己一定可写的位置，
+                // 之前从 savedDir.parentFile 推导，异常被 runCatching 吞掉，一枚图都没落下来。
+                val dir = java.io.File(ctx!!.getExternalFilesDir(null), "ocr_fail")
+                check(dir.isDirectory || dir.mkdirs()) { "建目录失败：$dir" }
+                val file = java.io.File(dir, "fail_${System.currentTimeMillis()}.png")
+                val ok = org.opencv.imgcodecs.Imgcodecs.imwrite(file.absolutePath, region)
+                check(ok) { "imwrite 返回 false" }
+                Log.i(TAG, "OCR 失败样本已存：${file.absolutePath}")
+            }.onFailure {
+                // 不再静默：存不下来本身也是要查的问题
+                Log.w(TAG, "存 OCR 失败样本出错：${it.message}")
             }
             if (lines.isEmpty()) {
                 lastScore = 0.0
