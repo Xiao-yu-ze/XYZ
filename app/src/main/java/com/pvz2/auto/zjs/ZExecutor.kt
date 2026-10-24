@@ -492,8 +492,18 @@ class ZExecutor(
                 delayDone = true
             }
             if (mustCheck && !evaluateWithRetry(cond!!, index, skipped)) {
-                val why = matcher.lastReason() ?: "条件不成立"
-                val msg = "第 ${index + 1} 条「$label」条件不满足：$why"
+                /*
+                 * ★ 跳过原因必须指向**真正卡住的那个条件**。
+                 *
+                 *   原来这里一律取 `matcher.lastReason()`：时间间隔/限制运行次数
+                 *   这类纯逻辑条件不满足时，也会把上一次识别失败的原因贴上去，
+                 *   于是日志写成「条件不满足：这一块里没识别出任何文字」——
+                 *   用户会跑去调阈值、换模板，而真正的原因是间隔还没到。
+                 */
+                val condName = ZConditionEditor.labelOf(cond!!.type)
+                val detail = if (isRecognitionCondition(cond)) matcher.lastReason() else condDetail(cond)
+                val why = detail ?: "条件不成立"
+                val msg = "第 ${index + 1} 条「$label」条件不满足（$condName）：$why"
                 skipped.add(Result.Skip(index, label, msg))
                 if (abortOnRecognitionFail && isRecognitionCondition(cond!!)) {
                     // 识别类条件不成立 = 这个节点进不去 → 整条任务结束
@@ -1943,6 +1953,28 @@ class ZExecutor(
             }
         }
         return applyInvert(cond, raw)
+    }
+
+    /**
+     * 纯逻辑条件"当时为什么判不过"的参数。
+     *
+     * 这类条件没有匹配器可问，只能摊出自己的值：间隔多长、
+     * 限制了 N 次已经用完、要求某个动作处于什么状态。
+     */
+    private fun condDetail(cond: Z.Condition): String? = when (cond.type) {
+        Z.ConditionType.TIME_INTERVAL ->
+            "间隔 ${cond.extra["timeIntervalValue"] ?: "?"} 还没到"
+        Z.ConditionType.LIMIT_RUN_TIMES ->
+            "限制 ${cond.extra["limitTimes"] ?: "?"} 次已经用完"
+        Z.ConditionType.SCRIPT_RUN_STATE ->
+            "要求「${cond.extra["aimPosition"] ?: "?"}」为 " +
+                "${cond.extra["aimScriptRunState"] ?: "?"}，当前不符"
+        Z.ConditionType.TIME_AFTER ->
+            "还没到时间「${cond.extra["timeValue"] ?: "?"}」"
+        Z.ConditionType.CONDITION_SET ->
+            "组合条件（${cond.extra["matchMode"] ?: "and"}）不满足"
+        Z.ConditionType.RANDOM -> "随机未命中"
+        else -> null
     }
 
     /** 反相（FIELDS.md:254）。 */

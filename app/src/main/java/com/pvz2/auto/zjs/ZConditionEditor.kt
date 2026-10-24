@@ -91,7 +91,11 @@ object ZConditionEditor {
     fun typeLabel(type: Z.ConditionType): String =
         DISPLAY_LABELS.firstOrNull { it.first == type }?.second ?: type.wire
 
-    private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
+    /** 条件类型的中文名（执行器的日志也要用，不能只在界面里）。 */
+    fun labelOf(type: Z.ConditionType): String =
+        DISPLAY_LABELS.firstOrNull { it.first == type }?.second ?: type.wire
+
+private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
         dict.firstOrNull { it.first == (wire ?: "") }?.second ?: (wire ?: "")
 
     // ------------------------------------------------------------ 新建
