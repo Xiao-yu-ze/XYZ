@@ -137,12 +137,11 @@ class OcrEngine(private val context: Context) : AutoCloseable {
             add("反色拉伸", stretchMat(invertMat(region)))
 
             for ((name, m) in variants) {
-                val lines = try {
+                val detLines = try {
                     val boxes = detect(environment, det, m)
                     val out = boxes.mapNotNull { box ->
                         recognizeBox(environment, rec, m, box, minConfidence)
                     }
-                    // 每种读法都记一行：分不清"没框出来"和"框出来但没认出"时靠它
                     Log.i(
                         TAG,
                         "OCR[$name] 区域 ${m.width()}x${m.height()} ch=${m.channels()} " +
@@ -152,6 +151,35 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                 } catch (t: Throwable) {
                     Log.w(TAG, "OCR 检测失败（$name）", t)
                     emptyList()
+                }
+            
+                /*
+                 * ★ 小区域：整块识别与"检测框识别"都算一遍，取置信度高的。
+                 *
+                 *   实测：201x58 的按钮区域，检测框只框到 112x34（字实际约 150x40），
+                 *   框窄了把字切掉一截，识别结果变成乱码（「开始战斗」读成「909」，
+                 *   conf 0.30）；而整块直接送识别是 conf 1.00、完全正确。
+                 *   小图上检测本来就不可靠，所以两条路都走，谁分高信谁。
+                 */
+                val wholeLine = if (m.width() <= WHOLE_MAX_W && m.height() <= WHOLE_MAX_H) {
+                    runCatching {
+                        recognizeBox(environment, rec, m, TextBox(0, 0, m.width(), m.height()), minConfidence)
+                    }.getOrNull()
+                } else null
+            
+                val detBest = detLines.maxOfOrNull { it.confidence } ?: -1.0
+                val wholeConf = wholeLine?.confidence ?: -1.0
+                val lines: List<OcrLine> = when {
+                    wholeLine != null && wholeConf >= detBest -> listOf(wholeLine)
+                    else -> detLines
+                }
+                if (wholeLine != null) {
+                    Log.i(
+                        TAG,
+                        "OCR[$name] 整块「${wholeLine.text}」conf=${"%.2f".format(wholeConf)} " +
+                            "vs 检测框 ${"%.2f".format(detBest)} -> " +
+                            "采用${if (wholeConf >= detBest) "整块" else "检测框"}"
+                    )
                 }
                 if (lines.isNotEmpty()) {
                     if (name != "原图") Log.i(TAG, "OCR 用「$name」命中 ${lines.size} 行")
