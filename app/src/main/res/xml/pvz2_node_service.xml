@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  「出现节点 / 点击节点」用的无障碍服务。
+
+  ★ 必须带 flagRetrieveInteractiveWindows：
+    游戏跑在我们自己建的虚拟屏上（displayId 是动态的），
+    要拿到那一层的窗口，只能把所有交互窗口都取回来。
+  ★ flagReportViewIds：idResName 才有值（用户按 view id 找节点就靠它）。
+  ★ flagIncludeNotImportantViews：游戏里的按钮经常被标记成"不重要视图"，
+    不带上这个标志就搜不到它们。
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows|flagReportViewIds|flagIncludeNotImportantViews"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/node_service_desc"
+    android:notificationTimeout="100"
+    android:settingsActivity="com.pvz2.auto.MainActivity" />

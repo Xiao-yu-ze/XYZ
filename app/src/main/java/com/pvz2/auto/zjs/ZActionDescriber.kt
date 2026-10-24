@@ -683,7 +683,21 @@ object ZActionDescriber {
             Kind.ENTER, field = "$prefix.around"
         )
 
-        return PosGroup(rec, par, oth)
+                /*
+         * 节点位置：本机用不了（游戏在虚拟屏，无障碍拿不到那层窗口）。
+         * 直接在这里说清楚 —— 否则用户会把节点字段配满、跑起来恒不成立。
+         */
+        if (pos.type == Z.PosType.NODE) {
+            rec.add(
+                Row(
+                    "说明",
+                    "游戏在虚拟屏上，无障碍拿不到那层窗口 → 节点查找不会命中；改用文字/颜色/图片",
+                    Kind.READONLY
+                )
+            )
+        }
+
+return PosGroup(rec, par, oth)
     }
 
     // ------------------------------------------------------------ 类型专属字段

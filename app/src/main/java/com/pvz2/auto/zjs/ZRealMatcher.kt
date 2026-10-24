@@ -1,5 +1,7 @@
 package com.pvz2.auto.zjs
 
+import com.pvz2.auto.core.Pvz2NodeService
+
 import android.util.Log
 import com.pvz2.auto.core.TemplateMatcher
 import org.opencv.core.Mat
@@ -1288,11 +1290,78 @@ class ZRealMatcher(
      *
      * 要做同类能力，只能用 OCR 或模板匹配，也就是把位置类型换成文字/图片。
      */
+    /**
+     * 找节点（无障碍）。
+     *
+     * 游戏跑在自建虚拟屏上，节点树只有无障碍框架有 —— 走 [Pvz2NodeService]。
+     * 服务没启用时**明确报出来**，而不是笼统说"没找到"：
+     * 前者让用户去开服务，后者会让他去调阈值、换模板。
+     *
+     * 坐标：虚拟屏那层窗口的 bounds 就是 `0,0 - 1280,720`，
+     * 和虚拟屏分辨率一致，所以节点 bounds 直接当虚拟屏坐标用。
+     */
     override fun findNode(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit> {
-        lastUnsupported = "节点查找只能在自动精灵自己的节点树上用；" +
-            "我们拿不到节点树，请改用「文字」或「图片」位置"
-        return emptyList()
+        if (!Pvz2NodeService.isReady()) {
+            lastUnsupported = "无障碍服务未启用（出现节点/点击节点需要它）：到 系统设置→无障碍" +
+                " 里打开「PVZ2 自动化」"
+            return emptyList()
+        }
+        /*
+         * ★ 实测：无障碍服务只能拿到**它关联那块屏**（默认屏 display 0）的窗口。
+         *
+         *   服务连上时枚举过：6 个窗口全是 display 0（systemui / 游戏助手 / 本 app），
+         *   而游戏在我们自建的虚拟屏上是 displayId=19，**不在 getWindows() 里**
+         *   （`dumpsys accessibility` 会把它列在 Display[19] 下，但那只是系统内部
+         *   的登记表，不发给服务）。
+         *
+         *   所以只要游戏还跑在虚拟屏，节点查找就永远查不到 —— 这不是阈值或配置问题，
+         *   说清楚，别让用户去调别的。
+         */
+        val vdId = runCatching {
+            com.pvz2.auto.service.VirtualDisplaySession.sharedState.value.displayId
+        }.getOrDefault(0)
+        if (vdId > 0) {
+            lastUnsupported = "无障碍只看得到默认屏幕的窗口；游戏在虚拟屏（displayId=$vdId），" +
+                "那一层拿不到 → 节点查找对本游戏无效，请改用「出现文字 / 出现颜色 / 出现图片」"
+            return emptyList()
+        }
+        val e = pos.extra
+        fun str(key: String): String? =
+            (e[key] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+
+        val text = pos.text?.takeIf { it.isNotBlank() } ?: str("text")
+        val rectObj = android.graphics.Rect(rect[0], rect[1], rect[2], rect[3])
+        val hits = Pvz2NodeService.find(
+            text = text,
+            textIsRegExp = boolOf(e["textIsRegExp"]),
+            className = str("className"),
+            idResName = str("idResName"),
+            packageName = str("packageName"),
+            desc = str("desc"),
+            minDepth = (e["depth"] as? Number)?.toInt() ?: 0,
+            matchContains = !eqOf(e["textMatchMode"]),
+            rect = rectObj
+        )
+        if (hits.isEmpty()) {
+            lastUnsupported = "没有找到这样的节点（当前界面 ${Pvz2NodeService.dumpWindows().lines().size} 个窗口）"
+            return emptyList()
+        }
+        return hits.map { h ->
+            ZPosResolver.Hit(h.centerX, h.centerY, score = 1.0)
+        }
     }
+
+    private fun boolOf(v: Any?): Boolean = when (v) {
+        is Boolean -> v
+        is Number -> v.toInt() != 0
+        is String -> v.trim().let { it == "true" || it == "1" || it == "是" }
+        else -> false
+    }
+
+    /** textMatchMode == "equal" 时用相等而不是包含。 */
+    private fun eqOf(v: Any?): Boolean =
+        (v as? String)?.trim()?.let { it == "equal" || it == "相等" } ?: false
+
 
     // ------------------------------------------------------------ 模板文件
 

@@ -27,6 +27,24 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Pvz2Auto">
 
+        <!-- 「出现节点 / 点击节点」用的无障碍服务。
+             用户需要在系统设置里手动启用（或用 adb 打开）：
+             adb shell settings put secure enabled_accessibility_services \
+                 com.pvz2.auto/com.pvz2.auto.core.Pvz2NodeService
+             没启用时，节点类位置会明确报"无障碍服务未启用"。 -->
+        <service
+            android:name=".core.Pvz2NodeService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/pvz2_node_service" />
+        </service>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

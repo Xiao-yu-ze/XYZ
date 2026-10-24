@@ -178,4 +178,6 @@
     <string name="library_export_failed">导出失败</string>
     <string name="library_export_pick">导出哪一个？</string>
     <string name="library_export_empty">还没有脚本可导出</string>
+    <!-- 无障碍服务的说明文字（系统设置里会显示给用户） -->
+    <string name="node_service_desc">用于「出现节点 / 点击节点」：读取当前界面上的控件节点（文字、类名、view id、位置）。只有脚本里用到节点位置时才会查询，不做后台监听。</string>
 </resources>
