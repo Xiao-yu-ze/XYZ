@@ -19,7 +19,7 @@ class ZTouchInjectorAdapter(
 ) : ZExecutor.Injector {
 
     override fun tap(x: Int, y: Int, holdMs: Int) {
-        if (holdMs <= SHORT_TAP_MS) {
+        if (holdMs <= 60) {
             touch.tap(x.toFloat(), y.toFloat())
         } else {
             // 同一点之间的 swipe = 按住不放

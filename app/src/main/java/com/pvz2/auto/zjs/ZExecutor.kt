@@ -30,6 +30,14 @@ class ZExecutor(
     private val log: (String) -> Unit = {}
 ) {
 
+    /**
+     * 读另一个脚本（「执行脚本」动作用）。null = 通道未接（单测里就是 null）。
+     *
+     * 走回调而不是直接依赖 ZjsRunner：执行器不认识 Android 的 Context，
+     * 也就能在没有文件系统的单测里跑。和 appLauncher/toaster 是同一个套路。
+     */
+    var scriptLoader: ((String) -> Z.Script?)? = null
+
     /** 注入接口。真机实现走 Shizuku，测试实现记录调用。 */
     interface Injector {
         fun tap(x: Int, y: Int, holdMs: Int)
@@ -744,6 +752,61 @@ class ZExecutor(
                 } catch (e: Throwable) {
                     skipped.add(Result.Skip(index, label, "输入失败：${e.message}"))
                     return null
+                }
+                Outcome()
+            }
+
+            // ---- 执行脚本（10.15 m80685）：跑另一个脚本文件
+            Z.ActionType.RUN_SCRIPT -> {
+                val name = action.extra["filePath"]?.toString()?.trim().orEmpty()
+                if (name.isEmpty()) {
+                    skipped.add(Result.Skip(index, label, "执行脚本：缺 filePath"))
+                    return null
+                }
+                val loader = scriptLoader
+                if (loader == null) {
+                    skipped.add(Result.Skip(index, label, "执行脚本：本机未接脚本加载通道"))
+                    return null
+                }
+                val sub = loader(name)
+                if (sub == null) {
+                    skipped.add(Result.Skip(index, label, "执行脚本：找不到脚本「$name」"))
+                    return null
+                }
+                if (subShellDepth >= MAX_SUB_SHELL_DEPTH) {
+                    skipped.add(Result.Skip(index, label, "执行脚本：嵌套超过 $MAX_SUB_SHELL_DEPTH 层"))
+                    return null
+                }
+                /*
+                 * 子脚本用**新的执行器**跑：变量表各自独立（协议里变量属于一次运行），
+                 * 但注入器/屏幕/匹配器共用，日志仍汇到同一个地方。
+                 * `continueCurrentAfterFinish` 默认 false —— 也就是子脚本跑完
+                 * **不回到父脚本**，等于整条任务结束。
+                 */
+                log("[$index] $label 开始执行子脚本「$name」")
+                subShellDepth++
+                val subResult = try {
+                    ZExecutor(inject, screen, matcher, log).also { e ->
+                        e.scriptLoader = loader
+                        e.scriptVars.putAll(scriptVars)
+                    }.run(sub)
+                } finally {
+                    subShellDepth--
+                }
+                subResult.skipped.forEach {
+                    log("[$index] $label 子脚本跳过：${it.label} — ${it.reason}")
+                }
+                log(
+                    "[$index] $label 子脚本「$name」结束：执行 ${subResult.executed} 条" +
+                        (subResult.error?.let { "，中止：$it" } ?: "")
+                )
+                val cont = boolExtra(action, "continueCurrentAfterFinish")
+                if (!cont) {
+                    log("[$index] $label continueCurrentAfterFinish=false，父脚本到此结束")
+                    return Outcome(stop = true)
+                }
+                if (subResult.error != null) {
+                    skipped.add(Result.Skip(index, label, "子脚本中止：${subResult.error}"))
                 }
                 Outcome()
             }

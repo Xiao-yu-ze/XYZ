@@ -665,6 +665,17 @@ class AutomationService : Service() {
             matcher = matcher,
             log = { com.pvz2.auto.core.ZjsLog.add(it) }
         )
+        /*
+         * 「执行脚本」动作要读另一个脚本文件。执行器不认识 Context，
+         * 所以这里把加载通道接进去（和 appLauncher/toaster 同一个套路）。
+         */
+        executor.scriptLoader = { name ->
+            runCatching {
+                com.pvz2.auto.zjs.ZjsRunner.listSaved(this)
+                    .firstOrNull { it.name == name }
+                    ?.let { com.pvz2.auto.zjs.ZjsRunner.loadSaved(it.file) }
+            }.getOrNull()
+        }
         zjsExecutor = executor
         // ★ scriptName 必须是**脚本文件名**，不能是字面量 "zjs"。
         //

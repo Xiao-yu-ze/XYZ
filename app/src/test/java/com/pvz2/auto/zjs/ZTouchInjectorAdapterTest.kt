@@ -28,8 +28,20 @@ class ZTouchInjectorAdapterTest {
     @Test
     fun `短点击走 tap 通道`() {
         val rec = RecordingTouch()
-        ZTouchInjectorAdapter(rec).tap(100, 200, 100)
+        // ≤60ms 才走快速 tap：后端的 tap 常量按 60ms 按住，超过它就必须走
+        // "同点 swipe" 才能真的按那么久（以前阈值是 120ms，于是 61~120ms 的
+        // 按压全被压成 60ms，而且跨过 120 手感突变）。
+        ZTouchInjectorAdapter(rec).tap(100, 200, 60)
         assertEquals(listOf("tap(100.0,200.0)"), rec.calls)
+    }
+
+    @Test
+    fun `61 到 120 毫秒的按压要给足时长`() {
+        val rec = RecordingTouch()
+        ZTouchInjectorAdapter(rec).tap(100, 200, 100)
+        assertEquals(1, rec.calls.size)
+        assertTrue("应当是按住 100ms，实际：${rec.calls}", rec.calls[0].startsWith("swipe("))
+        assertTrue("时长要传下去：${rec.calls}", rec.calls[0].contains("100"))
     }
 
     @Test

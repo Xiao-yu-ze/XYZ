@@ -389,7 +389,8 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
         RECOGNIZE_SCREEN("识别屏幕"),
         OPEN_APP("打开应用", executable = true),
         OPEN_LINK("打开链接", executable = true),
-        RUN_SCRIPT("执行脚本"),
+        /* 执行脚本：filePath 指向另一个脚本文件，由 AutomationService 接的加载通道读出来跑。 */
+    RUN_SCRIPT("执行脚本", executable = true),
         /*
      * 「运行多个动作」现在真的能跑了（执行器有 runMulti 分支），
      * 所以标成 executable —— 否则界面上会挂「安卓上暂不支持」，
