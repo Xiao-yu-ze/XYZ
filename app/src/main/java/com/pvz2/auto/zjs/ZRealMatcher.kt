@@ -385,6 +385,25 @@ class ZRealMatcher(
             if (lines.isEmpty()) {
                 lastScore = 0.0
                 lastUnsupported = "这一块里没识别出任何文字"
+                /*
+                 * 失败时把**喂给 OCR 的那一块**存成 PNG。
+                 *
+                 * 分不清"画面上没字"和"我们截错了地方"时，光看日志只能猜；
+                 * 存下来直接看图就定了。路径在应用外部目录，adb 能拉走：
+                 *   /sdcard/Android/data/com.pvz2.auto/files/ocr_fail/
+                 */
+                runCatching {
+                    val dir = java.io.File(
+                        com.pvz2.auto.zjs.ZjsRunner.savedDir(ctx).parentFile,
+                        "ocr_fail"
+                    )
+                    dir.mkdirs()
+                    val name = "fail_${System.currentTimeMillis()}.png"
+                    org.opencv.imgcodecs.Imgcodecs.imwrite(
+                        java.io.File(dir, name).absolutePath, region
+                    )
+                    Log.i(TAG, "OCR 失败样本已存：${java.io.File(dir, name).absolutePath}")
+                }
                 return emptyList()
             }
 

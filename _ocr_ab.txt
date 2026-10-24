@@ -1,0 +1,10 @@
+img mode=RGBA size=(227, 50)
+classes=18385 keys=18383
+白底 scale=0.5 shift=1 -> conf=0.961 text=开始战斗
+白底 scale=0.5 shift=0 -> conf=0.961 text=井姆点忆
+白底 scale=2.0 shift=1 -> conf=0.977 text=开始战斗
+白底 scale=2.0 shift=0 -> conf=0.977 text=井姆点忆
+直接转RGB scale=0.5 shift=1 -> conf=0.961 text=开始战斗
+直接转RGB scale=0.5 shift=0 -> conf=0.961 text=井姆点忆
+直接转RGB scale=2.0 shift=1 -> conf=0.977 text=开始战斗
+直接转RGB scale=2.0 shift=0 -> conf=0.977 text=井姆点忆
