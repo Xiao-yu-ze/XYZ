@@ -207,11 +207,42 @@ object ZFieldEditor {
         } else {
             parsePercent(value)?.let { pos.copy(minSimilarPercent = it) }
         }
-        "similarPercent" -> if (value.isBlank()) {
-            pos.copy(similarPercent = null)
-        } else {
-            parsePercent(value)?.let { pos.copy(similarPercent = it) }
-        }
+            /*
+             * 相似度是**唯一的容差旋钮**。
+             *
+             * 从 Maa 转来的颜色带 colorLower/colorUpper（逐通道区间，可能是非对称的）。
+             * 如果只改 similarPercent 而区间不动，用户调旋钮就毫无反应 ——
+             * 表现就是"调了没用"。所以这里同步把区间按新容差重算：
+             * 容差 = (100 - 相似度)% × 255，围绕 `color` 对称展开。
+             *
+             * 代价：区间会从"非对称"变成"对称"（略宽）。这是可接受的取舍 ——
+             * 用户要的是"一个能调的旋钮"，而不是两套并行、会互相矛盾的判定。
+             */
+            "similarPercent" -> if (value.isBlank()) {
+                pos.copy(similarPercent = null)
+            } else {
+                parsePercent(value)?.let { pct ->
+                    val tol = ((100 - pct) / 100.0 * 255.0).toInt().coerceIn(0, 255)
+                    val rgb = ZFieldEditor.parseHex(pos.color.orEmpty())
+                    val extra2 = if (rgb != null) {
+                        pos.extra.toMutableMap().apply {
+                            put("colorLower", listOf(
+                                (rgb[0] - tol).coerceIn(0, 255),
+                                (rgb[1] - tol).coerceIn(0, 255),
+                                (rgb[2] - tol).coerceIn(0, 255)
+                            ))
+                            put("colorUpper", listOf(
+                                (rgb[0] + tol).coerceIn(0, 255),
+                                (rgb[1] + tol).coerceIn(0, 255),
+                                (rgb[2] + tol).coerceIn(0, 255)
+                            ))
+                        }
+                    } else {
+                        pos.extra
+                    }
+                    pos.copy(similarPercent = pct, extra = extra2)
+                }
+            }
         // 下面这些在协议里是可选的识别字段，模型没单独建属性，统一放 extra。
         // 好处是：**不认识/不常用字段不会因为编辑一次就被丢掉**。
         "quickSearch" -> pos.copy(
@@ -248,6 +279,14 @@ object ZFieldEditor {
      * ★ 原坑：夹到 0~100。0~49 在协议里不是合法阈值（FIELDS.md 3.2/3.4 都写 50–100），
      *   写进脚本后 自动精灵 那边也读不了；阈值 0 更会让匹配"永远命中"。
      */
+    /** `#rrggbb` → [r,g,b]；不带 # 也认。解析不了返回 null。 */
+    private fun parseHex(raw: String): IntArray? {
+        val h = raw.trim().removePrefix("#")
+        if (h.length != 6) return null
+        val v = h.toIntOrNull(16) ?: return null
+        return intArrayOf((v shr 16) and 0xFF, (v shr 8) and 0xFF, v and 0xFF)
+    }
+
     private fun parsePercent(raw: String): Int? {
         val t = raw.trim().removeSuffix("%").trim()
         if (t.isEmpty()) return null

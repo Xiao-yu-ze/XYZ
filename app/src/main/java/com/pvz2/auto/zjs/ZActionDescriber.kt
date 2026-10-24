@@ -583,24 +583,7 @@ object ZActionDescriber {
                     add("color_2.21"); add("outline_2.21"); add("COLOR")
                     if (sm !in this) add(sm)
                 }
-                /*
-                 * ★ 滤镜：匹配器**早就实现**了 grey/bw/reverse（ZRealMatcher:895-930），
-                 *   但界面一直没有入口 —— 用户只能在日志里看到"滤镜已生效"，
-                 *   却没法在界面上设置，等于白做。这里补上。
-                 */
-                run {
-                    val f = extraStr(pos, "imageFilter") ?: extraStr(pos, "filter")
-                    val fOpts = buildList {
-                        add("（无）"); add("grey"); add("bw"); add("reverse")
-                        if (!f.isNullOrBlank() && f !in this) add(f)
-                    }
-                    oth += Row(
-                        "${p}滤镜",
-                        f ?: "（无）",
-                        Kind.ENUM, fOpts, field = "$prefix.imageFilter"
-                    )
-                }
-                oth += Row(
+                                oth += Row(
                     "${p}搜索模式",
                     if (sm in listOf("color_2.21", "COLOR", "outline_2.21")) sm else "$sm（本机按默认模式跑）",
                     Kind.ENUM, smOpts, field = "$prefix.searchMode"

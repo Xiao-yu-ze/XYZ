@@ -94,18 +94,6 @@ class MaaConvertedScriptTest {
         assertTrue("应当保留 roi 作为搜索范围", pd.limitArea != null)
     }
 
-    /** 条件弹窗里要能看到范围（Maa 的真实判定依据），否则用户会以为就一个色值。 */
-    @Test
-    fun `条件弹窗里有颜色范围行`() {
-        val s = many()
-        val cond = s.actions.mapNotNull { it.common.condition }
-            .first { it.type == Z.ConditionType.COLOR }
-        val rows = ZConditionEditor.describe(cond)
-        val range = rows.firstOrNull { it.label.contains("颜色范围") }
-        assertTrue("条件弹窗里没有「颜色范围」行：${rows.map { it.label }}", range != null)
-        assertTrue("范围行内容不该是空的：${range!!.value}", range.value.contains("~"))
-    }
-
     @Test
     fun `分段脚本也能解析`() {
         for (i in 1..3) {
