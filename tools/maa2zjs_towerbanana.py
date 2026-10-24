@@ -320,19 +320,24 @@ def build(files, pts):
     """把所有节点摊成一条顺序队列 + 路由节点。"""
     out = []
     by_name = {}
+    origin = {}   # 节点名 → 来源文件（判断 anchor 作用域用）
     for path in files:
         data = load_jsonc(path)
         for name, node in data.items():
             if name in by_name:
                 raise SystemExit("节点重名：%s（%s）" % (name, path))
             by_name[name] = node
+            origin[name] = path
 
     # ---- 按引用补外部节点（有上限，避免把整个通用库搬进来）
     pool = {}
+    pool_src = {}
     for path in POOLS:
         if not os.path.exists(path):
             continue
         try:
+            for k in load_jsonc(path):
+                pool_src[k] = path
             pool.update(load_jsonc(path))
         except Exception as e:
             print("  跳过外部文件（解析失败）：%s — %s" % (os.path.basename(path), e))
@@ -356,24 +361,53 @@ def build(files, pts):
                 continue
             if name in pool:
                 by_name[name] = pool[name]
+                origin[name] = pool_src.get(name, "")
                 imported.add(name)
                 changed = True
     if imported:
         print("  外部引用补入 %d 个节点：%s" % (len(imported), "、".join(sorted(imported)[:6])))
 
     # 每个节点：动作节点（jumpId=名字）+ 路由节点（按 next 派发）
-    def resolve_ref(ref):
-        """节点名，或 `[Anchor]名字`（→ 声明该 anchor 的节点）。解析不出返回 None。"""
+    task_files = set(files)
+
+    def resolve_ref(ref, from_node=None):
+        """
+        节点名，或 `[Anchor]名字`（→ 声明该 anchor 的节点）。
+
+        ★ 同一个 anchor 名可能被**多个文件**声明（"下一个动作"在这套资源里就有 3 处：
+          塔香蕉一个、无尽框架两个）。Maa 是按任务加载的，实际生效的是**本次任务那份**。
+          所以这里按作用域挑，而不是"谁先入表用谁"：
+            1) 声明者在本任务的脚本文件里 → 优先（这才是调用方）；
+            2) 否则声明者与被引用节点同文件；
+            3) 都没有才有唯一一个候选。
+          多候选且分不出高低时**明确报出来**，不猜。
+        """
         if not isinstance(ref, str):
             return None
         if not ref.startswith("[Anchor]"):
             return ref
         aname = ref[len("[Anchor]"):]
-        for other in by_name.values():
+        cands = []
+        for name, other in by_name.items():
             a = other.get("anchor") or {}
             if isinstance(a, dict) and aname in a:
-                return a[aname]
-        return None
+                cands.append((name, a[aname]))
+        if not cands:
+            return None
+        # 1) 任务文件里声明的
+        in_task = [c for c in cands if origin.get(c[0], "") in task_files]
+        if len(in_task) == 1:
+            return in_task[0][1]
+        # 2) 与被引用节点同文件
+        if from_node and from_node in origin:
+            same = [c for c in cands if origin.get(c[0]) == origin.get(from_node)]
+            if len(same) == 1:
+                return same[0][1]
+        if len(cands) == 1:
+            return cands[0][1]
+        print("  ⚠ anchor「%s」有 %d 处声明，无法确定作用域：%s"
+              % (aname, len(cands), "、".join(c[0] for c in cands)))
+        return cands[0][1]
 
     # Maa 用 `next: [种植物_初始化_植物位置]` 把点位表串进来（只是为了让
     # begin/end 的名字能解析）。真正入口是 anchor 里那个名字 —— 直接取它，
@@ -417,7 +451,7 @@ def build(files, pts):
 
         # 单个后继：直接跳
         if len(nxt) == 1:
-            tgt = resolve_ref(nxt[0])
+            tgt = resolve_ref(nxt[0], from_node=name)
             if tgt:
                 out.append({
                     "type": "控制执行", "controlRunType": "jumpTo",
@@ -436,7 +470,7 @@ def build(files, pts):
         cands = []
         for child in nxt:
             if isinstance(child, str) and child.startswith("[Anchor]"):
-                target = resolve_ref(child)
+                target = resolve_ref(child, from_node=name)
                 cands.append({"jumpTo": target} if target else {"jumpTo": None})
                 continue
             cnode = by_name.get(child)
@@ -467,7 +501,7 @@ def build(files, pts):
         # ★ Maa：next 扫到超时 = 这个节点失败 → 走 on_error；on_error 空 = 任务失败。
         #   绝不能"继续执行文件里的下一条"（会跑飞到无关节点）。
         on_error = next_names({"next": node.get("on_error")}) if node.get("on_error") else []
-        resolved = [resolve_ref(x) for x in on_error]
+        resolved = [resolve_ref(x, from_node=name) for x in on_error]
         resolved = [x for x in resolved if x]
         if resolved:
             waiter["onTimeoutJump"] = resolved[0]

@@ -95,6 +95,33 @@ class MaaConvertedScriptTest {
         assertTrue("缺省 20 秒的节点应当占多数：20s=$twenty / 共${waits.size}", twenty > 0)
     }
 
+    /**
+     * anchor 是「跳进共享节点、再用它跳回来」的机制。
+     *
+     * `下一个动作` 这个 anchor 在整套资源里被 **3 个文件**声明过（塔香蕉一个、
+     * 无尽框架两个）。如果按"谁先入表用谁"，补给链回来时可能跳进框架管线里。
+     * 这条测试钉死：补给链尾部的回跳必须落在**本任务**的那个节点上。
+     */
+    @Test
+    fun `共享节点的 anchor 回跳到本任务的节点`() {
+        val s = parse("../build/zjs/塔香蕉_无尽.zjs")
+        val waiter = s.actions.firstOrNull { a ->
+            a.type == Z.ActionType.WAIT_CANDIDATES &&
+                (a.common.desc ?: "").contains("神器补给_确定3")
+        }
+        assertTrue("没找到补给链的等待候选节点", waiter != null)
+        val targets = waiter!!.candidates.mapNotNull { it.jumpTo }
+        assertTrue(
+            "回跳目标应当是 tower_banana_boss_识别开始，实际：$targets",
+            targets.contains("tower_banana_boss_识别开始")
+        )
+        // 反过来：绝不该串到框架管线里去
+        assertTrue(
+            "不该跳到框架管线的节点：$targets",
+            targets.none { it.startsWith("frame_wj") || it.startsWith("无尽框架") }
+        )
+    }
+
     @Test
     fun `跳转目标都指向存在的 jumpId`() {
         val s = parse("../build/zjs/塔香蕉_无尽.zjs")
