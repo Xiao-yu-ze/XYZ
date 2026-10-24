@@ -510,10 +510,19 @@ object ZFieldEditor {
      * 一模一样的「控制执行」，选哪个都分不清。
      */
     fun actionTypeLabel(type: Z.ActionType): String =
-        type.controlRunType?.let { "${type.wire}·$it" } ?: type.wire
+        type.controlRunType?.let { "${type.wire}·${Z.controlRunTypeLabel(it)}" } ?: type.wire
 
     /** 「类型」下拉的选项。必须与 [actionTypeLabel] 一一对应。 */
-    fun actionTypeLabels(): List<String> = Z.ActionType.entries.map { actionTypeLabel(it) }
+    /**
+     * 「类型」下拉的选项。
+     *
+     * ★ AI 点击不出现在下拉里：它要调云端 AI 服务（协议 `aiCloud`），
+     *   本机没有那个接口，选了也跑不起来。枚举本身**保留** ——
+     *   删掉的话，别人脚本里已有的 AI 点击会因为"未知类型"而解析失败，
+     *   整份文件打不开（协议 P8() 对未知 type 是抛异常）。
+     */
+    fun actionTypeLabels(): List<String> =
+        Z.ActionType.entries.filter { it != Z.ActionType.AI_CLICK }.map { actionTypeLabel(it) }
 
     /** 从下拉选中的标签找回枚举。认不出返回 null（调用方提示不合法）。 */
     private fun actionTypeFrom(raw: String): Z.ActionType? {

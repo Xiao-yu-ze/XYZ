@@ -131,7 +131,7 @@ object ZActionDescriber {
             ZFieldEditor.actionTypeLabels(),
             field = "type"
         )
-        action.type.controlRunType?.let { rows += Row("控制方式", it) }
+        action.type.controlRunType?.let { rows += Row("控制方式", Z.controlRunTypeLabel(it) ?: it) }
         if (!action.type.executable) {
             rows += Row("⚠ 执行", "安卓上暂不支持", Kind.READONLY)
         }
@@ -209,11 +209,21 @@ object ZActionDescriber {
          */
         val usesStartEnd = action.type == Z.ActionType.SWIPE ||
             action.type == Z.ActionType.MULTI_SWIPE
-        if (!usesStartEnd) {
-            action.posData?.let { posLines += posRows("位置", it, showPrefix = false) }
+        val posParams = ArrayList<Row>()
+        val posOthers = ArrayList<Row>()
+        fun addPos(prefix: String, pos: Z.PosData, showPrefix: Boolean) {
+            val g = posRows(prefix, pos, showPrefix)
+            posLines.addAll(g.recognize)
+            posParams.addAll(g.params)
+            posOthers.addAll(g.others)
         }
-        action.startPos?.let { posLines += posRows("起点", it) }
-        action.endPos?.let { posLines += posRows("终点", it) }
+        // 滑动/多指手势用的是 startPos/endPos，执行器只读这两个，
+        // 所以「位置」块对它们不显示（否则两套坐标并排，分不清哪个生效）
+        if (!usesStartEnd) {
+            action.posData?.let { addPos("位置", it, showPrefix = false) }
+        }
+        action.startPos?.let { addPos("起点", it, showPrefix = true) }
+        action.endPos?.let { addPos("终点", it, showPrefix = true) }
         if (posLines.isNotEmpty()) {
             rows += section("识别")
             rows += posLines
@@ -226,7 +236,7 @@ object ZActionDescriber {
         //   既没有界面行、写回通道也不存在。于是「按键」建出来没有 keyCode，
         //   运行时被 ZExecutor 以"缺 keyCode"直接跳过；「跳转到」没有目标位置。
         //   动作能建、能存、配不了，看上去却一切正常。
-        val typeSpecific = typeRows(action)
+        val typeSpecific = typeRows(action) + posParams
         if (typeSpecific.isNotEmpty()) {
             rows += section("参数")
             rows += typeSpecific
@@ -289,8 +299,22 @@ object ZActionDescriber {
         // 编号比序号更接近那个心智模型。
         action.fingers.forEachIndexed { i, finger ->
             val n = i + 1
-            finger.startPos?.let { rows += posRows("手指$n 起点", it) }
-            finger.endPos?.let { rows += posRows("手指$n 终点", it) }
+            /*
+             * ★ 这里必须直接铺进 rows，不能复用上面的 addPos()。
+             *
+             *   addPos 往 posLines/posParams/posOthers 里攒，而那三个列表
+             *   在手指循环**之前**就已经铺进 rows 了 —— 再往里加不会有人再取，
+             *   于是每根手指只剩「周围条件」一行（它挂在 posOthers 上，
+             *   而 posOthers 是后面才铺的），X/Y/起终点全消失（测试当场抓到）。
+             */
+            fun emit(prefix: String, pos: Z.PosData) {
+                val g = posRows(prefix, pos, showPrefix = true)
+                rows.addAll(g.recognize)
+                rows.addAll(g.params)
+                rows.addAll(g.others)
+            }
+            finger.startPos?.let { emit("手指$n 起点", it) }
+            finger.endPos?.let { emit("手指$n 终点", it) }
         }
 
         // ---- 等待候选（我们自己的节点，等价于 Maa 的 next）
@@ -341,6 +365,7 @@ object ZActionDescriber {
         // 以前是"有什么显示什么"，没设过 delay 的动作就没有那一行，
         // 用户分不清"字段不存在"和"它等于默认值"。
         rows += section("其他")
+        rows += posOthers
         rows += Row("备注", c.desc.orEmpty(), editKind("desc", c), field = "desc")
         rows += Row("跳转标识", c.jumpId.orEmpty(), editKind("jumpId", c), field = "jumpId")
         rows += section("时机")
@@ -459,19 +484,34 @@ object ZActionDescriber {
     /** 从 posData.extra 里读一个字符串。 */
     private fun extraStr(pos: Z.PosData, key: String): String? = anyStr(pos.extra, key)
 
-    private fun posRows(prefix: String, pos: Z.PosData, showPrefix: Boolean = true): List<Row> {
+    /**
+     * 位置字段分成三组返回。
+     *
+     * ★ 为什么要分组
+     *
+     *   原来所有位置字段挤在一个「识别」小节里：模板、相似度、X/Y、
+     *   范围、选第几个、偏移、周围条件、快速搜图、搜索模式、缩放方式
+     *   十几行平铺。用户看不出哪些是"怎么找"、哪些是"找到之后怎么做"、
+     *   哪些是几乎不用动的开关。
+     *
+     *   - recognize：怎么找（模板/文字/颜色/相似度/预览）
+     *   - params   ：找到之后干什么（坐标、范围、选第几个、偏移、周围条件）
+     *   - others   ：调优开关（快速搜图/搜索模式/缩放方式/OCR 模式）
+     */
+    private data class PosGroup(
+        val recognize: List<Row> = emptyList(),
+        val params: List<Row> = emptyList(),
+        val others: List<Row> = emptyList()
+    )
+
+    private fun posRows(prefix: String, pos: Z.PosData, showPrefix: Boolean = true): PosGroup {
         // 小节已经说明了这是"位置"，每行再带「位置」两个字既重复又占宽度
         val p = if (showPrefix) "$prefix " else ""
-        val rows = ArrayList<Row>()
+        val rec = ArrayList<Row>()
+        val par = ArrayList<Row>()
+        val oth = ArrayList<Row>()
 
-        // ★ 坐标类型不单列"类型"行。
-        //
-        //   滑动/点击的位置对用户来说就是一对 (x,y)，类型是格式细节。
-        //   单列一行"类型 坐标"只占地方、不提供任何操作 —— 用户要改的
-        //   永远是那个坐标本身。
-        //
-        //   其它类型（图片/文字/颜色/节点）才需要提示，因为用户会想知道
-        //   "这一条是按什么找的"。
+        // 坐标类型不单列"查找方式"：滑动/点击的位置对用户就是一对 (x,y)。
         if (pos.type != Z.PosType.LOCATION) {
             val typeLabel = when (pos.type) {
                 Z.PosType.IMAGE -> "图片"
@@ -481,33 +521,19 @@ object ZActionDescriber {
                 Z.PosType.AI_LOC -> "AI位置"
                 Z.PosType.LOCATION -> "坐标"
             }
-            // ★ 标签叫「查找方式」，不叫「类型」。
-            //
-            //   动作本身也有一行「类型」（上面那行 ENUM，能改动作种类）。
-            //   两行都叫「类型」时，用户想换动作种类很容易点到这行只读的，
-            //   点了没反应 → 又变成"看得见点不动"。
-            //   这一行回答的是"这条按什么找"，叫「查找方式」既准确又不撞名。
-            rows += Row("${p}查找方式", typeLabel)
+            rec += Row("${p}查找方式", typeLabel)
         }
 
         when (pos.type) {
+            // 固定坐标：X/Y 属于"找到之后去哪儿"，所以放参数
             Z.PosType.LOCATION -> {
-                val x = pos.x?.raw.orEmpty()
-                val y = pos.y?.raw.orEmpty()
-                rows += Row("${p}X", x, Kind.COORD, field = "$prefix.x")
-                rows += Row("${p}Y", y, Kind.COORD, field = "$prefix.y")
+                par += Row("${p}X", pos.x?.raw.orEmpty(), Kind.COORD, field = "$prefix.x")
+                par += Row("${p}Y", pos.y?.raw.orEmpty(), Kind.COORD, field = "$prefix.y")
             }
 
             Z.PosType.IMAGE -> {
-                // ★ 模板行**无条件**输出。
-                //
-                //   原坑（P0）：整行包在 `pos.imageData?.let {}` 里 —— 新建的
-                //   「点击图片」imageData 是 null，于是这一行根本不生成，界面上
-                //   既没有模板行、也没有 ✂ 截取按钮（按钮只贴在 IMAGE 行上，
-                //   见 ZjsEditorPage 的 makeRow）。结果动作建得出、存得下，
-                //   却永远配不了模板；运行时 ZRealMatcher 只会报
-                //   "图片位置没有模板数据"，用户完全看不出该去哪设置。
-                //   条件侧（ZConditionEditor）一直是无条件输出的，这里对齐。
+                // 模板行无条件输出：新建的「点击图片」imageData 是 null，
+                // 包在 let 里会导致这行和 ✂ 按钮都不出现，动作永远配不了模板。
                 val img = pos.imageData
                 val size = when {
                     img == null -> "未设置"
@@ -515,29 +541,26 @@ object ZActionDescriber {
                         "${img.width}×${img.height}，${img.data.length} 字符"
                     else -> "未知尺寸"
                 }
-                rows += Row("${p}模板", size, Kind.IMAGE, field = "$prefix.image")
-                // 阈值是模板匹配唯一的调节旋钮，必须能改。
-                rows += Row(
+                rec += Row("${p}模板", size, Kind.IMAGE, field = "$prefix.image")
+                rec += Row(
                     "${p}相似度",
                     pos.minSimilarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
                     Kind.PERCENT, field = "$prefix.minSimilarPercent"
                 )
-                // FIELDS.md 3.2 里这三个字段以前既没显示也没解释。
-                // 快速搜图是「降精度换速度」，搜索模式决定用哪种匹配算法 ——
-                // 调不动它们，用户就只能靠改相似度盲试。
-                rows += Row(
+                // 调优开关归到「其他」
+                oth += Row(
                     "${p}快速搜图",
                     if (extraBool(pos, "quickSearch")) "是" else "否",
                     Kind.SWITCH, field = "$prefix.quickSearch"
                 )
-                rows += Row(
+                oth += Row(
                     "${p}搜索模式",
                     extraStr(pos, "searchMode") ?: "color_2.21",
                     Kind.ENUM,
                     listOf("color_2.21", "outline_2.21", "COLOR", "HOG"),
                     field = "$prefix.searchMode"
                 )
-                rows += Row(
+                oth += Row(
                     "${p}缩放方式",
                     extraStr(pos, "imageScaleType") ?: "dpi",
                     Kind.ENUM,
@@ -550,112 +573,74 @@ object ZActionDescriber {
             }
 
             Z.PosType.TEXT -> {
-                rows += Row("${p}文字", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
-                rows += Row(
+                rec += Row("${p}文字", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
+                rec += Row(
                     "${p}相似度",
                     pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
                     Kind.PERCENT, field = "$prefix.similarPercent"
                 )
-                // FIELDS.md 3.3：本地识别 / 云识别
-                rows += Row(
+                oth += Row(
                     "${p}OCR 模式",
                     extraStr(pos, "ocrMode") ?: "local_v2",
-                    Kind.ENUM, listOf("local_v2", "local", "online"),
+                    Kind.ENUM, listOf("local_v2", "local"),
                     field = "$prefix.ocrMode"
                 )
             }
 
             Z.PosType.COLOR -> {
-                rows += Row("${p}颜色", pos.color.orEmpty(), Kind.TEXT, field = "$prefix.color")
-            /*
-             * ★ 颜色必须能从画面上取，不能让用户手输 #RRGGBB。
-             *
-             *   手输有两个坑：用户没有吸管工具，只能靠截图后到别处取色，
-             *   而截图经过压缩/缩放之后色值本来就偏；填错一个字符就永远匹配不到，
-             *   且失败信息里只有"没找到这个颜色"，看不出是色值本身就错。
-             *   取色直接读当前帧那一像素，所见即所得。
-             */
-            rows += Row(
-                "${p}从屏幕取色",
-                if (pos.color.isNullOrBlank()) "点右边按钮在画面上取一个颜色"
-                else "重新取色（当前 #${pos.color}）",
-                Kind.COORD,
-                field = "$prefix.colorPick"
-            )
-                rows += Row(
+                rec += Row("${p}颜色", pos.color.orEmpty(), Kind.TEXT, field = "$prefix.color")
+                // 颜色必须能从画面上取，不靠手输 #RRGGBB（手输要么靠截图取色已经偏了，
+                // 要么填错一个字符就永远匹配不到，而失败信息里只有"没找到这个颜色"）
+                rec += Row(
+                    "${p}从屏幕取色",
+                    if (pos.color.isNullOrBlank()) "点右边按钮在画面上取一个颜色"
+                    else "重新取色（当前 #${pos.color}）",
+                    Kind.COORD, field = "$prefix.colorPick"
+                )
+                rec += Row(
                     "${p}相似度",
                     pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
                     Kind.PERCENT, field = "$prefix.similarPercent"
                 )
-                // FIELDS.md 3.4：填了「指定位置」就只看那一个点，忽略范围
-                rows += Row(
+                // 指定位置 = 只看一个点，属于"找到之后怎么判"，放参数
+                par += Row(
                     "${p}指定位置 X", extraStr(pos, "limitPosX").orEmpty(),
                     Kind.COORD, field = "$prefix.limitPosX"
                 )
-                rows += Row(
+                par += Row(
                     "${p}指定位置 Y", extraStr(pos, "limitPosY").orEmpty(),
                     Kind.COORD, field = "$prefix.limitPosY"
                 )
             }
 
             Z.PosType.NODE -> {
-                rows += Row("${p}节点", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
+                rec += Row("${p}节点", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
             }
 
             Z.PosType.AI_LOC -> {
-                rows += Row("${p}AI", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
+                rec += Row("${p}AI", pos.text.orEmpty(), Kind.TEXT, field = "$prefix.text")
             }
         }
 
-        // 预览查找结果：在实时画面上把命中位置框出来。
-        //
-        // 只对"需要查找"的类型出现 —— 固定坐标没有"查找"这回事，
-        // 给它一个点了没反应的按钮只会让人困惑。
-        //
-        // 单独一行而不是塞进菜单：调阈值是这个动作最费时间的部分，
-        // 藏进二级菜单等于让它更难找。
+        // 预览：只对"需要查找"的类型出现（固定坐标没有"查找"这回事）
         if (pos.type == Z.PosType.IMAGE || pos.type == Z.PosType.TEXT ||
             pos.type == Z.PosType.COLOR || pos.type == Z.PosType.NODE
         ) {
-            rows += Row(
-                "${p}预览",
-                "点这里在画面上看命中位置",
-                Kind.ENTER,
-                field = "$prefix.preview"
+            rec += Row(
+                "${p}预览", "点这里在画面上看命中位置",
+                Kind.ENTER, field = "$prefix.preview"
             )
         }
 
-        // 通用字段（FIELDS.md:144-147）
-        //
-        // 每一行都要带 field 和 Kind —— 否则界面上看得见、点不动、
-        // 也不说明为什么，用户会当成 bug。
-        // 属性名对应 [Z.PosData] 里的字段，写回走 ZFieldEditor。
-        /*
-         * ★ 这四行必须**无条件出现**，不能"设过了才显示"。
-         *
-         *   新建一条「点击图片」时 posData 只有 type，limitArea/indexNum/
-         *   xOffset/yOffset 全是 null —— 按原来的写法界面上根本没有"范围"
-         *   这一行，用户永远没法给它设 ROI，于是永远全屏搜索：
-         *   慢、误匹配多，而且要选"第几个"也无处可填。
-         *
-         *   没设过就显示空值，点进去填/框选；清空即删除。
-         */
-        rows += Row("${p}范围", pos.limitArea?.toString() ?: "", Kind.AREA, field = "$prefix.limitArea")
-        // 多命中时选第几个："2" / "-1" / "0"(随机) / "1-3"(区间随机) / "1,3,4"
-        rows += Row("${p}选第几个", pos.indexNum ?: "", Kind.TEXT, field = "$prefix.indexNum")
-        rows += Row("${p}X偏移", pos.xOffset?.raw ?: "", Kind.TEXT, field = "$prefix.xOffset")
-        rows += Row("${p}Y偏移", pos.yOffset?.raw ?: "", Kind.TEXT, field = "$prefix.yOffset")
+        // ---- 参数：搜索范围与命中之后怎么处理
+        // 这四行必须无条件出现：新建的位置只有 type，全都 null，
+        // 按"设过了才显示"写会导致用户永远没法给它设范围/选第几个。
+        par += Row("${p}范围", pos.limitArea?.toString() ?: "", Kind.AREA, field = "$prefix.limitArea")
+        par += Row("${p}选第几个", pos.indexNum ?: "", Kind.TEXT, field = "$prefix.indexNum")
+        par += Row("${p}X偏移", pos.xOffset?.raw ?: "", Kind.TEXT, field = "$prefix.xOffset")
+        par += Row("${p}Y偏移", pos.yOffset?.raw ?: "", Kind.TEXT, field = "$prefix.yOffset")
 
-        // 「位置周围条件」（FIELDS.md:147）。
-        //
-        // 只用于 posData，不出现在条件类型下拉里（FIELDS.md:281）。
-        // 之前的实现把它当未知字段，摊出一坨原始 JSON ——
-        // 结构没丢，但用户看不懂。现在用条件摘要显示。
-        //
-        // ★ 原坑（P1）：出的是 Kind.READONLY 且没有 field —— 看得见、改不了，
-        //   也加不了（连"没设置"的情况都没有这一行）。现在出成 ENTER：
-        //   点进去由页面编辑（条件和动作共用同一套条件弹窗），
-        //   没设置时也显示一行"未设置，点击添加"，和「条件」行的写法一致。
+        // 周围条件（FIELDS.md:147）：只作用于这个位置的候选点过滤
         val aroundRaw = pos.extra["filterByAroundConditionSet"]
         val aroundSummary = aroundRaw?.let { raw ->
             runCatching {
@@ -663,14 +648,13 @@ object ZActionDescriber {
                 Z.Condition.parse(obj)?.let { ZConditionDescriber.summary(it) }
             }.getOrNull()
         }
-        rows += Row(
+        oth += Row(
             "${p}周围条件",
             aroundSummary ?: if (aroundRaw == null) "（未设置，点击添加）" else "（格式无法解析）",
-            Kind.ENTER,
-            field = "$prefix.around"
+            Kind.ENTER, field = "$prefix.around"
         )
 
-        return rows
+        return PosGroup(rec, par, oth)
     }
 
     // ------------------------------------------------------------ 类型专属字段

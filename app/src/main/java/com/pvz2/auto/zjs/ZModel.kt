@@ -335,7 +335,26 @@ object Z {
      * [executable] 标记安卓上是否有执行器 —— 没有的照样能解析、能编辑、能保存，
      * 只是运行时会被明确拒绝，而不是静默跳过。
      */
-    enum class ActionType(val wire: String, val controlRunType: String? = null, val executable: Boolean = false) {
+    /**
+ * 「控制执行」六个子类型的中文名。
+ *
+ * 协议里它们共用 `type:"控制执行"`，靠 `controlRunType` 区分
+ * （jumpTo / waitDelay / …）。界面上原来直接把英文 wire 拼在中文后面
+ * —— 「控制执行·jumpTo」这种，用户看不懂，而且中文界面里孤零零一段英文。
+ * 这里给出中文名，**落盘仍然写英文**（协议不许改）。
+ */
+fun controlRunTypeLabel(value: String?): String? = when (value) {
+    null -> null
+    "runAimAction" -> "运行目标动作"
+    "jumpTo" -> "跳转到"
+    "setJumpId" -> "设置跳转标识"
+    "pause" -> "暂停"
+    "stop" -> "停止"
+    "waitDelay" -> "等待"
+    else -> value
+}
+
+enum class ActionType(val wire: String, val controlRunType: String? = null, val executable: Boolean = false) {
         CLICK("点击", executable = true),
         CLICK_IMAGE("点击图片", executable = true),
         CLICK_TEXT("点击文字", executable = true),

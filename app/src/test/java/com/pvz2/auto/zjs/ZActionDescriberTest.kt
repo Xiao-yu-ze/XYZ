@@ -46,9 +46,11 @@ class ZActionDescriberTest {
     @Test
     fun `控制执行要显示 controlRunType，否则五种动作看起来一样`() {
         val r = rows("""{"type":"控制执行","controlRunType":"jumpTo","delayUnit":1}""")
-        // 类型行现在是可点的下拉，六个控制执行靠 ·controlRunType 区分
-        assertEquals("控制执行·jumpTo", r.first().value)
-        assertEquals("jumpTo", r.first { it.label == "控制方式" }.value)
+        // 类型行现在是可点的下拉，六个控制执行靠 ·子类型 区分。
+        // 子类型显示**中文**：中文界面里孤零零一段 jumpTo 用户看不懂，
+        // 而落盘仍是英文 wire（协议不许改）。
+        assertEquals("控制执行·跳转到", r.first().value)
+        assertEquals("跳转到", r.first { it.label == "控制方式" }.value)
     }
 
     @Test
