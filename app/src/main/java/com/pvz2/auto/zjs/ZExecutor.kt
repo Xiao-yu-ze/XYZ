@@ -199,6 +199,8 @@ class ZExecutor(
         var steps = 0
         // 「设置变量」写入的运行时变量：每次 run 从空开始（协议里变量属于一次运行）
         scriptVars.clear()
+        runStartedAt = System.currentTimeMillis()
+        com.pvz2.auto.core.ScriptRunState.requestResume()
 
         // jumpId → 下标，跳转时用
         val jumpTable = HashMap<String, Int>()
@@ -289,6 +291,9 @@ class ZExecutor(
                 // 执行（含重复）
                 abortReason = null
                 val outcome = executeWithRepeat(action, pc, label, skipped)
+                // 「动作运行状态」条件要查别的动作跑成功没有 —— 这里记一笔。
+                // stop/jump 也算成功（它们确实按意图执行了）。
+                actionOutcome[pc] = outcome.abort == null
                 com.pvz2.auto.core.ScriptRunState.finishAction(pc)
 
                 /*
@@ -810,6 +815,31 @@ class ZExecutor(
                 }
                 Outcome()
             }
+
+            // ---- 暂停（10.20 m82947）：停在原地等用户点「继续」
+            Z.ActionType.CONTROL_PAUSE -> {
+                com.pvz2.auto.core.ScriptRunState.requestPause()
+                log("[$index] $label 已暂停，等待「继续」")
+                while (com.pvz2.auto.core.ScriptRunState.paused && !stopped) {
+                    Thread.sleep(50)
+                }
+                if (stopped) {
+                    log("[$index] $label 暂停中被停止")
+                    return Outcome(stop = true)
+                }
+                log("[$index] $label 继续执行")
+                Outcome()
+            }
+
+            // ---- 设置跳转标识（10.19 m54383）：**它就是基类的那个 jumpId**
+            //
+            // 协议里这个动作没有独有字段 —— 它的全部作用是"当跳转目标"。
+            // jumpTable 在脚本加载时已经把每个动作的 jumpId 建成下标表，
+            // 所以运行时**什么都不用做**。以前把这一条当"还没实现"跳过，
+            // 结果脚本照跑，看起来没问题；可一旦有 `跳转到 :这个标识`，
+            // 目标是存在的（表里有），跳过去却执行了这条空动作 —— 行为是对的。
+            // 标成可执行后界面也不再显示"暂不支持"。
+            Z.ActionType.CONTROL_SET_JUMP_ID -> Outcome()
 
             // ---- 设置变量（10.24 m36077）：vars: [{name, value: VarValue}]
             Z.ActionType.SET_VARS -> {
@@ -1577,6 +1607,63 @@ class ZExecutor(
                 (0 until 100).random() < p
             }
 
+            // ---- 多个条件（FIELDS.md:277 conditionSet / 278 AroundCondition）
+            Z.ConditionType.CONDITION_SET -> combineConditions(cond, index, skipped)
+
+            // 位置周围条件作为**独立条件**时，没有"命中点"可当基准，
+            // 直接按写好的 basePos 评估（平移量 0）。
+            Z.ConditionType.AROUND -> combineConditions(cond, index, skipped)
+
+            // ---- 限制运行次数（FIELDS.md:271）
+            Z.ConditionType.LIMIT_RUN_TIMES -> {
+                val limit = (cond.extra["limitTimes"] as? Number)?.toInt() ?: 0
+                val used = limitUsed[index] ?: 0
+                val ok = limit <= 0 || used < limit
+                if (ok) limitUsed[index] = used + 1
+                log("   条件 限制运行次数：已用 $used / $limit → ${if (ok) "成立" else "不成立"}")
+                ok
+            }
+
+            // ---- 动作运行状态（FIELDS.md:272）
+            Z.ConditionType.SCRIPT_RUN_STATE -> {
+                val aim = cond.extra["aimPosition"]?.toString()?.trim().orEmpty()
+                val want = cond.extra["aimScriptRunState"]?.toString()?.trim() ?: "suc"
+                val target = aim.toIntOrNull()?.minus(1) ?: jumpTableOf[aim]
+                val ran = target?.let { actionOutcome[it] }
+                val ok = when (want) {
+                    "suc" -> ran == true
+                    "fail" -> ran == false
+                    "notRun" -> ran == null
+                    else -> false
+                }
+                log("   条件 动作运行状态：「$aim」要 $want，实际 ${ran ?: "未运行"} → $ok")
+                ok
+            }
+
+            // ---- 在时间之后（FIELDS.md:274）
+            Z.ConditionType.TIME_AFTER -> {
+                val v = cond.extra["timeValue"]?.toString().orEmpty()
+                val ok = timeAfterPassed(v)
+                log("   条件 在时间之后「$v」→ $ok")
+                ok
+            }
+
+            // ---- 时间间隔（FIELDS.md:275）
+            Z.ConditionType.TIME_INTERVAL -> {
+                val v = cond.extra["timeIntervalValue"]?.toString()
+                val unit = (cond.extra["timeIntervalUnit"] as? Number)?.toInt() ?: 1
+                val gapMs = (randomIn(v) ?: 0.0).toLong() * unitToMs(unit)
+                val now = System.currentTimeMillis()
+                val last = intervalLast[index]
+                val ok = gapMs <= 0L || last == null || now - last >= gapMs
+                if (ok) intervalLast[index] = now
+                log(
+                    "   条件 时间间隔 ${gapMs}ms：" +
+                        (if (last == null) "首次" else "距上次 ${now - last}ms") + " → $ok"
+                )
+                ok
+            }
+
             // 其余条件安卓上暂时判不了
             else -> {
                 /*
@@ -1983,6 +2070,122 @@ class ZExecutor(
      * 其余字段（desc、limitArea…）变量化不代换也不影响执行，不要因此把动作跳掉。
      */
     private val WATCHED_VAR_FIELDS = listOf("delay", "duration", "repeatCount", "posData")
+
+    /** 「限制运行次数」的计数，键 = 动作下标（一次 run 内有效）。 */
+    private val limitUsed = HashMap<Int, Int>()
+
+    /** 每个动作最近一次运行结果：true=成功 / false=失败 / 缺键=还没跑过。 */
+    private val actionOutcome = HashMap<Int, Boolean>()
+
+    /** 本次 run 的开始时刻：`+HH:MM:SS` 这种"运行 N 小时后"要以它为基准。 */
+    private var runStartedAt: Long = 0L
+
+    /** 「时间间隔」上次通过的时刻（毫秒）。 */
+    private val intervalLast = HashMap<Int, Long>()
+
+    private fun unitToMs(unit: Int): Long = when (unit) {
+        0 -> 1L                    // ms
+        1 -> 1000L                 // s
+        2 -> 60_000L               // min
+        else -> 3_600_000L         // h
+    }
+
+    /**
+     * 组合条件（`conditionSet` / 独立 `AroundCondition`）。
+     *
+     * matchMode：`and` 全满足 / `or` 任一 / `count` 满足数 >= matchCount。
+     * 子条件走同一个 [evaluate]，所以取反、未实现类型的行为都一致。
+     */
+    private fun combineConditions(
+        cond: Z.Condition,
+        index: Int,
+        skipped: MutableList<Result.Skip>
+    ): Boolean {
+        val subs = subConditionsOf(cond)
+        if (subs.isEmpty()) {
+            log("   条件 ${cond.type.wire}：没有子条件，按不成立处理")
+            return false
+        }
+        val mode = cond.extra["matchMode"]?.toString()?.trim().orEmpty().ifBlank { "and" }
+        val need = (cond.extra["matchCount"] as? Number)?.toInt() ?: subs.size
+        var okCount = 0
+        for (sub in subs) {
+            if (sub.disabled) continue
+            if (evaluate(sub, index, skipped)) okCount++
+        }
+        val ok = when (mode) {
+            "or" -> okCount > 0
+            "count" -> okCount >= need
+            else -> okCount == subs.count { !it.disabled }
+        }
+        log("   条件 ${cond.type.wire}（$mode）：$okCount/${subs.size} → $ok")
+        return ok
+    }
+
+    /** 取子条件数组（可能是 JSONArray，也可能是 JSON 文本）。 */
+    private fun subConditionsOf(cond: Z.Condition): List<Z.Condition> {
+        val raw = cond.extra["conditions"] ?: return emptyList()
+        val arr = runCatching {
+            when (raw) {
+                is org.json.JSONArray -> raw
+                is String -> org.json.JSONArray(raw)
+                else -> org.json.JSONArray(raw.toString())
+            }
+        }.getOrNull() ?: return emptyList()
+        val out = ArrayList<Z.Condition>()
+        for (i in 0 until arr.length()) {
+            arr.optJSONObject(i)?.let { o -> Z.Condition.parse(o)?.let { out.add(it) } }
+        }
+        return out
+    }
+
+    /**
+     * 「在时间之后」。
+     *
+     * 协议给了三种写法（FIELDS.md:274）：
+     *  - `2019=01=01 09:30:58` 指定日期时间
+     *  - `09:30:58`            今天这个时刻
+     *  - `+02:00:00`           从**脚本开始运行**算起 2 小时后
+     */
+    private fun timeAfterPassed(value: String): Boolean {
+        val v = value.trim()
+        if (v.isEmpty()) return false
+        val now = System.currentTimeMillis()
+        if (v.startsWith("+")) return now >= runStartedAt + durationMs(v.substring(1))
+        if (v.contains("=")) {
+            val m = Regex("""(\d{4})=(\d{1,2})=(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})""").find(v)
+                ?: return false
+            val cal = java.util.Calendar.getInstance().apply {
+                set(
+                    m.groupValues[1].toInt(), m.groupValues[2].toInt() - 1,
+                    m.groupValues[3].toInt(), m.groupValues[4].toInt(),
+                    m.groupValues[5].toInt(), m.groupValues[6].toInt()
+                )
+                set(java.util.Calendar.MILLISECOND, 0)
+            }
+            return now >= cal.timeInMillis
+        }
+        val m = Regex("""^(\d{1,2}):(\d{2}):(\d{2})$""").find(v) ?: return false
+        val cal = java.util.Calendar.getInstance().apply {
+            set(
+                get(java.util.Calendar.YEAR), get(java.util.Calendar.MONTH),
+                get(java.util.Calendar.DAY_OF_MONTH), m.groupValues[1].toInt(),
+                m.groupValues[2].toInt(), m.groupValues[3].toInt()
+            )
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return now >= cal.timeInMillis
+    }
+
+    /** `HH:MM:SS` → 毫秒。 */
+    private fun durationMs(hms: String): Long {
+        val p = hms.split(":")
+        if (p.size != 3) return 0L
+        val h = p[0].toLongOrNull() ?: 0
+        val m = p[1].toLongOrNull() ?: 0
+        val s = p[2].toLongOrNull() ?: 0
+        return ((h * 60 + m) * 60 + s) * 1000
+    }
 
     /**
      * 运行时变量表 —— 「设置变量」写、`${名字}` 读。

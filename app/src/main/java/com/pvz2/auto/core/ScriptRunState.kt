@@ -89,6 +89,29 @@ object ScriptRunState {
     val state: StateFlow<State> = shared.asStateFlow()
 
     /** 服务侧更新。 */
+    /**
+     * 「暂停」动作的闸门。true 时执行器停在这一条上等，直到用户点「继续」。
+     *
+     * 为什么不走 Service intent：暂停是**执行线程自己**的事 ——
+     * 它已经在跑循环里了，用一个进程级标志最快，也不用担心
+     * "暂停命令到达时脚本刚好结束"这类时序问题。
+     */
+    @Volatile
+    var paused: Boolean = false
+        private set
+
+    /** 暂停并提示用户怎么恢复。 */
+    fun requestPause() {
+        paused = true
+        update { it.copy(message = "已暂停：点「继续」恢复") }
+    }
+
+    /** 用户点了「继续」。 */
+    fun requestResume() {
+        paused = false
+        update { it.copy(message = "继续运行") }
+    }
+
     fun update(block: (State) -> State) {
         shared.updateAndGet(block)
     }
@@ -150,6 +173,7 @@ object ScriptRunState {
 
     /** 清空回未运行态。 */
     fun reset() {
+        paused = false
         shared.updateAndGet { State() }
     }
 }

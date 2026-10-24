@@ -156,6 +156,7 @@
     <string name="library_title">脚本</string>
     <string name="library_run">运行</string>
     <string name="library_stop">停止</string>
+    <string name="library_resume">继续</string>
     <string name="library_loading">读取中…</string>
     <string name="library_empty">还没有脚本。去第三页点「保存」，存下来的会出现在这里。</string>
     <string name="library_load_failed">这个脚本读不出来</string>

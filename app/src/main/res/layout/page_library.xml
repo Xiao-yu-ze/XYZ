@@ -80,6 +80,18 @@
           万一名字对不上（换过文件名、状态没清），用户就**停不下来** ——
           真机上刚发生过。这一颗不依赖任何匹配，只要在跑就能点。
         -->
+        <!-- 「继续」：脚本里有「暂停」动作时会停下来等这一下。
+             只在暂停中可见（平时不占位置，避免误点）。 -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnRunResume"
+            style="@style/AppButton.Outline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:minWidth="64dp"
+            android:text="@string/library_resume"
+            android:visibility="gone" />
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnRunStop"
             style="@style/AppButton.Primary"

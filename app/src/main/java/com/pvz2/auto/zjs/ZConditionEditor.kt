@@ -42,13 +42,13 @@ object ZConditionEditor {
         Z.ConditionType.TEXT to "出现文字",
         Z.ConditionType.COLOR to "出现颜色",
         Z.ConditionType.NODE to "出现节点",
-        Z.ConditionType.AI_CLOUD to "AI 云识别",
+        Z.ConditionType.AI_CLOUD to "AI 云识别（本机不支持）",
         Z.ConditionType.LIMIT_RUN_TIMES to "限制运行次数",
         Z.ConditionType.SCRIPT_RUN_STATE to "动作运行状态",
         Z.ConditionType.RANDOM to "随机运行",
         Z.ConditionType.TIME_AFTER to "在时间之后",
         Z.ConditionType.TIME_INTERVAL to "时间间隔",
-        Z.ConditionType.JS_EXPRESSION to "JS 表达式",
+        Z.ConditionType.JS_EXPRESSION to "JS 表达式（本机不支持）",
         Z.ConditionType.CONDITION_SET to "多个条件"
     )
 

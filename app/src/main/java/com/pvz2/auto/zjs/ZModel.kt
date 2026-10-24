@@ -408,7 +408,8 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          *   标回 false：界面如实显示"暂不支持"，保存前校验也会提示。
          */
         CONTROL_SET_JUMP_ID("控制执行", "setJumpId"),
-        CONTROL_PAUSE("控制执行", "pause"),
+        /* 暂停：执行器现在真的会停下来等「继续」（ScriptRunState.paused）。 */
+    CONTROL_PAUSE("控制执行", "pause", executable = true),
         CONTROL_STOP("控制执行", "stop", executable = true),
         CONTROL_WAIT("控制执行", "waitDelay", executable = true),
         PROMPT("系统提示", executable = true),

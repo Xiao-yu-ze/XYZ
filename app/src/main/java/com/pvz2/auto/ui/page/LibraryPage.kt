@@ -66,6 +66,9 @@ class LibraryPage(
         root.findViewById<MaterialButton>(R.id.btnRunStop).setOnClickListener {
             AutomationService.zjsStop(host)
         }
+        // 「暂停」动作会停在原地等这一下；只有暂停中才显示，避免平时误点
+        val resume = root.findViewById<MaterialButton>(R.id.btnRunResume)
+        resume.setOnClickListener { ScriptRunState.requestResume() }
 
         /*
          * 新建：造一份**空脚本**直接进编辑器。
@@ -145,6 +148,7 @@ class LibraryPage(
                     ScriptRunState.state.collect { state ->
                         adapter.submit(adapter.items, state)
                         runStatus.text = state.message.ifBlank { "运行中" }
+            resume.visibility = if (state.running && ScriptRunState.paused) View.VISIBLE else View.GONE
                         // 只要在跑就把整条状态栏（含停止按钮）显示出来 ——
                         // 不依赖状态文案是否为空，免得"在跑但看不到停止"。
                         //
