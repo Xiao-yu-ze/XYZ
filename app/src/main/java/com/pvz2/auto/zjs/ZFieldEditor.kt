@@ -106,13 +106,30 @@ object ZFieldEditor {
         val newCommon = when (field) {
             "desc" -> c.copy(desc = value.ifBlank { null })
             "jumpId" -> c.copy(jumpId = value.ifBlank { null })
-            "duration" -> c.copy(duration = value.ifBlank { null })
-            // ★ 只收纯数字或区间（"3" / "1-3"）。单位**单独一个字段** delayUnit。
+            // ★ 三个"时长/等待"字段只放行 `数字` 或 `数字-数字`（区间），其余一律拒收。
             //
-            //   原坑：描述器把值和单位拼成 "3 s" 塞进这一行，这里又原样写回
-            //   delay，执行器 randomIn("3 s") 解析不出数字 → 回落默认 200ms。
-            //   用户改的等待等于没改，界面上却一直显示 "3 s"，没有任何报错。
-            "delay" -> c.copy(delay = value.ifBlank { null })
+            //   原坑：这里什么都不校验，于是 "3 s" / "abc" / "1-" 全都原样落盘。
+            //   执行器 randomIn(value) 解析不出数字时**静默回落默认值**
+            //   （交互动作 200ms、滑动 1000ms），用户看到的是"我明明填了 3 秒，
+            //   它几乎立刻就跑完了"，而且没有任何报错。
+            //   宁可在输入那一刻拒收并提示（页面会弹"值不合法，未保存"），
+            //   也不要写进一个注定被忽略的值。
+            //
+            //   空串仍然合法 = 清空该字段（落盘时不写，执行器走默认值）。
+            "duration" -> {
+                val t = value.trim()
+                if (t.isNotEmpty() && !isNumberOrRange(t)) return null
+                c.copy(duration = t.ifBlank { null })
+            }
+            // 值的单位**单独一个字段** delayUnit（见下），这一行只放数字。
+            //
+            //   更早的原坑：描述器把值和单位拼成 "3 s" 塞进这一行，这里又原样
+            //   写回 delay，执行器 randomIn("3 s") 解析不出数字 → 回落 200ms。
+            "delay" -> {
+                val t = value.trim()
+                if (t.isNotEmpty() && !isNumberOrRange(t)) return null
+                c.copy(delay = t.ifBlank { null })
+            }
             // 时间单位（FIELDS.md §0.1：0=毫秒 1=秒 2=分钟 3=小时，默认 1=秒）
             //
             // 三种写法都收：界面选项（ms/s/min/h）、中文（毫秒/秒/分钟/小时）、
@@ -121,8 +138,12 @@ object ZFieldEditor {
                 val u = parseTimeUnit(value) ?: return null
                 c.copy(delayUnit = u)
             }
-            // 重复间隔同理：值、单位分两行（原坑与 delay 完全一样）
-            "repeatDelayValue" -> c.copy(repeatDelayValue = value.ifBlank { null })
+            // 重复间隔同理：值、单位分两行，值同样只放行数字/区间。
+            "repeatDelayValue" -> {
+                val t = value.trim()
+                if (t.isNotEmpty() && !isNumberOrRange(t)) return null
+                c.copy(repeatDelayValue = t.ifBlank { null })
+            }
             "repeatDelayUnit" -> {
                 val u = parseTimeUnit(value) ?: return null
                 c.copy(repeatDelayUnit = u)
@@ -226,6 +247,18 @@ object ZFieldEditor {
     private fun parseOrNull(raw: String): ZValue? =
         if (raw.isBlank()) null else ZValue.parse(raw)
 
+    /**
+     * 数字或区间：`"100"` / `"100-300"`。
+     *
+     * 协议里 `delay` / `duration` / `repeatDelayValue` 都是这个形状
+     * （FIELDS.md §0.4：`"1-3"` = 范围内随机）。执行器 `randomIn()` 也只认这一种，
+     * 其它写法会被静默当成"没填"。
+     *
+     * 不接受负数：这几处语义上都是时长，负值无意义，写进去只会被当成解析失败。
+     * 调用方负责 `trim()`。
+     */
+    private fun isNumberOrRange(s: String): Boolean = NUMBER_OR_RANGE.matches(s)
+
     private fun truthy(v: String): Boolean =
         v.trim().let { it == "是" || it.equals("true", ignoreCase = true) || it == "1" }
 
@@ -244,6 +277,17 @@ object ZFieldEditor {
      * 我们也一样：换类型的同一时刻位置对象跟着换，否则存出来就是一个
      * 自相矛盾的动作 —— 「点击图片」带着一个 location 位置，
      * 执行器按 image 去找会永远匹配不到，而用户完全看不出哪里错了。
+     *
+     * ## ★ 会丢数据 —— 调用方必须先确认
+     *
+     * 换类型会重建位置对象，有两种情况**不可逆地丢东西**：
+     *  1. 新类型不需要位置（按键 / 打开链接 / 控制执行…）→ 整个 `posData` 丢掉；
+     *  2. 新类型要位置但不是图片（点击图片 → 点击文字 / 点击）→ `imageData` 丢掉。
+     *
+     * `imageData` 是用户框选 + PNG 编码出来的（一次框选、一次编码），丢了没有撤销；
+     * `limitArea` 也是框出来的。本类不做弹窗（它不认识 Context），所以**调用方
+     * 必须**在提交「类型」之前先问 [changeTypeWouldLoseTemplate]，为 true 就弹一次
+     * 确认再提交。否则就是"点一下下拉框，模板没了，还没有任何提示"。
      */
     fun changeType(action: Z.Action, newType: Z.ActionType): Z.Action {
         val expected = expectedPosType(newType)
@@ -320,6 +364,45 @@ object ZFieldEditor {
         else -> null
     }
 
+    /**
+     * 把 [action] 换成 [newType] 会不会丢掉用户已经做好的**模板或识别范围**。
+     *
+     * ★ 纯函数，不碰 Context、不改任何东西 —— 只回答"要不要先问一句"。
+     *   页面在提交「类型」下拉之前调它；返回 true 就弹一次确认，
+     *   用户点「取消」就别改（见 [changeType] 的 KDoc）。
+     *
+     * 判定覆盖两条真实的丢数据路径（[changeType] 会重建位置对象）：
+     *  1. **新类型不需要位置**（按键 / 打开链接 / 控制执行…）→ 整个 `posData`
+     *     被丢掉，模板和范围一起没；
+     *  2. **新类型要位置、但不是图片**（点击图片 → 点击文字 / 点击）→ 重建出来的
+     *     `PosData` 只保留 `limitArea`，`imageData` 保不住。
+     *
+     * 注意第二种容易被漏掉：从"点击图片"切到"点击文字"看起来只是换了识别方式，
+     * 但模板（base64）会消失，而用户完全没有心理预期。
+     *
+     * 不返回 true 的情况：位置类型不变（图片 → 图片，或坐标 → 坐标）只清/留
+     * `limitArea`，模板不受影响；以及本来就没有模板也没有范围（没什么可丢的）。
+     *
+     * 说明：坐标（`x`/`y`）在切到无位置类型时同样会丢，但重新取点的成本远低于
+     * 重新截图 + 编码，所以不纳入"要不要确认"的判据 —— 否则每次换类型都要弹窗，
+     * 用户会条件反射地点掉。
+     */
+    fun changeTypeWouldLoseTemplate(action: Z.Action, newType: Z.ActionType): Boolean {
+        if (newType == action.type) return false
+        val pos = action.posData ?: return false
+        val hasTemplate = pos.imageData != null
+        val hasArea = pos.limitArea != null
+        if (!hasTemplate && !hasArea) return false
+
+        val expected = expectedPosType(newType)
+        // ① 新类型没有位置 → 整个 posData 丢弃
+        if (expected == null) return true
+        // ② 新类型要位置但不是图片 → 重建 PosData 时 imageData 保不住
+        if (hasTemplate && expected != Z.PosType.IMAGE) return true
+        // ③ 位置类型没变（或仍要图片）：只保留 limitArea，不会丢东西
+        return false
+    }
+
     // ------------------------------------------------------ 动作类型专属字段
     //
     // FIELDS.md §10：26 种动作各自的参数（keyCode / inputText / jumpToPosition …）
@@ -334,6 +417,13 @@ object ZFieldEditor {
     // 这里给最小可用集：能改的键见下面三张表，描述器照同一批键出可编辑行
     // （去重按"本次实际出了哪些行"做，不能用全局集合 —— 全局集合会把别的动作类型
     //  带来的同名键也一起藏掉，那种键应当继续以只读行展示）。
+
+    /**
+     * 时长/等待类字段的合法形状：`100` 或 `100-300`（FIELDS.md §0.4）。
+     *
+     * 见 [isNumberOrRange]。放成常量是为了不在每次输入时重新编译正则。
+     */
+    private val NUMBER_OR_RANGE = Regex("^\\d+(-\\d+)?$")
 
     /** 布尔型 extra。写回 true；清空 = 删掉这个键（缺省即 false）。 */
     private val EXTRA_BOOLS = setOf(
@@ -367,13 +457,27 @@ object ZFieldEditor {
         else -> null
     }
 
-    /** 改 extra 里的一个键：`null` 表示删掉（落盘时就不写，等于回默认值）。 */
+    /**
+     * 改 extra 里的一个键：`null` 表示删掉（落盘时就不写，等于回默认值）。
+     *
+     * ★ 顺带清掉**大小写变体**。
+     *
+     *   协议里这些键是大小写敏感的（`ContinueParentExecute` 首字母大写），
+     *   而用户拿到的手写/别家工具生成的脚本里可能有 `continueParentExecute`
+     *   这种变体。不清的话会出现两条同义键：
+     *     · 我们在界面上写的是正确大小写的那条 → 执行器读得到，行为对；
+     *     · 旧变体留在文件里 → 界面上多一行灰色只读、自动精灵那边读哪个不确定。
+     *   所以只要写的键和某个已有键"仅大小写不同"，就以这次写入为准，把变体删掉。
+     *   （只删变体，不动其它键 —— 用户的不认识字段必须原样保留。）
+     */
     private fun extraWith(
         src: Map<String, Any?>,
         key: String,
         v: Any?
     ): MutableMap<String, Any?> {
         val m = LinkedHashMap(src)
+        val variants = m.keys.filter { it != key && it.equals(key, ignoreCase = true) }
+        variants.forEach { m.remove(it) }
         if (v == null) m.remove(key) else m[key] = v
         return m
     }

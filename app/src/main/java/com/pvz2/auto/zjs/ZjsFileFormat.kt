@@ -146,15 +146,19 @@ object ZjsFileFormat {
      *
      * 旧实现只递归 `scriptCallbacks`，漏了两处内嵌动作：
      *  - `baseInfo.globalCallbacks` 的 9 个全局槽位（FIELDS.md:305-317）
-     *  - `action.scriptSet`（「运行多个动作」的子动作数组，FIELDS.md:495）
+     *  - `action.scriptSet`（「运行多个动作」的子动作数组，FIELDS.md:530）
      * 数少了自动精灵可能判定文件损坏。
      *
-     * 统一走 JSON 递归而不是逐个字段读模型：`scriptSet` 在 extra 里、
-     * `gestureActions` 在子列表里，只有 JSON 层能一次算全。
+     * ## 两条路并存，但同一个动作只走一条
+     *
+     * `scriptSet` / `gestureActions` / `scriptCallbacks` 现在是强类型字段 →
+     * 按**模型**递归（[countAction]）；`globalCallbacks` 和解析不出来的
+     * `*Raw` 条目只有 JSON → 按**JSON**递归（[countActionJson]）。
+     * 千万不要对同一个动作既走模型又 `toJson()` 再遍历一遍，那会重复计数。
      */
     fun countActions(script: Z.Script): Int {
         var n = 0
-        for (a in script.actions) n += countActionJson(a.toJson())
+        for (a in script.actions) n += countAction(a)
         // baseInfo 里的全局监听也是动作（它们不算在 actions 里）
         val gc = script.baseInfo.extra["globalCallbacks"]
         if (gc is JSONObject) {
@@ -166,15 +170,32 @@ object ZjsFileFormat {
     /** 只有动作列表时用（保留旧签名，行为与 [countActions] 的单动作部分一致）。 */
     fun countActions(actions: List<Z.Action>): Int {
         var n = 0
-        for (a in actions) n += countActionJson(a.toJson())
+        for (a in actions) n += countAction(a)
         return n
     }
 
     /**
-     * 一个动作自身 + 它内嵌的全部动作。
+     * 一个动作自身 + 它内嵌的全部动作（按**模型**递归）。
      *
-     * 三种内嵌：`scriptCallbacks`（7 槽）、`scriptSet`（运行多个动作）、
-     * `gestureActions`（手势轨迹，元素也是动作）。
+     * 四种内嵌：`scriptCallbacks`（7 槽）、`extraCallbacks`（认不出的槽位）、
+     * `scriptSet`（运行多个动作的子动作）、`gestureActions`（手势轨迹）。
+     * 解析不出来的 `*Raw` 只有 JSON，交给 [countActionJson]。
+     */
+    private fun countAction(a: Z.Action): Int {
+        var n = 1
+        for (cb in a.callbacks.values) n += countAction(cb)
+        for (r in a.extraCallbacks.values) n += countActionJson(r)
+        for (s in a.scriptSet) n += countAction(s)
+        for (r in a.scriptSetRaw) n += countActionJson(r)
+        for (g in a.gestureActions) n += countAction(g)
+        for (r in a.gestureRaw) n += countActionJson(r)
+        return n
+    }
+
+    /**
+     * 只有原始 JSON 的动作（`globalCallbacks` 槽位、解析不了的子动作）走这条。
+     *
+     * 递归 `scriptCallbacks` / `scriptSet` / `gestureActions` 三种内嵌。
      */
     private fun countActionJson(o: JSONObject): Int {
         var n = 1

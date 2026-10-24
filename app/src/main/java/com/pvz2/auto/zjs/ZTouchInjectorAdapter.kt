@@ -71,6 +71,26 @@ class ZTouchInjectorAdapter(
     }
 
     /** 按键通道。没配置时点按键动作会抛，执行器会记一条跳过原因。 */
+    /**
+     * 「打开应用」通道：包名 → 是否成功。
+     *
+     * 和 [delegateKey] 一样由 `AutomationService` 注入 —— 执行器不直接碰
+     * Android API，测试里的假注入器也不用实现它。
+     */
+    var onLaunchApp: ((String) -> Boolean)? = null
+
+    /** 「打开链接」通道：URL → 是否成功。 */
+    var onOpenLink: ((String) -> Boolean)? = null
+
+    /** 「系统提示」通道：显示一条轻提示。 */
+    var onToast: ((String) -> Unit)? = null
+
+    // 注意：属性故意不叫 appLauncher —— 与函数同名时，
+    // 函数体里的裸引用有解析成自身、无限递归的风险。
+    override fun appLauncher(): ((String) -> Boolean)? = onLaunchApp
+    override fun linkOpener(): ((String) -> Boolean)? = onOpenLink
+    override fun toaster(): ((String) -> Unit)? = onToast
+
     var delegateKey: ((Int, Int) -> Unit)? = null
 
     /** 文字输入通道。 */

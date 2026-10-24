@@ -22,6 +22,14 @@ object ZScriptIO {
 
     private const val TAG = "ZScriptIO"
 
+    /**
+     * 「运行多个动作」的 `runMode` 合法值（FIELDS.md:531）。
+     *
+     * `normal` 顺序 / `random` 乱序 / `multiThread` 同时，默认 `normal`。
+     * 认不出的值仍原样保留在 extra 里（执行侧自己判断），这里只负责提示。
+     */
+    private val RUN_MODES = setOf("normal", "random", "multiThread")
+
     /** 读取结果。失败时 [error] 非空，调用方据此给用户看原因。 */
     data class Loaded(
         val script: Z.Script? = null,
@@ -172,6 +180,48 @@ object ZScriptIO {
             // 必须在问题列表里说出来 —— 否则界面上看它就是一条"等待"。
             action.rawControlRunType?.let {
                 issues.add("$where 未知的控制执行类型「$it」（已原样保留，本机不会执行）")
+            }
+
+            // ---- 「控制执行」缺子类型（P2-b）
+            //
+            // 文件里只写了 `{"type":"控制执行"}` 时，ofWire 只能兜底成「等待」，
+            // 而落盘会补成 `controlRunType:"waitDelay"` —— 等于我们替用户编了
+            // 一个子类型。以前这种情况既不提示、文件还被改了。
+            if (action.controlRunTypeMissing) {
+                issues.add("$where 「控制执行」缺 controlRunType（本机按等待处理，保存会补成 waitDelay）")
+            }
+
+            // ---- 运行多个动作：子动作 / runMode（FIELDS.md:527-536）
+            if (action.type == Z.ActionType.RUN_MULTI) {
+                if (action.scriptSet.isEmpty() && action.scriptSetRaw.isEmpty()) {
+                    issues.add("$where 没有任何子动作（scriptSet 为空）")
+                }
+                val mode = action.extra["runMode"]?.toString()?.trim().orEmpty()
+                if (mode.isNotEmpty() && mode !in RUN_MODES) {
+                    issues.add(
+                        "$where 未知的 runMode「$mode」" +
+                            "（协议只认 ${RUN_MODES.joinToString(" / ")}，已原样保留）"
+                    )
+                }
+            }
+
+            // ---- 图片模板写法冲突（P2-d）
+            //
+            // `data` 与 `base64` 同时出现、或两套尺寸键名混用 → 只能写回一套，
+            // 另一套必然丢。以前是完全静默的，用户只会在自动精灵里发现图没了。
+            for ((tag, p) in listOf(
+                "位置" to action.posData,
+                "起点" to action.startPos,
+                "终点" to action.endPos,
+                "条件位置" to action.common.condition?.posData
+            )) {
+                val img = p?.imageData ?: continue
+                if (img.droppedKeys.isNotEmpty()) {
+                    issues.add(
+                        "$where $tag 的图片模板同时有 " +
+                            "${img.droppedKeys.joinToString("、")}，只能保留一套，其余存不回去"
+                    )
+                }
             }
 
             // ---- 控制执行：跳转目标 / 目标动作必填

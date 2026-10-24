@@ -360,10 +360,9 @@ object ZConditionEditor {
         // 反过来更常见：文件里本来有 50，界面上是 "—"，用户永远看不到这个 50，
         // 打开一次"反复检查"就直接按 `?: 0` 的默认值跑无限重试。
         //
-        // 现在恒显示数字（默认 0 / 1000，与 FIELDS.md:257-258 一致）。
-        // 开关没开时在**标签**上标一个"（关）"——Row 没有"置灰"标记位，
-        // 而 ZActionDescriber 不归这次改动管，所以用标签表达"当前不生效"。
-        val repeatOn = c.repeatWhenFalse
+        // 现在：**标签恒定**、值恒为真实数字（默认 0 / 1000，与 FIELDS.md:257-258 一致）。
+        // "这两个值当前生不生效"由上面那行「不成立时反复检查」开关表达 ——
+        // 不在这两行的标签上做标记（按 label 查行的既有测试和调用点会因此失效）。
         rows += Row(
             "识别次数",
             (c.repeatWhenFalseLimitTimes ?: 0).toString(),
@@ -435,12 +434,8 @@ object ZConditionEditor {
             "cond.y" -> pos.copy(y = ZValue.parse(value))
             "cond.text" -> pos.copy(text = value.ifBlank { null })
             "cond.color" -> pos.copy(color = value.ifBlank { null })
-            "cond.minSimilarPercent" -> pos.copy(
-                minSimilarPercent = value.removeSuffix("%").trim().toIntOrNull()?.coerceIn(0, 100)
-            )
-            "cond.similarPercent" -> pos.copy(
-                similarPercent = value.removeSuffix("%").trim().toIntOrNull()?.coerceIn(0, 100)
-            )
+            "cond.minSimilarPercent" -> pos.copy(minSimilarPercent = clampPercent(value))
+            "cond.similarPercent" -> pos.copy(similarPercent = clampPercent(value))
             "cond.limitArea" -> if (value.isBlank()) {
                 pos.copy(limitArea = null)
             } else {
@@ -449,6 +444,24 @@ object ZConditionEditor {
             else -> return null
         }
         return condition.copy(posData = next)
+    }
+
+    /**
+     * 相似度阈值：**协议范围 50~100**（FIELDS.md 3.2 `minSimilarPercent` / 3.4 `similarPercent`），
+     * 空串 → null（＝清空，落盘时不写）。
+     *
+     * ## 原来夹的是 0~100（和动作侧不一致）
+     *
+     * 动作侧的 `ZFieldEditor.parsePercent` 已经按协议夹 50~100，条件侧还留在 0~100 ——
+     * 同一个字段两条入口行为不同：在动作卡片里拖到 30 会被抬成 50，
+     * 在条件弹窗里填 30 却原样写进文件。
+     * 而 0~49 在自动精灵那边不是合法阈值，匹配会退化成"几乎总能命中"，
+     * 用户只会看到"明明没那个东西也点" —— 完全看不出是阈值被写坏了。
+     */
+    private fun clampPercent(value: String): Int? {
+        val t = value.trim().removeSuffix("%").trim()
+        if (t.isEmpty()) return null
+        return t.toDoubleOrNull()?.toInt()?.coerceIn(50, 100)
     }
 
     /** 模板图：整块替换。条件里的模板和 AI 的三张图都走这里。 */

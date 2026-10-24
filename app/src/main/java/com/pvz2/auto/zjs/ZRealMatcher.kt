@@ -206,9 +206,21 @@ class ZRealMatcher(
 
             // `quickSearch`（快速搜图）只影响速度、不影响判定结果 —— 未实现，也**没有副作用**，
             // 所以这里刻意不读它。读了却不真加速，等于给性能问题加了层假装饰。
+            /*
+             * ★ `bw` 的二值化阈值必须**模板算一次、两边共用**。
+             *
+             *   OTSU 是自适应的：对模板小图算一个阈值、对 ROI 算另一个 ——
+             *   同一个 UI 元素在两边被切到不同的黑白基准，相关系数与逐像素复核
+             *   会被一起拉低。表现为"加了滤镜反而偶尔找不到"，而且完全不报错。
+             *
+             *   顺序：先用**模板**（标准答案）算阈值 → ROI 与所有尺度变体都用它。
+             *   模板侧本来要进 tryAll 循环才处理，所以这里先单独算一遍阈值。
+             */
+            val bwThreshold = if (fType == "bw") otsuThreshold(tmpl0) else null
+
             // ROI 侧的变换只做一次，多尺度模板复用同一份（模板小，重复变换不心疼）。
             var region: org.opencv.core.Mat = regionBgr
-            val roiFiltered = applyFilter(region, fType)
+            val roiFiltered = applyFilter(region, fType, bwThreshold)
             if (roiFiltered != null) {
                 region = roiFiltered
                 garbage.add(roiFiltered)
@@ -236,7 +248,7 @@ class ZRealMatcher(
 
                 // 模板侧也要套同一份滤镜/边缘：和 ROI 保持像素语义一致。
                 var tmpl: org.opencv.core.Mat = scaled
-                val tmplFiltered = applyFilter(tmpl, fType)
+                val tmplFiltered = applyFilter(tmpl, fType, bwThreshold)
                 if (tmplFiltered != null) {
                     tmpl = tmplFiltered
                     garbage.add(tmplFiltered)
@@ -596,16 +608,36 @@ class ZRealMatcher(
         val y = point.second.coerceIn(0, maxY)
 
         val channels = shot.channels()
-        if (channels < 3) {
-            lastUnsupported = "单点取色需要 ≥3 通道的帧（当前 $channels 通道）"
-            return emptyList()
-        }
-
         val buf = ByteArray(channels)
         shot.get(y, x, buf)
-        val r = buf[0].toInt() and 0xFF
-        val g = buf[1].toInt() and 0xFF
-        val b = buf[2].toInt() and 0xFF
+        /*
+         * ★ 通道顺序**必须按上游帧格式分派**，不能默认"前三个字节就是 R,G,B"。
+         *
+         *   4 通道 = CV_8UC4 / RGBA_8888（`snapshotForMatch()` → `readFrameFromRing2()`
+         *   的产物；VirtualDisplaySession 里明确标注"CV_8UC4，通道顺序 RGBA"）
+         *   → buf[0..2] 就是 R,G,B，直接可用，不需要任何转换。
+         *
+         *   3 通道 = OpenCV 默认的 **BGR** → 必须反序取。按 RGBA 的读法去读 BGR
+         *   会**红蓝互换**：判红判蓝全错，而且不抛异常、不打日志 —— 历史踩过的坑。
+         *
+         *   其它通道数（1 / 2 / 5+）没有颜色语义，明确拒绝而不是瞎猜。
+         */
+        val (r, g, b) = when (channels) {
+            4 -> Triple(
+                buf[0].toInt() and 0xFF,
+                buf[1].toInt() and 0xFF,
+                buf[2].toInt() and 0xFF
+            )
+            3 -> Triple(
+                buf[2].toInt() and 0xFF,
+                buf[1].toInt() and 0xFF,
+                buf[0].toInt() and 0xFF
+            )
+            else -> {
+                lastUnsupported = "帧通道数 $channels 不支持颜色判定"
+                return emptyList()
+            }
+        }
 
         val lo = pos.colorLower
         val hi = pos.colorUpper
@@ -785,6 +817,39 @@ class ZRealMatcher(
     }
 
     /**
+     * 用 OTSU 给一张图算二值化阈值（0~255）；空图/算不出来返回 null。
+     *
+     * ★ 只用来**给模板算一次**，算出的值再传给 [applyFilter] 让 ROI 复用。
+     *
+     *   直接让两边各自 OTSU 是错的：OTSU 看的是各自直方图 —— 模板是小图（往往只有
+     *   目标本身），ROI 是大图（带背景、带别的 UI），两者会得到明显不同的阈值。
+     *   同一个元素被切成两种黑白基准之后，相关系数被系统性拉低，逐像素复核也跟着失准。
+     *   而用户只能看到"加了滤镜反而更难匹配"，查不出原因。
+     *
+     * `Imgproc.threshold` 在 OTSU 模式下的**返回值就是它选定的阈值**，正好拿来复用。
+     */
+    private fun otsuThreshold(src: Mat): Double? {
+        if (src.empty()) return null
+        val gray = Mat()
+        val probe = Mat()
+        return try {
+            toGray(src, gray)
+            val th = org.opencv.imgproc.Imgproc.threshold(
+                gray, probe, 0.0, 255.0,
+                org.opencv.imgproc.Imgproc.THRESH_BINARY +
+                    org.opencv.imgproc.Imgproc.THRESH_OTSU
+            )
+            if (th.isFinite()) th else null
+        } catch (t: Throwable) {
+            Log.w(TAG, "OTSU 阈值计算失败", t)
+            null
+        } finally {
+            gray.release()
+            probe.release()
+        }
+    }
+
+    /**
      * 套一层滤镜，返回**新的** Mat（调用方负责 release）；null = 没处理或不支持。
      *
      * 只实现 `grey` / `bw` / `reverse` —— 这三种是纯像素级、无参数的。
@@ -793,8 +858,11 @@ class ZRealMatcher(
      * 由调用方记一条"未实现"。
      *
      * 输出统一 3 通道 BGR：模板和 ROI 必须同类型，否则 matchTemplate 直接抛断言。
+     *
+     * @param bwThreshold `bw` 用的二值化阈值（0~255）。**必须由调用方用模板算一次再传进来**，
+     *   让模板与 ROI 共用同一个阈值；只有拿不到（null）时才退回各自 OTSU（那会两边基准漂移）。
      */
-    private fun applyFilter(src: Mat, type: String?): Mat? {
+    private fun applyFilter(src: Mat, type: String?, bwThreshold: Double? = null): Mat? {
         if (type == null || type !in SUPPORTED_FILTERS) return null
         if (src.empty()) return null
         val gray = Mat()
@@ -811,12 +879,20 @@ class ZRealMatcher(
                 "bw" -> {
                     toGray(src, gray)
                     val bin = Mat()
-                    // OTSU 自适应阈值：写死 128 在明暗差别大的 UI 上会整块变黑/变白。
-                    org.opencv.imgproc.Imgproc.threshold(
-                        gray, bin, 0.0, 255.0,
-                        org.opencv.imgproc.Imgproc.THRESH_BINARY +
-                            org.opencv.imgproc.Imgproc.THRESH_OTSU
-                    )
+                    // ★ 优先用调用方传入的阈值（= 模板算出的那个），保证两边同一把尺子。
+                    //   只有拿不到时才退回 OTSU —— 那是"每张图各算一个"，两边基准会漂。
+                    if (bwThreshold != null) {
+                        org.opencv.imgproc.Imgproc.threshold(
+                            gray, bin, bwThreshold, 255.0,
+                            org.opencv.imgproc.Imgproc.THRESH_BINARY
+                        )
+                    } else {
+                        org.opencv.imgproc.Imgproc.threshold(
+                            gray, bin, 0.0, 255.0,
+                            org.opencv.imgproc.Imgproc.THRESH_BINARY +
+                                org.opencv.imgproc.Imgproc.THRESH_OTSU
+                        )
+                    }
                     val out = Mat()
                     org.opencv.imgproc.Imgproc.cvtColor(
                         bin, out, org.opencv.imgproc.Imgproc.COLOR_GRAY2BGR

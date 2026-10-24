@@ -80,15 +80,100 @@ class ZjsEditorPage(
      */
     private val navStack = ArrayList<Frame>()
 
-    /** 栈帧：正在编辑哪个动作的哪个监听槽位。 */
-    private data class Frame(val actionIndex: Int, val slot: Z.CallbackSlot)
+    /**
+     * 栈帧：正在编辑"哪条动作链"上的哪个监听槽位。
+     *
+     * ## 为什么必须存**全局路径**，不能存"本地下标"（修掉的 P1）
+     *
+     * 原来是 `Frame(actionIndex, slot)`，而 actionIndex 是**压栈那一刻当前列表**里的下标。
+     * 顶层压栈时它恰好等于顶层下标；但第二层是在"槽位列表"（最多 1 条）里压栈的，
+     * actionIndex 恒为 0 —— 取 owner 时 `s.actions.getOrNull(0)` 拿到的是**第 1 条顶层动作**。
+     *
+     * 表现（真机上能复现）：进到"监听的监听"里，列表突然变成**另一条动作**的槽位；
+     * 之后每一次改字段、删除都写进了那条错误的动作，而界面上看不出任何异常。
+     *
+     * [path] 是一串下标，从顶层动作列表开始逐层往下：
+     *  - `[3]`    → 第 4 条顶层动作；
+     *  - `[3,0]`  → 第 4 条动作的**槽位里**那条动作（槽位列表只有一个元素，所以尾部恒 0）；
+     *  - `[3,0,0]`→ 再往里一层。
+     *
+     * 每一层"往下走"用的是哪个槽位，由 `navStack` 里**上一层那帧的 [slot]** 给出 ——
+     * 所以解析必须结合整个栈（[actionAtIndex]），单独一个 path 不够。
+     * 这和条件侧的 `CondTarget` 是同一套思路。
+     */
+    private data class Frame(val path: List<Int>, val slot: Z.CallbackSlot)
+
+    /**
+     * 按路径取动作。
+     *
+     * `path[i]` 是"第 i 层列表"里的下标；第 i 层 → 第 i+1 层的通道是
+     * `navStack[i].slot`（第 i 帧正是为了下潜到第 i+1 层而压入的）。
+     *
+     * 越界 / 路径失效返回 null（调用方据此清栈或放弃这次写回）。
+     */
+    private fun actionAtIndex(path: List<Int>): Z.Action? {
+        if (path.isEmpty()) return null
+        var list: List<Z.Action> = script?.actions ?: return null
+        // 前 path.lastIndex 段是"逐层下潜"：取下标 → 用该层帧的槽位进下一层
+        for (i in 0 until path.lastIndex) {
+            val owner = list.getOrNull(path[i]) ?: return null
+            val slot = navStack.getOrNull(i)?.slot ?: return null
+            list = owner.callbacks[slot]?.let { listOf(it) } ?: return null
+        }
+        // 最后一段就是目标动作所在的那一层
+        return list.getOrNull(path.last())
+    }
+
+    /**
+     * 把 [path] 指向的那条动作替换成 [next]，再逐层包回顶层。
+     *
+     * @return 新的顶层列表；路径失效返回 null（调用方不要覆盖 script）。
+     *
+     * 和 [actionAtIndex] 对称：自底向上，每层用 `navStack[depth].slot` 把内层装回去。
+     */
+    private fun writeActionAt(
+        list: List<Z.Action>,
+        path: List<Int>,
+        next: Z.Action,
+        depth: Int = 0
+    ): List<Z.Action>? {
+        val idx = path.getOrNull(depth) ?: return null
+        val cur = list.getOrNull(idx) ?: return null
+        val out = list.toMutableList()
+        if (depth == path.lastIndex) {
+            out[idx] = next
+            return out
+        }
+        val slot = navStack.getOrNull(depth)?.slot ?: return null
+        val inner = cur.callbacks[slot] ?: return null
+        val innerNew = writeActionAt(listOf(inner), path, next, depth + 1)?.firstOrNull() ?: return null
+        val cb = LinkedHashMap(cur.callbacks)
+        cb[slot] = innerNew
+        out[idx] = cur.copy(callbacks = cb)
+        return out
+    }
+
+    /**
+     * 路径失效（脚本被换掉、那条动作已经不在）时清栈退回顶层。
+     *
+     * 兜底用：不清的话界面会停在空列表上，用户会以为脚本被清空了，
+     * 而且下一次编辑会因为 owner 解析失败被静默丢弃（改了等于没改）。
+     */
+    private fun dropStaleNav() {
+        if (navStack.isEmpty()) return
+        if (actionAtIndex(navStack.last().path) != null) return
+        android.util.Log.w("ZjsEditorPage", "导航路径失效，退回顶层动作列表")
+        navStack.clear()
+        expandedIndex = -1
+    }
 
     /** 当前层要显示的动作列表。 */
     private fun currentActions(): List<Z.Action> {
         val s = script ?: return emptyList()
+        dropStaleNav()
         val f = navStack.lastOrNull() ?: return s.actions
-        return s.actions.getOrNull(f.actionIndex)?.callbacks?.get(f.slot)
-            ?.let { listOf(it) } ?: emptyList()
+        val owner = actionAtIndex(f.path) ?: return emptyList()
+        return owner.callbacks[f.slot]?.let { listOf(it) } ?: emptyList()
     }
 
     /** 把当前层的列表写回脚本。监听层要沿栈塞回去。 */
@@ -97,12 +182,14 @@ class ZjsEditorPage(
         // 所有改动都从这里过，所以在这里标脏最省事 ——
         // 后面要提示"有未保存改动"时不至于漏掉某些编辑路径。
         ZjsEditState.dirty = true
+        // 路径失效就回顶层 —— 否则下面 owner 解析失败、改动被静默丢掉。
+        dropStaleNav()
         val f = navStack.lastOrNull()
         if (f == null) {
             script = s.copy(actions = newList)
             return
         }
-        val owner = s.actions.getOrNull(f.actionIndex) ?: return
+        val owner = actionAtIndex(f.path) ?: return
         val newCallbacks = LinkedHashMap(owner.callbacks)
         /*
          * 监听槽位里**只能有一个动作**（协议：每个槽位是一个完整动作 JSON，
@@ -132,24 +219,28 @@ class ZjsEditorPage(
             }
             newCallbacks[f.slot] = newList.first()
         }
-        val newActions = s.actions.toMutableList()
-        newActions[f.actionIndex] = owner.copy(callbacks = newCallbacks)
-        script = s.copy(actions = newActions)
+        // ★ 按路径写回，而不是"s.actions[f.actionIndex]" —— 后者在 depth ≥ 2 时
+        //   指向的是**别的动作**（见 Frame 的注释）。
+        val newRoot = writeActionAt(s.actions, f.path, owner.copy(callbacks = newCallbacks)) ?: return
+        script = s.copy(actions = newRoot)
     }
 
     /** 进入某个监听槽位。空槽位先放一个占位动作。 */
     private fun enterSlot(actionIndex: Int, slot: Z.CallbackSlot) {
-        val cur = script ?: return
+        val s = script ?: return
         val owner = currentActions().getOrNull(actionIndex) ?: return
+        // 新帧的路径 = 上一层的路径 + 本条动作在当前列表里的下标
+        val path = (navStack.lastOrNull()?.path ?: emptyList()) + actionIndex
         if (!owner.callbacks.containsKey(slot)) {
             val placeholder = Z.Action(type = Z.ActionType.CLICK)
             val newCb = LinkedHashMap(owner.callbacks)
             newCb[slot] = placeholder
-            val list = currentActions().toMutableList()
-            list[actionIndex] = owner.copy(callbacks = newCb)
-            commitActions(list)
+            // 用路径写回占位动作：depth ≥ 2 时写 "list[actionIndex]" 会改错动作
+            val newRoot = writeActionAt(s.actions, path, owner.copy(callbacks = newCb)) ?: return
+            script = s.copy(actions = newRoot)
+            ZjsEditState.dirty = true
         }
-        navStack.add(Frame(actionIndex, slot))
+        navStack.add(Frame(path, slot))
         expandedIndex = -1
         adapter.submit(currentActions())
     }
@@ -234,7 +325,40 @@ class ZjsEditorPage(
                 .setTitle(row.label)
                 .setSingleChoiceItems(row.options.toTypedArray(), current) { dlg, which ->
                     dlg.dismiss()
-                    commitField(cur, action, actionIndex, row, row.options[which])
+                    val chosen = row.options[which]
+                    /*
+                     * 换动作类型前先问一句「会不会丢模板/范围」。
+                     *
+                     * 模板是用户框选 + PNG 编码出来的，而换类型**没有撤销**：
+                     *  · 「点击图片 → 按键 / 打开链接」这类无位置类型：整个 posData 被清掉；
+                     *  · 「点击图片 → 点击文字 / 点击」：重建 PosData 时只保留 limitArea，
+                     *    imageData（模板）直接消失。
+                     * 一次误点就永久丢掉，所以先确认再改。
+                     *
+                     * 判据在 ZFieldEditor.changeTypeWouldLoseTemplate（纯函数），
+                     * 界面这边只负责问，不重复实现规则 —— 否则两处一定会有分歧。
+                     */
+                    if (row.field == "type") {
+                        val next = Z.ActionType.entries.firstOrNull {
+                            ZFieldEditor.actionTypeLabel(it) == chosen
+                        }
+                        val losesTemplate = next != null &&
+                            ZFieldEditor.changeTypeWouldLoseTemplate(action, next)
+                        if (losesTemplate) {
+                            androidx.appcompat.app.AlertDialog.Builder(host)
+                                .setTitle("换类型会丢模板")
+                                .setMessage(
+                                    "换成「$chosen」会丢掉当前位置的模板或识别范围，无法撤销。继续吗？"
+                                )
+                                .setPositiveButton("继续") { _, _ ->
+                                    commitField(cur, action, actionIndex, row, chosen)
+                                }
+                                .setNegativeButton("取消", null)
+                                .show()
+                            return@setSingleChoiceItems
+                        }
+                    }
+                    commitField(cur, action, actionIndex, row, chosen)
                 }
                 .setNegativeButton("取消", null)
                 .show()
@@ -407,6 +531,10 @@ class ZjsEditorPage(
             .setMessage("第 ${index + 1} 个：${ZScriptIO.actionLabel(action)}")
             .setPositiveButton("删除") { _, _ ->
                 val list = currentActions().toMutableList()
+                // 兜底：弹窗开着的时候脚本可能被换掉（脚本库打开另一份会清栈），
+                // 那时 index 已经失效 —— removeAt 会抛 IndexOutOfBounds，
+                // 所以先判边界，越界就什么都不做。
+                if (index !in list.indices) return@setPositiveButton
                 list.removeAt(index)
                 commitActions(list)
                 adapter.submit(currentActions())
@@ -839,6 +967,15 @@ class ZjsEditorPage(
         /** 给子条件造一个目标（周围条件的子条件也跟着父走）。 */
         fun child(index: Int): CondTarget = CondTarget(actionIndex, path + index, posPrefix)
 
+        /**
+         * 上一层（父条件）。顶层没有父层，返回 null。
+         *
+         * 删除子条件之后要回到父层的**子条件列表** —— 否则用户想连删两个，
+         * 得从动作卡片重新点「条件」→「子条件」两次。
+         */
+        fun parent(): CondTarget? =
+            if (path.isEmpty()) null else CondTarget(actionIndex, path.dropLast(1), posPrefix)
+
         /** 是不是子条件（决定"删除"按钮的文案）。 */
         val isChild: Boolean get() = path.isNotEmpty()
 
@@ -1020,7 +1157,18 @@ class ZjsEditorPage(
                     else -> "删除条件"
                 }
             ) { _, _ ->
+                val parent = t.parent()
                 t.write(null)
+                /*
+                 * 删掉的是**子条件** → 回父层的子条件列表继续删/继续改。
+                 *
+                 * 用 post 让当前弹窗走完自己的销毁流程再开新弹窗：
+                 * 直接开的话新窗口会先挂在旧窗口下面，旧窗口一消失布局重排，
+                 * 和「预览」那里踩过的坑是同一个（见 editConditionRow 的 cond.preview）。
+                 */
+                if (parent != null) {
+                    host.window.decorView.post { showChildConditions(parent) }
+                }
             }
             .setNegativeButton("关闭", null)
             .show()

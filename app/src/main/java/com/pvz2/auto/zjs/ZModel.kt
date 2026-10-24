@@ -75,6 +75,17 @@ object Z {
          * 绑定形状对不上，属于无谓地"帮他改脚本"。
          */
         val varMode: Boolean = false,
+        /**
+         * 文件里有、但按当前这套键名**写不回去**的键。
+         *
+         * 两种来路：`data` 与 `base64` 同时出现（模板只可能有一份），
+         * 或者两套尺寸键名混用（`imageWidth` 与 `width` 都在）。
+         *
+         * 记下来是因为这类输入以前是**静默吞掉一个键**：界面上看不出任何异常，
+         * 要到自动精灵那边发现模板/尺寸不对。[com.pvz2.auto.zjs.ZScriptIO.validate]
+         * 会把它报成问题条目（ZModel 侧不引 android.util.Log，保持模型可单测）。
+         */
+        val droppedKeys: List<String> = emptyList(),
         val extra: MutableMap<String, Any?> = LinkedHashMap()
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
@@ -106,6 +117,16 @@ object Z {
                 val fromBase64 = o.optString("base64").takeIf { it.isNotEmpty() }
                 val data = fromData ?: fromBase64 ?: return null
                 val varMode = fromData == null
+                // ★ 两种键名方言只能写回一套，另一套必然被吞（P2-d）。
+                //   以前这里是完全静默的，所以先在模型里记下来给 validate 报。
+                val dropped = ArrayList<String>(2)
+                if (fromData != null && fromBase64 != null) dropped += "base64"
+                val mirrorKeys = if (varMode) {
+                    listOf("imageWidth", "imageHeight", "imageLeft", "imageTop")
+                } else {
+                    listOf("width", "height", "left", "top")
+                }
+                for (k in mirrorKeys) if (o.has(k) && !o.isNull(k)) dropped += k
                 val handled = setOf(
                     "data", "base64",
                     "imageWidth", "imageHeight", "imageLeft", "imageTop",
@@ -122,6 +143,7 @@ object Z {
                     screenHeight = o.optIntOrNull("screenHeight"),
                     screenDpi = o.optDoubleOrNull("screenDpi")?.toFloat(),
                     varMode = varMode,
+                    droppedKeys = dropped,
                     // `scale` 不在 handled 里 → 自动落进 extra（FIELDS.md:193）
                     extra = o.collectUnhandled(handled)
                 )
@@ -337,7 +359,12 @@ object Z {
         OPEN_APP("打开应用", executable = true),
         OPEN_LINK("打开链接", executable = true),
         RUN_SCRIPT("执行脚本"),
-        RUN_MULTI("运行多个动作"),
+        /*
+     * 「运行多个动作」现在真的能跑了（执行器有 runMulti 分支），
+     * 所以标成 executable —— 否则界面上会挂「安卓上暂不支持」，
+     * 而监听槽位也会拒绝把它当动作执行。
+     */
+    RUN_MULTI("运行多个动作", executable = true),
         CONTROL_RUN_AIM("控制执行", "runAimAction", executable = true),
         CONTROL_JUMP("控制执行", "jumpTo", executable = true),
         CONTROL_SET_JUMP_ID("控制执行", "setJumpId", executable = true),
@@ -487,6 +514,33 @@ object Z {
         /** `gestureActions` 里解析不出来的原始项，原样回写，避免静默丢动作。 */
         val gestureRaw: List<JSONObject> = emptyList(),
         /**
+         * 「运行多个动作」的子动作（FIELDS.md:527-536，实现 m32135）。
+         *
+         * ## 为什么必须建成强类型
+         *
+         * 真实脚本的主体往往就是一整个 `scriptSet`（SPEC.md:811-813 的样例，
+         * 连续三行都是它；SPEC.md:824 的工程文件里也是）。以前 `scriptSet`
+         * 不在 HANDLED 里 → 整包落进 extra：子动作**不进模型**，
+         * 界面是空壳、执行器读不到，于是这条动作被整条跳过。
+         *
+         * ## 顺序就是执行顺序
+         *
+         * `runMode:normal`（默认）是**按数组顺序**跑的，`random` 才打乱
+         * （SPEC.md:1074-1076）。所以这里必须保序 —— 任何排序/去重都会
+         * 改变脚本行为，而且用户看不出来。
+         */
+        val scriptSet: List<Action> = emptyList(),
+        /**
+         * `scriptSet` 里解析不出来的原始项（未来版本的新动作类型）。
+         *
+         * 必须原样写回 `scriptSet` 数组：它是脚本主体，少一个子动作
+         * 就可能让整段流程跑偏，而界面上不会有任何提示。
+         *
+         * 已知限制：这里不记原下标，写回时排在解析成功的项**之后**
+         * （与 [gestureRaw] 同一约定）。要严格保序得再加一张下标表。
+         */
+        val scriptSetRaw: List<JSONObject> = emptyList(),
+        /**
          * 未知 `controlRunType` 的原始字符串。
          *
          * ## 原坑
@@ -501,6 +555,15 @@ object Z {
          * 但文件里的语义原样保留，用户拿去自动精灵跑还是对的。
          */
         val rawControlRunType: String? = null,
+        /**
+         * 文件里写的是 `{"type":"控制执行"}`，**没有** `controlRunType`。
+         *
+         * 这种输入 `ofWire` 只能兜底成「等待」，而落盘时又会写成
+         * `controlRunType:"waitDelay"` —— 等于我们替用户编了一个子类型。
+         * 记下这一位，让 [com.pvz2.auto.zjs.ZScriptIO.validate] 能明确报出来
+         * （以前是彻底静默：既不提示，文件还被改了）。
+         */
+        val controlRunTypeMissing: Boolean = false,
         /**
          * 监听动作。7 个槽位，每个槽位是**一个完整的动作**（不是数组）。
          *
@@ -654,6 +717,15 @@ object Z {
                 })
             }
 
+            // 「运行多个动作」的子动作（FIELDS.md:530）。
+            // 数组就是执行顺序，且解析不了的要原样补回，不能少项。
+            if (scriptSet.isNotEmpty() || scriptSetRaw.isNotEmpty()) {
+                put("scriptSet", org.json.JSONArray().apply {
+                    scriptSet.forEach { put(it.toJson()) }
+                    scriptSetRaw.forEach { put(it) }
+                })
+            }
+
             extra.forEach { (k, v) -> put(k, v) }
 
             // scriptCallbacks：空 map 不写（FIELDS.md:303 `hasValue()` 的语义）。
@@ -686,15 +758,21 @@ object Z {
                 "candidates", "waitTimeoutMs", "waitIntervalMs",
                 "scriptCallbacks",
                 // 协议的轨迹数组（多指/单指手势）。模型里是强类型，不能再当未知字段。
-                "gestureActions"
+                "gestureActions",
+                // 「运行多个动作」的子动作数组。同样是强类型：留在 extra 里
+                // 就等于子动作不进模型 —— 那是这条动作会被整条跳过的直接原因。
+                "scriptSet"
             )
 
             /**
-             * 递归解析动作数组（`gestureActions` 用）。
+             * 递归解析动作数组（`gestureActions` 与 `scriptSet` 共用同一套）。
              *
-             * [rawOut] 收「解析不出来的原始 JSON」：`gestureActions` 现在在 HANDLED 里，
+             * [rawOut] 收「解析不出来的原始 JSON」：这两个键现在都在 HANDLED 里，
              * 不再走 extra 兜底。如果这里直接丢掉，遇到未来版本的新动作类型，
-             * 就会从「原样保留」退化成「静默删除」——用户存一次就永久丢轨迹。
+             * 就会从「原样保留」退化成「静默删除」——用户存一次就永久丢动作。
+             *
+             * 非对象的元素（字符串/数字）无法原样保留，直接跳过：那种元素
+             * 本身就是坏数据，自动精灵也解析不了。
              */
             private fun parseActionArray(
                 arr: JSONArray?,
@@ -722,12 +800,18 @@ object Z {
             }
 
             fun parse(o: JSONObject): Action? {
-            // 解析不出来的子动作原文（未来版本的新类型），回写时原样补回
-            val gestureRawOut = ArrayList<JSONObject>()
-                // 原始 controlRunType 要留下来：未知值会被 ofWire 兜底成"等待"，
-                // 但回写必须写回原串（见 Action.rawControlRunType）。
+                // 解析不出来的子动作原文（未来版本的新类型），回写时原样补回
+                val gestureRawOut = ArrayList<JSONObject>()
+                val scriptSetRawOut = ArrayList<JSONObject>()
+                // 原始 wire type / controlRunType 都要留下来：
+                //  - 未知 controlRunType 会被 ofWire 兜底成"等待"，但回写必须写回原串；
+                //  - 「控制执行」**缺** controlRunType 时同样兜底成"等待"，
+                //    这一种以前是彻底静默的（既不提示、还落盘成 waitDelay），
+                //    所以单独记一笔给 validate 报出来。
+                val rawType = o.optString("type")
                 val rawCrt = o.optString("controlRunType").takeIf { it.isNotEmpty() }
-                val type = ActionType.ofWire(o.optString("type"), rawCrt) ?: return null
+                val controlRunTypeMissing = rawType == "控制执行" && rawCrt == null
+                val type = ActionType.ofWire(rawType, rawCrt) ?: return null
                 // __vars：字段名 -> 变量定义。值可能是 null（表示"已移除"），跳过。
                 val vars = LinkedHashMap<String, JSONObject>()
                 o.optJSONObject("__vars")?.let { m ->
@@ -756,13 +840,19 @@ object Z {
                     startPos = o.optJSONObject("startPos")?.let { PosData.parse(it) },
                     endPos = o.optJSONObject("endPos")?.let { PosData.parse(it) },
                     // 协议的轨迹数组：以前根本没读，等于把「多指手势」的语义丢了
-                    gestureActions = parseActionArray(
-                o.optJSONArray("gestureActions"), gestureRawOut
-            ),
-            gestureRaw = gestureRawOut,
-                    // 只有"兜底成 CONTROL_WAIT 但原文不是 waitDelay"时才记，
-                    // 正常情况保持 null（回写时直接用枚举里的值）
-                    rawControlRunType = rawCrt?.takeIf { it != type.controlRunType },
+                    gestureActions = parseActionArray(o.optJSONArray("gestureActions"), gestureRawOut),
+                    gestureRaw = gestureRawOut,
+                    // 「运行多个动作」的子动作：走同一套递归解析。
+                    // 解析不了的进 scriptSetRaw（原样回写），不静默丢。
+                    scriptSet = parseActionArray(o.optJSONArray("scriptSet"), scriptSetRawOut),
+                    scriptSetRaw = scriptSetRawOut,
+                    // 只有「控制执行」才谈得上"未知子类型"。判据收窄到 wire type，
+                    // 否则「点击」带一个多余的 controlRunType 也会被记成
+                    // "未知控制类型"，validate 会给出误导性报错（P2-c）。
+                    rawControlRunType = rawCrt?.takeIf {
+                        rawType == "控制执行" && it != type.controlRunType
+                    },
+                    controlRunTypeMissing = controlRunTypeMissing,
                     fingers = parseFingers(o.optJSONArray("multiSwipe")),
                     candidates = parseCandidates(o.optJSONArray("candidates")),
                     waitTimeoutMs = o.optIntOrNull("waitTimeoutMs"),

@@ -187,12 +187,23 @@ object ZActionDescriber {
         }
 
         // ---- 位置
-        rows += section("识别")
+        //
+        // ★ 小节标题「识别」改为**有行才加**。
+        //
+        //   原来无条件 `section("识别")`，于是「按键」「打开链接」「控制执行」
+        //   这类没有位置的动作会先出现一个空小节标题、下一行直接是「参数」，
+        //   视觉上像少渲染了一块（用户会怀疑界面没加载完）。
+        //   现在先把位置行攒出来，非空才下标题。
+        val posLines = ArrayList<Row>()
         // 主位置不带「位置」前缀 —— 外面已经有「识别」小节，
         // 每行再来一个「位置」只是重复两个字，还占掉标签宽度。
-        action.posData?.let { rows += posRows("位置", it, showPrefix = false) }
-        action.startPos?.let { rows += posRows("起点", it) }
-        action.endPos?.let { rows += posRows("终点", it) }
+        action.posData?.let { posLines += posRows("位置", it, showPrefix = false) }
+        action.startPos?.let { posLines += posRows("起点", it) }
+        action.endPos?.let { posLines += posRows("终点", it) }
+        if (posLines.isNotEmpty()) {
+            rows += section("识别")
+            rows += posLines
+        }
 
         // ---- 动作类型专属字段（FIELDS.md §10）
         //
@@ -216,13 +227,32 @@ object ZActionDescriber {
         //   makeRow 的判断是 `kind != READONLY && field.isNotEmpty()`，
         //   field 空着就永远点不动。
         if (action.type == Z.ActionType.MULTI_SWIPE) {
-            rows += Row(
-                "手指",
-                if (action.fingers.isEmpty()) "（还没有手指，点击添加）"
-                else "共 ${action.fingers.size} 根，点击管理",
-                Kind.ENTER,
-                field = "fingers"
-            )
+            // ★ 三种情况分开说，不能只认我们自己的 fingers。
+            //
+            //   自动精灵原生的「多指手势」轨迹在 `gestureActions`（一个完整动作
+            //   数组，FIELDS.md:470）里，而它现在是**强类型字段**（ZModel.HANDLED
+            //   收着它）—— 所以它既不会出现在 extra 只读兜底里，这里原来也不读它。
+            //   导入这种脚本时界面显示"（还没有手指，点击添加）"，用户会以为数据
+            //   全丢了（其实好好躺在文件里）；他一按"添加"就会写出我们自己的
+            //   multiSwipe，和原生轨迹并存，文件越改越乱。
+            //   先只读显示出来：能看见就不会误判成丢失。编辑能力以后再说。
+            val nativeCount = action.gestureActions.size + action.gestureRaw.size
+            val text = when {
+                action.fingers.isNotEmpty() -> "共 ${action.fingers.size} 根，点击管理"
+                nativeCount > 0 ->
+                    "共 $nativeCount 个子动作（自动精灵原生轨迹，本机按 fingers 执行）" +
+                        (if (action.gestureRaw.isEmpty()) ""
+                        else "；其中 ${action.gestureRaw.size} 项格式不认识，已原样保留")
+                else -> "（还没有手指，点击添加）"
+            }
+            // 有原生轨迹、又没有我们的 fingers 时**不挂 entry**：
+            // 这是一行"告知"，不是入口 —— 挂了点击会让用户以为点进去能改那批子动作，
+            // 而实际上页面只认 fingers，点进去只会看到"还没有手指"。
+            rows += if (nativeCount > 0 && action.fingers.isEmpty()) {
+                Row("手指", text, Kind.READONLY)
+            } else {
+                Row("手指", text, Kind.ENTER, field = "fingers")
+            }
         }
 
         // 每根手指一组起终点。按 1、2、3 编号而不用"第几个" ——
@@ -422,7 +452,13 @@ object ZActionDescriber {
                 Z.PosType.AI_LOC -> "AI位置"
                 Z.PosType.LOCATION -> "坐标"
             }
-            rows += Row("${p}类型", typeLabel)
+            // ★ 标签叫「查找方式」，不叫「类型」。
+            //
+            //   动作本身也有一行「类型」（上面那行 ENUM，能改动作种类）。
+            //   两行都叫「类型」时，用户想换动作种类很容易点到这行只读的，
+            //   点了没反应 → 又变成"看得见点不动"。
+            //   这一行回答的是"这条按什么找"，叫「查找方式」既准确又不撞名。
+            rows += Row("${p}查找方式", typeLabel)
         }
 
         when (pos.type) {
@@ -627,6 +663,28 @@ object ZActionDescriber {
                 if (anyBool(e, "highSpeedTap")) "是" else "否",
                 Kind.SWITCH,
                 field = "highSpeedTap"
+            )
+        }
+
+        /*
+         * 「运行多个动作」的子动作。
+         *
+         * 真实脚本的主体往往就是这种容器 —— 界面上只看得到"运行多个动作"
+         * 一行，用户完全不知道里面装了什么，等价于黑盒。
+         * 先给只读摘要（能看见、有多少个），编辑留到后面。
+         */
+        if (action.type == Z.ActionType.RUN_MULTI) {
+            val n = action.scriptSet.size + action.scriptSetRaw.size
+            rows += Row(
+                "子动作",
+                when {
+                    action.scriptSet.isEmpty() && action.scriptSetRaw.isEmpty() ->
+                        "（空，本机不会执行任何动作）"
+                    action.scriptSetRaw.isNotEmpty() ->
+                        "共 $n 个（其中 ${action.scriptSetRaw.size} 个格式不认识，已原样保留）"
+                    else -> "共 $n 个，按顺序执行"
+                },
+                Kind.READONLY
             )
         }
 

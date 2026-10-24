@@ -51,6 +51,21 @@ class ZExecutor(
         fun multiSwipe(paths: List<Pair<ZPosResolver.Hit, ZPosResolver.Hit>>, durationMs: Int) {
             paths.forEach { (a, b) -> swipe(a.x, a.y, b.x, b.y, durationMs) }
         }
+
+        /**
+         * 「打开应用」的通道（协议 10.13）。返回 `(包名) -> 是否成功`。
+         *
+         * 默认 null = **本机没接这条通道**。执行器据此报"本机无法打开应用"，
+         * 而不是让这条动作落进"还没实现"——那两种情况的排期完全不同，
+         * 但对用户来说都表现为"脚本没打开游戏"，所以必须区分。
+         */
+        fun appLauncher(): ((String) -> Boolean)? = null
+
+        /** 「打开链接」的通道（协议 10.14）。语义同 [appLauncher]。 */
+        fun linkOpener(): ((String) -> Boolean)? = null
+
+        /** 「系统提示」的轻提示通道（协议 10.23 的 toast 部分）。语义同 [appLauncher]。 */
+        fun toaster(): ((String) -> Unit)? = null
     }
 
     /** 识别接口。图片/文字/颜色匹配都走这里。 */
@@ -126,6 +141,25 @@ class ZExecutor(
 
     /** 已经报过"监听动作不执行"的动作下标。避免无限循环里每轮都刷一条。 */
     private val warnedCallbackActions = HashSet<Int>()
+
+    /**
+     * 无限重复（`repeatCount = 0` 且能退出）时的**强制最小间隔**。
+     *
+     * `fastRepeatMode` 的后续轮不做识别，只剩一次 `inject.tap`；如果脚本又把
+     * `delay` 写成 0，这里就会变成每秒数百次的连点空转 —— 游戏侧只会把它当成
+     * 一次点击，而 CPU/注入通道全被打满。
+     */
+    private val MIN_INFINITE_GAP_MS = 20
+
+    /**
+     * 当前嵌套在「运行多个动作」子列表里的层数。0 = 顶层脚本。
+     *
+     * 只有一个用途：`ContinueParentExecute`（协议 10.21）要区分"有父可回"和"顶层"。
+     */
+    private var subShellDepth = 0
+
+    /** 子列表嵌套上限。协议没有这一条，纯粹防止脚本自引用成无限递归。 */
+    private val MAX_SUB_SHELL_DEPTH = 8
 
     /**
      * 跑完整个脚本。
@@ -288,6 +322,21 @@ class ZExecutor(
                  *   用户才能判断是阈值、模板还是界面不对。
                  */
                 if (outcome.abort != null) {
+                    /*
+                     * pauseOnFail（FIELDS.md:330，默认 true）。
+                     *
+                     * 协议里失败是"**暂停**，等用户决定继续/停止"。本机没有
+                     * "暂停-继续"通道（停了就只能重跑），所以这里按停止处理，
+                     * 但必须**写明白**：否则用户看到"任务结束"，会以为脚本自己跑完了，
+                     * 而不是"它卡在这一步等你"。
+                     */
+                    if (script.baseInfo.pauseOnFail) {
+                        val pmsg = "pauseOnFail=true：本机未实现暂停-继续，按停止处理"
+                        skipped.add(Result.Skip(pc, label, pmsg))
+                        log("[暂停] $pmsg")
+                    } else {
+                        log("[任务结束] pauseOnFail=false，失败即结束（不再暂停）")
+                    }
                     log("[任务结束] ${outcome.abort}")
                     return Result(executed, skipped, outcome.abort)
                 }
@@ -343,6 +392,13 @@ class ZExecutor(
     private data class Outcome(
         val jumpTo: String? = null,
         val stop: Boolean = false,
+        /**
+         * 只结束**当前子动作列表**，回到上层继续（协议 `ContinueParentExecute=true`）。
+         *
+         * 只有 `subShellDepth > 0` 时才可能置位：顶层脚本没有父可回，
+         * 那种情况下按"立即结束"处理并在日志里说明。
+         */
+        val breakShell: Boolean = false,
         /**
          * 非 null = **整条任务就此结束**。
          *
@@ -423,6 +479,16 @@ class ZExecutor(
                 val v = if (hasOwn) action.common.repeatDelayValue else action.common.delay
                 val u = if (hasOwn) action.common.repeatDelayUnit else action.common.delayUnit
                 waitDelay(v, u, delayDefaultMs(action))
+                /*
+                 * ★ 无限重复时再兜一个最小间隔。
+                 *
+                 *   能走到"无限"的只有自带跳转/停止的动作（见上面的 canEscape），
+                 *   但只要它同时还开了 fastRepeatMode 且 delay 写成 0，
+                 *   这一轮就只剩一次注入 —— 于是变成每秒数百次的空转。
+                 */
+                if (times == Int.MAX_VALUE) {
+                    waitDelay(null, Z.TimeUnit.MILLISECONDS, MIN_INFINITE_GAP_MS)
+                }
             }
 
             when (val r = executeOnce(action, index, label, skipped, memo)) {
@@ -447,7 +513,8 @@ class ZExecutor(
 
                 else -> {
                     // 跳转转出：协议规定 afterExecFinish **不触发**（FIELDS.md:300）
-                    if (r.jumpTo != null || r.stop) return r
+                    // breakShell 同理：它表示"结束当前子列表"，重复循环也该一起退出
+                    if (r.jumpTo != null || r.stop || r.breakShell) return r
                     // afterExecSuc：**每次重复成功**都触发（FIELDS.md:298）
                     runCallbacks(action, Z.CallbackSlot.AFTER_EXEC_SUC, index, label)
                 }
@@ -505,7 +572,7 @@ class ZExecutor(
                 if (c.fastRepeatMode) memo.hits = hits
 
                 // indexNum 可能选出**多个**点（"1,3,4" = 这几个都点），所以是列表
-                tapHits(hits, hold, c)
+                tapHits(hits, hold, action, index, label, skipped)
                 Outcome()
             }
 
@@ -543,7 +610,7 @@ class ZExecutor(
                 for (i in 0 until pairs) {
                     if (stopped) break
                     // 第 2 对起先等重复间隔（与多点点击同一套理由：连发会被游戏合并）
-                    if (i > 0) waitMultiGap(c)
+                    if (i > 0) waitMultiGap(action)
                     val a = starts.getOrNull(i) ?: lastStart
                     val b = ends.getOrNull(i) ?: lastEnd
                     log("   滑动 (${a.x},${a.y})→(${b.x},${b.y}) 用时 ${hold}ms")
@@ -637,7 +704,27 @@ class ZExecutor(
                 Outcome(jumpTo = target)
             }
 
-            Z.ActionType.CONTROL_STOP -> Outcome(stop = true)
+            Z.ActionType.CONTROL_STOP -> {
+                /*
+                 * ContinueParentExecute（FIELDS.md:557，**首字母大写**）：
+                 * true = 只结束当前子脚本，回到上层继续。
+                 *
+                 * 默认（false）= 全停，这是协议语义，所以这里不能无条件改成
+                 * "只跳出子列表"——那会让脚本该结束的时候继续往下点。
+                 * 顶层没有父可回，ContinueParentExecute=true 时要说清楚：
+                 * 否则作者会以为"停止"变成了"跳过"。
+                 */
+                val continueParent = boolExtra(action, "ContinueParentExecute")
+                if (!continueParent) {
+                    Outcome(stop = true)
+                } else if (subShellDepth > 0) {
+                    log("   停止（ContinueParentExecute=true）：只结束当前子动作列表，回到上层继续")
+                    Outcome(breakShell = true)
+                } else {
+                    log("   停止：ContinueParentExecute=true 但当前是顶层脚本（没有父可回）→ 按立即结束处理")
+                    Outcome(stop = true)
+                }
+            }
 
             /*
              * 等候选 —— Maa 的 next 语义。
@@ -712,7 +799,118 @@ class ZExecutor(
                 null
             }
 
-            // pause / setJumpId / runAimAction 安卓上先不做
+            /*
+             * 运行多个动作（协议 10.16 / FIELDS.md:527-536）。
+             *
+             * 真实脚本的主体经常就是它 —— SPEC.md:824 那段每个节点都是一个
+             * 「运行多个动作」。以前整块跳过：脚本"跑完 N 条"，游戏一步没动。
+             */
+            Z.ActionType.RUN_MULTI -> runMulti(action, index, label, skipped)
+
+            // ---- 打开应用（协议 10.13）
+            Z.ActionType.OPEN_APP -> {
+                val pkg = action.extra["appPackageName"]?.toString()?.trim().orEmpty()
+                if (pkg.isEmpty()) {
+                    skipped.add(Result.Skip(index, label, "缺 appPackageName"))
+                    return null
+                }
+                if (boolExtra(action, "onlyClose")) {
+                    // 协议里 onlyClose=true 是"只关闭、不打开"。没有关闭通道时，
+                    // 退化成"打开"会把用户想关的应用再拉起来 —— 宁可明确拒绝。
+                    skipped.add(Result.Skip(index, label, "onlyClose（仅关闭应用）尚未实现"))
+                    return null
+                }
+                val launcher = inject.appLauncher() ?: run {
+                    skipped.add(Result.Skip(index, label, "本机无法打开应用（没有启动通道）"))
+                    return null
+                }
+                if (boolExtra(action, "closeBeforeOpen")) {
+                    log("   closeBeforeOpen 未实现：直接启动（已有任务可能被提到前台而不是新建）")
+                }
+                val ok = try {
+                    launcher(pkg)
+                } catch (e: Throwable) {
+                    log("   启动 $pkg 异常：${e.message}")
+                    false
+                }
+                if (!ok) {
+                    skipped.add(Result.Skip(index, label, "启动 $pkg 失败"))
+                    return null
+                }
+                log("   已请求打开 $pkg")
+                Outcome()
+            }
+
+            // ---- 打开链接（协议 10.14）
+            Z.ActionType.OPEN_LINK -> {
+                val link = action.extra["link"]?.toString()?.trim().orEmpty()
+                if (link.isEmpty()) {
+                    skipped.add(Result.Skip(index, label, "缺 link"))
+                    return null
+                }
+                val opener = inject.linkOpener() ?: run {
+                    skipped.add(Result.Skip(index, label, "本机无法打开链接（没有打开通道）"))
+                    return null
+                }
+                val ok = try {
+                    opener(link)
+                } catch (e: Throwable) {
+                    log("   打开链接异常：${e.message}")
+                    false
+                }
+                if (!ok) {
+                    skipped.add(Result.Skip(index, label, "打开链接失败：$link"))
+                    return null
+                }
+                log("   已请求打开链接 $link")
+                Outcome()
+            }
+
+            // ---- 系统提示（协议 10.23）
+            Z.ActionType.PROMPT -> {
+                val text = action.extra["promptText"]?.toString().orEmpty()
+                val title = action.extra["promptTitle"]?.toString().orEmpty()
+                val body = if (title.isBlank()) text else "$title\n$text"
+                val shower = inject.toaster()
+                if (body.isBlank() || shower == null) {
+                    skipped.add(
+                        Result.Skip(
+                            index, label,
+                            if (body.isBlank()) "提示内容为空" else "本机无法显示提示（没有提示通道）"
+                        )
+                    )
+                    return null
+                }
+                try {
+                    shower(body)
+                } catch (e: Throwable) {
+                    skipped.add(Result.Skip(index, label, "显示提示失败：${e.message}"))
+                    return null
+                }
+                /*
+                 * 其余字段明确记录未实现。特别注意 promptType="alert" 在协议里是
+                 * **阻塞**的（等用户按按钮），我们只做到 toast，不阻塞 ——
+                 * 脚本会比作者预期跑得快，所以必须留痕。
+                 */
+                val rest = listOf("promptType", "showDuration", "showPosition", "playAudio", "useVibrator", "actions")
+                    .filter { action.extra[it] != null }
+                if (rest.isNotEmpty()) {
+                    log("   系统提示：${rest.joinToString("、")} 未实现（只显示文本，不阻塞）")
+                }
+                Outcome()
+            }
+
+            // ---- 运行目标动作（协议 10.17）
+            Z.ActionType.CONTROL_RUN_AIM -> {
+                val aim = action.extra["aimActionPosition"]?.toString().orEmpty()
+                val why = "运行目标动作（runAimAction）尚未实现" +
+                    (if (aim.isBlank()) "" else "：目标 $aim")
+                skipped.add(Result.Skip(index, label, why))
+                log("[跳过] $label — $why")
+                null
+            }
+
+            // pause / setJumpId / 其余未实现的动作：明确拒绝，不静默
             else -> {
                 val why = when {
                     !action.type.executable -> "安卓上暂不支持"
@@ -949,14 +1147,30 @@ class ZExecutor(
             else -> value
         }
 
-        val preMs = toMs(num(a.common.delay), a.common.delayUnit)
+        /*
+         * 运行前等待要按**实际生效的取值**估：动作自己的 delay → 脚本级 baseInfo.delay
+         * → 兜底（见 [preDelay]）。只看动作自己的 delay 时，靠 baseInfo.delay 的动作
+         * 会被估成 0ms，进度条一上来就跑满。
+         */
+        val pre = preDelay(a)
+        val preMs = toMs(num(pre.first), pre.second)
         val durMs = num(a.common.duration).takeIf { it > 0 }
             ?: if (a.type == Z.ActionType.SWIPE) 1000 else 100
+        /*
+         * 「等待」动作的实际时长就是 delay；没写 delay 时按 1000ms 兜底
+         * （见 [delayDefaultMs]）。估 100ms 会让进度条在真正等待的 1 秒里
+         * 一直显示 100% —— 用户以为卡住了。
+         */
+        val effectiveDur = if (a.type == Z.ActionType.CONTROL_WAIT) {
+            maxOf(durMs, DEFAULT_WAIT_ACTION_MS)
+        } else {
+            durMs
+        }
         val repeatGapMs = toMs(num(a.common.repeatDelayValue), a.common.repeatDelayUnit)
         val reps = (a.common.repeatCount ?: 1).let { if (it <= 0) 1 else it }
         // 候选等待的时长取决于画面什么时候出现，估不出来
         if (a.type == Z.ActionType.WAIT_CANDIDATES) return 0
-        return (preMs + reps * (durMs + repeatGapMs)).coerceIn(1, 600_000)
+        return (preMs + reps * (effectiveDur + repeatGapMs)).coerceIn(1, 600_000)
     }
 
     /** 按位置类型找一遍。抽出来是因为重试要重复调用它。 */
@@ -1217,12 +1431,32 @@ class ZExecutor(
      * 以前随机挑一个 —— "关 3 个弹窗"每轮只关 1 个，剩下 2 个永远漏，
      * 而脚本看起来"跑完了"。
      */
-    private fun tapHits(hits: List<ZPosResolver.Hit>, hold: Int, c: Z.ActionCommon) {
+    private fun tapHits(
+        hits: List<ZPosResolver.Hit>,
+        hold: Int,
+        action: Z.Action,
+        index: Int,
+        label: String,
+        skipped: MutableList<Result.Skip>
+    ) {
         hits.forEachIndexed { i, hit ->
             if (stopped) return
-            if (i > 0) waitMultiGap(c)
+            if (i > 0) waitMultiGap(action)
             log("   点击 (${hit.x},${hit.y}) 按住 ${hold}ms")
-            inject.tap(hit.x, hit.y, hold)
+            try {
+                inject.tap(hit.x, hit.y, hold)
+            } catch (e: Throwable) {
+                /*
+                 * 一个点注入失败**不该**让整条脚本以"执行异常"结束 ——
+                 * 与 KEY / INPUT_TEXT 同一约定：记一条跳过原因再收手。
+                 * 以前这个异常会穿到 runZjs 的 runCatching，
+                 * 表现是"跑着跑着整个脚本没了，日志只有一行执行异常"。
+                 */
+                val why = "点击 (${hit.x},${hit.y}) 失败：${e.message}"
+                skipped.add(Result.Skip(index, label, why))
+                log("   $why")
+                return
+            }
         }
     }
 
@@ -1233,12 +1467,182 @@ class ZExecutor(
      * 缺省回落 `delay`，FIELDS.md:116）。一口气连发在游戏侧常被合并成一次，
      * 于是"点 3 个"实际只生效 1 个 —— 又是一次漏点。
      */
-    private fun waitMultiGap(c: Z.ActionCommon) {
+    private fun waitMultiGap(action: Z.Action) {
+        val c = action.common
         val hasOwn = !c.repeatDelayValue.isNullOrBlank()
         val v = if (hasOwn) c.repeatDelayValue else c.delay
         val u = if (hasOwn) c.repeatDelayUnit else c.delayUnit
-        if (v.isNullOrBlank()) return
+        if (v.isNullOrBlank()) {
+            /*
+             * ★ 两个都没写时**不能**零间隔。
+             *
+             *   `"1,3,4"` 三个点会在几毫秒内连发，游戏侧常把它们合并成一次点击 ——
+             *   于是"点 3 个"实际只生效 1 个，正是这条修复要治的病。
+             *   兜底与动作缺省等待同源（交互动作 200ms / 控制类 0）。
+             */
+            waitDelay(null, Z.TimeUnit.MILLISECONDS, delayDefaultMs(action))
+            return
+        }
         waitDelay(v, u, 0)
+    }
+
+    // ------------------------------------------------ 「运行多个动作」子列表
+
+    /**
+     * 执行「运行多个动作」的子动作列表（协议 10.16 / FIELDS.md:527-536）。
+     *
+     * ## 为什么必须真跑
+     *
+     * 真实脚本的主体经常就是它 —— SPEC.md:824 那段里每个节点都是一个
+     * 「运行多个动作」。以前整块跳过：脚本"跑完 N 条"，游戏一步没动。
+     *
+     * ## 作用域：哪些能出去、哪些不能
+     *
+     *  - **跳转不出去**：子列表里的 `jumpToPosition` 用的是子列表内的位置，
+     *    拿它去改外层 pc 会跳到完全无关的地方。记 log 后忽略。
+     *  - **停止按协议出去**：`ContinueParentExecute=false`（默认）就是全停；
+     *    只有 `true` 才只结束本列表（那一条在 [executeOnce] 里已经折成 breakShell）。
+     *  - **识别失败不出去**：只有顶层动作识别失败才按 Maa 语义终止任务。
+     */
+    private fun runMulti(
+        action: Z.Action,
+        index: Int,
+        label: String,
+        skipped: MutableList<Result.Skip>
+    ): Outcome? {
+        val kids = action.scriptSet
+        if (kids.isEmpty()) {
+            /*
+             * 空列表有**两种**原因，必须分开报：
+             *  - 脚本里真的没写子动作；
+             *  - 模型还没把 scriptSet 解析出来（那时它还在 extra 里躺着）。
+             * 第二种是接线问题，不说清楚的话表现就是"运行多个动作 = 空操作"。
+             */
+            val hint = if (action.extra.containsKey("scriptSet")) {
+                "（scriptSet 仍在 extra 里，ZModel 尚未解析）"
+            } else {
+                ""
+            }
+            val why = "没有子动作$hint"
+            skipped.add(Result.Skip(index, label, why))
+            log("[跳过] $label — $why")
+            return null
+        }
+        if (subShellDepth >= MAX_SUB_SHELL_DEPTH) {
+            val why = "子动作列表嵌套超过 $MAX_SUB_SHELL_DEPTH 层，已停止递归"
+            skipped.add(Result.Skip(index, label, why))
+            log("[跳过] $label — $why")
+            return null
+        }
+
+        // runMode：协议有 normal / random / multiThread，我们只有顺序执行
+        val mode = action.extra["runMode"]?.toString()?.trim().orEmpty()
+        if (mode.isNotEmpty() && mode != "normal") {
+            log("[$index] $label runMode=$mode 暂按 normal（顺序）执行")
+        }
+        // limitRunCount：只跑前 N 个（0 / 缺省 = 不限）
+        val limit = numExtra(action, "limitRunCount")
+        // limitRunCountOnlySuc：只有成功的才占名额
+        val onlySuc = boolExtra(action, "limitRunCountOnlySuc")
+        // breakCondition：每跑完一个子动作检查一次（SPEC.md:1080）
+        val breakCond = conditionExtra(action, "breakCondition")
+
+        var ran = 0
+        var counted = 0
+        var failed = 0
+        val childSkips = ArrayList<Result.Skip>()
+        subShellDepth++
+        try {
+            for ((ci, kid) in kids.withIndex()) {
+                if (stopped) break
+                if (limit > 0 && counted >= limit) {
+                    log("[$index] $label 已跑够 limitRunCount=$limit 个，结束本列表")
+                    break
+                }
+                val kidLabel = "$label › 子${ci + 1}「${ZScriptIO.actionLabel(kid)}」"
+                ran++
+                val outcome = executeWithRepeat(kid, index, kidLabel, childSkips)
+
+                // 停止：协议默认语义就是全停，子列表不能把它吞掉
+                if (outcome.stop) {
+                    log("[$index] $kidLabel 请求停止整个脚本")
+                    return Outcome(stop = true)
+                }
+
+                // 名额：只有开启 limitRunCountOnlySuc 时失败才不占名额
+                val success = outcome.abort == null
+                if (!onlySuc || success) counted++
+
+                if (outcome.breakShell) {
+                    log("[$index] $kidLabel 要求只结束本子列表（ContinueParentExecute）")
+                    break
+                }
+                if (outcome.jumpTo != null) {
+                    log("[$index] $kidLabel 的跳转「${outcome.jumpTo}」被忽略（作用域是子列表）")
+                }
+                if (outcome.abort != null) {
+                    /*
+                     * 子动作识别失败**不终止整条任务**：列表里某一条没认出来，
+                     * 通常只意味着这一条没命中，后面的还该跑。
+                     */
+                    failed++
+                    log("[$index] $kidLabel 识别失败（子动作，不终止任务）：${outcome.abort}")
+                    abortReason = null
+                }
+
+                if (breakCond != null && evaluate(breakCond, index, childSkips)) {
+                    log("[$index] $label 中止条件（breakCondition）命中，结束本列表")
+                    break
+                }
+            }
+        } finally {
+            subShellDepth--
+        }
+
+        // 子动作的失败明细只进日志（数量可能很大，塞进 Result 会刷屏），
+        // 但**汇总一条**进结果，免得用户以为"子列表全部成功"。
+        childSkips.forEach { log("[$index] $label 子动作跳过：${it.label} — ${it.reason}") }
+        if (failed > 0) {
+            skipped.add(Result.Skip(index, label, "子动作里有 $failed 条识别失败（未终止任务）"))
+        }
+        log(
+            "[$index] $label 子动作执行 $ran 个，计入 $counted 个" +
+                (if (onlySuc) "（仅统计成功）" else "")
+        )
+        return Outcome()
+    }
+
+    // ---------------------------------------------------- extra 读值小工具
+
+    /** 从 `extra` 读布尔（协议里可选字段可能缺失、也可能是字符串）。 */
+    private fun boolExtra(action: Z.Action, key: String): Boolean = when (val v = action.extra[key]) {
+        is Boolean -> v
+        is Number -> v.toInt() != 0
+        is String -> v.trim().let { it == "true" || it == "1" || it == "是" }
+        else -> false
+    }
+
+    /** 从 `extra` 读整数（缺失 / 非法 → 0）。 */
+    private fun numExtra(action: Z.Action, key: String): Int {
+        val v = action.extra[key] ?: return 0
+        return (v as? Number)?.toInt() ?: v.toString().trim().toIntOrNull() ?: 0
+    }
+
+    /**
+     * 从 `extra` 读一个条件对象（`breakCondition` 这类还没建模的字段）。
+     *
+     * 形状可能是 JSONObject / JSON 文本 —— 两种都收，解析失败返回 null（当作没配）。
+     */
+    private fun conditionExtra(action: Z.Action, key: String): Z.Condition? {
+        val raw = action.extra[key] ?: return null
+        val obj = runCatching {
+            when (raw) {
+                is org.json.JSONObject -> raw
+                is String -> org.json.JSONObject(raw)
+                else -> org.json.JSONObject(raw.toString())
+            }
+        }.getOrNull() ?: return null
+        return Z.Condition.parse(obj)
     }
 
     /**
@@ -1385,8 +1789,8 @@ class ZExecutor(
             if (n > 0) waitDelay(cb.common.repeatDelayValue, cb.common.repeatDelayUnit)
             val r = executeOnce(cb, index, cbLabel, cbSkips, cbMemo)
             if (r == null) break
-            if (r.jumpTo != null || r.stop) {
-                log("[$index] $cbLabel 里的跳转/停止被忽略（作用域是外层脚本）")
+            if (r.jumpTo != null || r.stop || r.breakShell) {
+                log("[$index] $cbLabel 里的跳转/停止/结束子列表被忽略（作用域是外层脚本）")
                 break
             }
         }

@@ -588,10 +588,53 @@ class AutomationService : Service() {
         val st = VirtualDisplaySession.sharedState.value
         val w = st.frameWidth.takeIf { it > 0 } ?: 1280
         val h = st.frameHeight.takeIf { it > 0 } ?: 720
-        val screen = ZPosResolver.Screen(w, h, resources.displayMetrics.density)
+        /*
+         * ★ dp 要用**虚拟屏**的密度，不是手机的。
+         *
+         *   虚拟屏固定 240dpi → 1.5 倍；手机物理屏常见 2.75~3.0。
+         *   混用会让 "200dp" 在执行器里算成 600px、在匹配器里算成 300px ——
+         *   判定点和点击点落在不同像素上。
+         */
+        val screen = ZPosResolver.Screen(w, h, VD_DPI / 160f)
         Log.i(TAG, "[zjs] 屏幕 ${w}x$h displayId=${st.displayId} running=${st.running}")
 
         val adapter = ZTouchInjectorAdapter(touch)
+
+        /*
+         * 三条"本机能力"通道：执行器不直接碰 Android API，由服务注入。
+         *
+         * 全部走 Shizuku 侧执行（`am start` / `input keyevent`），
+         * 这样启动的应用会落在**虚拟屏**上，而不是把手机屏幕切走。
+         */
+        adapter.onLaunchApp = { pkg: String ->
+            runCatching {
+                val svc = shizukuClient.peek() ?: error("Shizuku 服务不在")
+                val displayId = VirtualDisplaySession.sharedState.value.displayId
+                // --display 让应用直接起在虚拟屏上
+                svc.exec("am start --display $displayId -n $pkg/.MainActivity")
+                true
+            }.getOrElse {
+                Log.w(TAG, "[zjs] 打开应用失败（$pkg）：${it.message}")
+                false
+            }
+        }
+        adapter.onOpenLink = { url: String ->
+            runCatching {
+                val svc = shizukuClient.peek() ?: error("Shizuku 服务不在")
+                val displayId = VirtualDisplaySession.sharedState.value.displayId
+                svc.exec("am start --display $displayId -a android.intent.action.VIEW -d '$url'")
+                true
+            }.getOrElse {
+                Log.w(TAG, "[zjs] 打开链接失败（$url）：${it.message}")
+                false
+            }
+        }
+        adapter.onToast = { msg: String ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
+            }
+            Log.i(TAG, "[zjs] 提示：$msg")
+        }
         // 按键和文字走 Shizuku 侧的另一条通道
         adapter.delegateKey = { code: Int, hold: Int ->
             runCatching {

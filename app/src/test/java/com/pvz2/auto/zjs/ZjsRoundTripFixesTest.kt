@@ -368,4 +368,159 @@ class ZjsRoundTripFixesTest {
             (0 until back.length()).any { back.getJSONObject(it).optString("type") == "未来才有的动作" }
         )
     }
+
+    // ---------------------------------------------------------------- scriptSet
+
+    @Test
+    fun `scriptSet 是模型字段而不是 extra`() {
+        val a = Z.Action.parse(
+            JSONObject(
+                """{"type":"运行多个动作","delayUnit":1,
+                   "scriptSet":[{"type":"点击","delayUnit":1}]}"""
+            )
+        )!!
+        assertEquals(1, a.scriptSet.size)
+        // 落在 extra 里就等于「子动作不进模型」—— 执行器读不到、界面是空壳
+        assertTrue("scriptSet 不该进 extra", !a.extra.containsKey("scriptSet"))
+    }
+
+    @Test
+    fun `scriptSet 两层嵌套往返`() {
+        val a = Z.Action.parse(
+            JSONObject(
+                """{"type":"运行多个动作","delayUnit":1,"runMode":"normal",
+                   "scriptSet":[
+                     {"type":"点击","delayUnit":1,
+                      "posData":{"type":"location","x":"10","y":"20"}},
+                     {"type":"运行多个动作","delayUnit":1,
+                      "scriptSet":[
+                        {"type":"按键","delayUnit":1,"keyCode":4},
+                        {"type":"点击","delayUnit":1,
+                         "posData":{"type":"location","x":"30","y":"40"}}]}]}"""
+            )
+        )!!
+        assertEquals(2, a.scriptSet.size)
+        val inner = a.scriptSet[1]
+        assertEquals(Z.ActionType.RUN_MULTI, inner.type)
+        assertEquals(2, inner.scriptSet.size)
+        assertEquals(4, inner.scriptSet[0].extra["keyCode"])
+
+        // 存出去再读回来，形状必须一样
+        val back = Z.Action.parse(a.toJson())!!
+        assertEquals(2, back.scriptSet.size)
+        assertEquals(2, back.scriptSet[1].scriptSet.size)
+        assertEquals("10", back.scriptSet[0].posData!!.x!!.raw)
+        assertEquals(4, back.scriptSet[1].scriptSet[0].extra["keyCode"])
+        // runMode 不是强类型字段，靠 extra 原样保留（执行侧读 extra）
+        assertEquals("normal", back.extra["runMode"])
+    }
+
+    @Test
+    fun `scriptSet 里解析不了的子动作原样保留`() {
+        val a = Z.Action.parse(
+            JSONObject(
+                """{"type":"运行多个动作","delayUnit":1,
+                   "scriptSet":[
+                     {"type":"点击","delayUnit":1},
+                     {"type":"未来才有的动作","foo":1},
+                     {"type":"滑动","delayUnit":1,
+                      "startPos":{"type":"location","x":"1","y":"2"},
+                      "endPos":{"type":"location","x":"3","y":"4"}}]}"""
+            )
+        )!!
+        assertEquals("能解析的两个进模型", 2, a.scriptSet.size)
+        assertEquals("解析不了的原样留着", 1, a.scriptSetRaw.size)
+        assertEquals("未来才有的动作", a.scriptSetRaw[0].getString("type"))
+
+        val back = a.toJson().getJSONArray("scriptSet")
+        assertEquals("一个都不能少", 3, back.length())
+        assertTrue(
+            "解析不了的那个必须原样还在",
+            (0 until back.length()).any { back.getJSONObject(it).optString("type") == "未来才有的动作" }
+        )
+    }
+
+    @Test
+    fun `count 递归算上嵌套 scriptSet 与解析不了的子动作`() {
+        val s = Z.Script.parse(
+            JSONObject(
+                """{"baseInfo":{},"actions":[
+                     {"type":"运行多个动作","delayUnit":1,
+                      "scriptSet":[
+                        {"type":"点击","delayUnit":1},
+                        {"type":"未来才有的动作","foo":1},
+                        {"type":"运行多个动作","delayUnit":1,
+                         "scriptSet":[{"type":"滑动","delayUnit":1,
+                           "startPos":{"type":"location","x":"1","y":"2"},
+                           "endPos":{"type":"location","x":"3","y":"4"}}]}]}]}"""
+            )
+        )
+        val first = JSONObject(ZjsFileFormat.stringify(s).split("\r\n").first())
+        // 1(顶层) + 点击 + 未知(原样保留) + 内层(1 + 滑动) = 5
+        assertEquals(5, first.getInt("count"))
+    }
+
+    // ---------------------------------------------------------------- validate 新增提示
+
+    private fun issuesOf(vararg actionJson: String): List<String> =
+        ZScriptIO.validate(
+            Z.Script.parse(JSONObject("""{"baseInfo":{},"actions":[${actionJson.joinToString(",")}]}"""))
+        )
+
+    @Test
+    fun `runMode 认不出时提示，合法值不提示`() {
+        val ok = issuesOf(
+            """{"type":"运行多个动作","delayUnit":1,"runMode":"multiThread",
+                "scriptSet":[{"type":"点击","delayUnit":1}]}"""
+        )
+        assertTrue("合法 runMode 不该报：$ok", ok.none { it.contains("runMode") })
+
+        val bad = issuesOf(
+            """{"type":"运行多个动作","delayUnit":1,"runMode":"parallel",
+                "scriptSet":[{"type":"点击","delayUnit":1}]}"""
+        )
+        assertTrue("未知 runMode 要报：$bad", bad.any { it.contains("未知的 runMode") })
+    }
+
+    @Test
+    fun `运行多个动作没有子动作要提示`() {
+        val issues = issuesOf("""{"type":"运行多个动作","delayUnit":1}""")
+        assertTrue("空 scriptSet 要报：$issues", issues.any { it.contains("没有任何子动作") })
+    }
+
+    @Test
+    fun `控制执行缺子类型要提示，点击带多余 controlRunType 不提示`() {
+        val missing = Z.Action.parse(JSONObject("""{"type":"控制执行","delayUnit":1}"""))!!
+        assertTrue(missing.controlRunTypeMissing)
+        val missIssues = ZScriptIO.validate(Z.Script(actions = listOf(missing)))
+        assertTrue("缺子类型要报：$missIssues", missIssues.any { it.contains("缺 controlRunType") })
+
+        // 非「控制执行」带一个多余的 controlRunType：不该被当成"未知控制类型"
+        val stray = Z.Action.parse(
+            JSONObject("""{"type":"点击","controlRunType":"jumpTo","delayUnit":1}""")
+        )!!
+        assertNull("多余字段不该被记成未知控制类型", stray.rawControlRunType)
+        val strayIssues = ZScriptIO.validate(Z.Script(actions = listOf(stray)))
+        assertTrue(
+            "点击不该报未知控制类型：$strayIssues",
+            strayIssues.none { it.contains("未知的控制执行类型") }
+        )
+        // 这个键对「点击」没有语义，落盘不再写出（协议基类只在控制执行里读它）
+        assertTrue("点击不该写出 controlRunType", !stray.toJson().has("controlRunType"))
+    }
+
+    @Test
+    fun `模板同时有 data 与 base64 时记下被吞的键并报出来`() {
+        val img = Z.ImageData.parse(
+            JSONObject("""{"data":"AA","base64":"BB","width":10,"height":20}""")
+        )!!
+        assertEquals("AA", img.data)
+        assertTrue("base64 被吞了要记下来", img.droppedKeys.contains("base64"))
+
+        val pos = Z.PosData(type = Z.PosType.IMAGE, imageData = img)
+        val issues = ZScriptIO.validate(
+            Z.Script(actions = listOf(Z.Action(type = Z.ActionType.CLICK_IMAGE, posData = pos)))
+        )
+        assertTrue("写法冲突要报：$issues", issues.any { it.contains("只能保留一套") })
+    }
 }
