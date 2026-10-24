@@ -62,7 +62,9 @@ class ZRealMatcher(
 
     private fun nextFrame(): org.opencv.core.Mat? {
         pendingFrame?.release()
-        val m = frame()
+        // 用 nextFrame 回收上一帧：直接 frame() 每次漏一块 3.7MB native Mat，
+        // 识别是 200ms 级循环，漏起来很快。
+        val m = nextFrame()
         pendingFrame = m
         return m
     }
@@ -455,7 +457,9 @@ class ZRealMatcher(
                 )
             } else {
                 // 相似度 90 → 每通道允许差 25；相似度 100 → 0；0 → 255
-                val tol = ((100 - (pos.similarPercent ?: 90)) * 255 / 100).coerceIn(0, 255).toDouble()
+                // 协议里颜色 similarPercent 默认 **100**（精确匹配这个色）。
+                // 用 90 等于每通道放宽 ±25，闸门该拦的拦不住。
+                val tol = ((100 - (pos.similarPercent ?: 100)) * 255 / 100).coerceIn(0, 255).toDouble()
                 org.opencv.core.Core.inRange(
                     bgr,
                     org.opencv.core.Scalar(

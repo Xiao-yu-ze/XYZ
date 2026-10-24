@@ -167,7 +167,19 @@ class MainActivity : AppCompatActivity() {
         val raw = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':').orEmpty()
         val base = raw.substringBeforeLast('.').ifBlank { "导入的脚本" }
         val ok = runCatching {
-            val script = com.pvz2.auto.zjs.Z.Script.parse(org.json.JSONObject(text))
+            /*
+             * ★ 必须走 NDJSON 解析器（ZjsFileFormat.parse）。
+             *
+             *   `.zjs` 是「一行 baseInfo + 每行一个动作」的 NDJSON，不是单个 JSON。
+             *   之前用的是 `Z.Script.parse(JSONObject(text))`：
+             *   org.json 的 JSONObject(JSONTokener) 只读**第一个值**、也不校验 EOF，
+             *   于是拿到的就是第 1 行的 baseInfo，actions 为空 ——
+             *   导入一个 200 条动作的真实脚本，列表里显示「0 个动作」，
+             *   还提示"导入成功"，等于把用户的脚本吃掉了。
+             */
+            val parsed = com.pvz2.auto.zjs.ZjsFileFormat.parse(text)
+            val script = parsed.script ?: error(parsed.error ?: "解析失败")
+            require(script.actions.isNotEmpty()) { "这个文件里没有动作，可能不是 .zjs 格式" }
             val dir = com.pvz2.auto.zjs.ZjsRunner.savedDir(this)
             // 重名就加序号，不覆盖已有的 —— 导入不该悄悄毁掉旧脚本
             var target = java.io.File(dir, "$base.zjs")

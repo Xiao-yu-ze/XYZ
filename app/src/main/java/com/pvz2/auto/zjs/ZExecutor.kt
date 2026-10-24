@@ -304,15 +304,49 @@ class ZExecutor(
         skipped: MutableList<Result.Skip>
     ): Outcome {
         val repeat = action.common.repeatCount ?: 1
-        if (repeat == 0) {
-            // 无限重复：只有在能跳转时才合理，否则会卡死在这里
-            log("[$index] $label 重复次数为 0（无限），按 1 次执行以免卡死")
+        /*
+         * repeatCount = 0 在协议里是**无限**（FIELDS.md:115）。
+         *
+         * 以前我把它降级成 1 次，理由是"怕卡死"。但那违背协议：
+         * 作者写 0 就是要一直重复（连点、连续采集），
+         * 而且这类动作通常自带跳转或停止条件能退出。
+         * 现在按协议来：只有「停止」或跳转/停止动作能结束它。
+         */
+        /*
+         * repeatCount = 0 在协议里是无限（FIELDS.md:115）。
+         *
+         * 但"无限"只有在**能退出**时才成立：这条动作自己会跳转、
+         * 或者它是停止/跳转类动作。否则无限重复就是死循环 ——
+         * 用户写了 0 又没配跳转时，跑起来会永远卡在这一条，
+         * 除了强杀进程没有别的办法。
+         *
+         * 所以：能退出 → 真无限（由 stopped / 跳转结束）；
+         *       不能退出 → 只跑一次，并明确警告。
+         */
+        val canEscape = action.type.controlRunType == "jumpTo" ||
+            action.type.controlRunType == "stop" ||
+            action.extra["jumpToPosition"] != null
+        val infinite = repeat <= 0 && canEscape
+        if (repeat <= 0 && !canEscape) {
+            log("[$index] $label 重复次数为 0（无限）但这条没有跳转/停止，按 1 次执行以免卡死")
+        } else if (infinite) {
+            log("[$index] $label 重复次数为 0 = 无限（由跳转/停止结束）")
         }
-        val times = if (repeat <= 0) 1 else repeat
+        val times = if (infinite) Int.MAX_VALUE else if (repeat <= 0) 1 else repeat
 
         for (n in 0 until times) {
             if (stopped) break
-            if (n > 0) waitDelay(action.common.repeatDelayValue, action.common.repeatDelayUnit)
+            if (n > 0) {
+                /*
+                 * 重复间隔缺省时**回落到 delay**（FIELDS.md:116）。
+                 * 不回落的话 repeatCount:3 会变成三次背靠背点击，
+                 * 游戏侧常把连击合并或丢弃。
+                 */
+                val hasOwn = !action.common.repeatDelayValue.isNullOrBlank()
+                val v = if (hasOwn) action.common.repeatDelayValue else action.common.delay
+                val u = if (hasOwn) action.common.repeatDelayUnit else action.common.delayUnit
+                waitDelay(v, u, interactionDefaultMs(action))
+            }
 
             when (val r = executeOnce(action, index, label, skipped)) {
                 // 执行不了：若原因是"识别不到"就结束整个任务，否则继续
@@ -331,7 +365,9 @@ class ZExecutor(
         skipped: MutableList<Result.Skip>
     ): Outcome? {
         val c = action.common
-        val hold = c.duration?.toIntOrNull() ?: when (action.type) {
+        // duration 支持区间 "100-300"（FIELDS.md:112），取区间内随机；
+        // 以前直接 toIntOrNull()，写区间就变 null → 静默掉回默认值。
+        val hold = randomIn(c.duration)?.toInt() ?: when (action.type) {
             Z.ActionType.SWIPE -> 1000
             else -> 100
         }
@@ -833,10 +869,23 @@ class ZExecutor(
                 (0 until 100).random() < p
             }
 
-            // 其余条件安卓上暂时判不了 → 按不成立
+            // 其余条件安卓上暂时判不了
             else -> {
-                log("条件 ${cond.type.wire} 暂不支持，按不成立处理")
-                false
+                /*
+                 * ★ 判不出来 ≠ 假，而且**不能被取反**。
+                 *
+                 *   以前这里返回 false 再走 applyInvert：一旦用户勾了
+                 *   「条件不成立时执行」（runWhenFalse），false 立刻变成 true ——
+                 *   动作**无条件执行**。8 种未实现的条件（jsExpression /
+                 *   conditionSet / limitRunTimes / timeInterval / timeAfter /
+                 *   scriptRunState / aiCloud / AroundCondition）全踩这个坑，
+                 *   而界面上它们配置得好好的，完全看不出来。
+                 */
+                log("条件 ${cond.type.wire} 暂不支持，按不成立处理（不参与取反）")
+                skipped.add(
+                    Result.Skip(index, "条件", "条件类型 ${cond.type.wire} 未实现，视为不成立")
+                )
+                return false
             }
         }
         return applyInvert(cond, raw)

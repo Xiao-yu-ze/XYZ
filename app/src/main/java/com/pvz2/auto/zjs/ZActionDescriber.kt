@@ -493,19 +493,21 @@ object ZActionDescriber {
         // 每一行都要带 field 和 Kind —— 否则界面上看得见、点不动、
         // 也不说明为什么，用户会当成 bug。
         // 属性名对应 [Z.PosData] 里的字段，写回走 ZFieldEditor。
-        pos.limitArea?.let {
-            rows += Row("${p}范围", it.toString(), Kind.AREA, field = "$prefix.limitArea")
-        }
-        pos.indexNum?.let {
-            // 多命中时选第几个："2" / "-1" / "0"(随机) / "1-3"(区间随机) / "1,3,4"
-            rows += Row("${p}选第几个", it, Kind.TEXT, field = "$prefix.indexNum")
-        }
-        pos.xOffset?.let {
-            rows += Row("${p}X偏移", it.raw, Kind.TEXT, field = "$prefix.xOffset")
-        }
-        pos.yOffset?.let {
-            rows += Row("${p}Y偏移", it.raw, Kind.TEXT, field = "$prefix.yOffset")
-        }
+        /*
+         * ★ 这四行必须**无条件出现**，不能"设过了才显示"。
+         *
+         *   新建一条「点击图片」时 posData 只有 type，limitArea/indexNum/
+         *   xOffset/yOffset 全是 null —— 按原来的写法界面上根本没有"范围"
+         *   这一行，用户永远没法给它设 ROI，于是永远全屏搜索：
+         *   慢、误匹配多，而且要选"第几个"也无处可填。
+         *
+         *   没设过就显示空值，点进去填/框选；清空即删除。
+         */
+        rows += Row("${p}范围", pos.limitArea?.toString() ?: "", Kind.AREA, field = "$prefix.limitArea")
+        // 多命中时选第几个："2" / "-1" / "0"(随机) / "1-3"(区间随机) / "1,3,4"
+        rows += Row("${p}选第几个", pos.indexNum ?: "", Kind.TEXT, field = "$prefix.indexNum")
+        rows += Row("${p}X偏移", pos.xOffset?.raw ?: "", Kind.TEXT, field = "$prefix.xOffset")
+        rows += Row("${p}Y偏移", pos.yOffset?.raw ?: "", Kind.TEXT, field = "$prefix.yOffset")
 
         // 「位置周围条件」（FIELDS.md:147）。
         //
