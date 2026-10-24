@@ -97,12 +97,31 @@ class ZExecutor(
         val set: (String) -> Boolean
     }
 
+    /** 一次「设置变量」的交互弹窗请求。 */
+    data class AskDialog(
+        val title: String,
+        val okText: String,
+        val cancelText: String,
+        /** 自动点什么（"ok"/"cancel"），空 = 不自动 */
+        val autoBtn: String = "",
+        /** 自动点击的延时（毫秒） */
+        val autoDelayMs: Int = 3000
+    )
+
     /** 注入接口。真机实现走 Shizuku，测试实现记录调用。 */
     interface Injector {
         fun tap(x: Int, y: Int, holdMs: Int)
         fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int)
         fun key(keyCode: Int, holdMs: Int)
         fun inputText(text: String)
+
+    /**
+     * 「设置变量」的交互弹窗（协议 `dialogTitle` / `dialogOKText` / `dialogCancelText` /
+     * `dialogAutoClickBtn` / `dialogShowOnce`，FIELDS 576-580）。
+     *
+     * @return 0=点了确定 / 1=点了取消 / null=本机没有弹窗通道
+     */
+    fun askDialog(req: AskDialog): Int? = null
 
     /**
      * 写剪贴板（「识别屏幕」默认结果模式就是这个）。
@@ -546,6 +565,11 @@ class ZExecutor(
         run {
             val cond = action.common.condition
             val mustCheck = cond != null && cond.disabled.not()
+
+            // ---- 检查运行条件前（协议：动作**没有**条件时就不跑这个槽位）
+            if (mustCheck) {
+                runCallbacks(action, Z.CallbackSlot.BEFORE_CONDITION, index, label)
+            }
             var delayDone = false
             if (mustCheck && !cond!!.checkBeforeDelay) {
                 val pre = preDelay(action)
@@ -572,13 +596,21 @@ class ZExecutor(
                     return Outcome(abort = msg)
                 }
                 log("[跳过] $msg")
+                // ---- 运行条件失败后（协议里的 afterConditionFail）
+                runCallbacks(action, Z.CallbackSlot.AFTER_CONDITION_FAIL, index, label)
                 return Outcome(condSkipped = true)
             }
+            // ---- 条件满足后
+            runCallbacks(action, Z.CallbackSlot.AFTER_CONDITION_SUC, index, label)
+
             if (!delayDone) {
                 val pre = preDelay(action)
                 waitDelay(pre.first, pre.second, delayDefaultMs(action))
             }
         }
+
+        // ---- 动作开始运行前（条件过了、等待也做完了，正要动真格）
+        runCallbacks(action, Z.CallbackSlot.BEFORE_START_EXEC, index, label)
 
         val repeat = action.common.repeatCount ?: 1
         /*
@@ -1115,6 +1147,64 @@ class ZExecutor(
 
             // ---- 设置变量（10.24 m36077）：vars: [{name, value: VarValue}]
             Z.ActionType.SET_VARS -> {
+                /*
+                 * 交互弹窗（协议 10.24）。
+                 *
+                 * 自动精灵里「设置变量」可以是一条**问用户的对话框**：
+                 * 确定 → 变量按配置赋值；取消 → 执行 `dialogCancelAction`
+                 * 那条动作、并且**不赋值**。`dialogShowOnce` 表示只问一次。
+                 *
+                 * 原来这六个字段一个都没实现 —— 我们会静默按"直接赋值"跑完，
+                 * 取消分支永不执行，用户配的交互等于不存在。
+                 */
+                val title = action.extra["dialogTitle"]?.toString()?.trim().orEmpty()
+                val okText = action.extra["dialogOKText"]?.toString()?.trim().orEmpty()
+                val cancelText = action.extra["dialogCancelText"]?.toString()?.trim().orEmpty()
+                val cancelActionJson = action.extra["dialogCancelAction"]
+                val autoBtn = action.extra["dialogAutoClickBtn"]?.toString()?.trim().orEmpty()
+                val showOnce = boolExtra(action, "dialogShowOnce")
+                val hasDialog = title.isNotEmpty() || okText.isNotEmpty() ||
+                    cancelText.isNotEmpty() || cancelActionJson != null
+
+                if (hasDialog) {
+                    val onceKey = "dialogShown:$index:" + title.take(40)
+                    val alreadyShown = showOnce &&
+                        jsStorage?.get?.invoke(onceKey)?.isNotEmpty() == true
+                    if (alreadyShown) {
+                        log("[$index] $label 弹窗设了「仅展示一次」，这次跳过询问")
+                    } else {
+                        val choice = inject.askDialog(
+                            AskDialog(
+                                title = title.ifBlank { "提示" },
+                                okText = okText.ifBlank { "确定" },
+                                cancelText = cancelText.ifBlank { "取消" },
+                                autoBtn = autoBtn,
+                                autoDelayMs = (action.extra["dialogAutoClickDelay"] as? Number)
+                                    ?.toInt() ?: 3000
+                            )
+                        )
+                        if (showOnce) jsStorage?.set?.invoke(onceKey, "1")
+                        when (choice) {
+                            null -> log("[$index] $label 本机没有弹窗通道，按「确定」处理")
+                            1 -> {
+                                log("[$index] $label 点了「${cancelText.ifBlank { "取消" }}」→ 执行取消动作、不赋值")
+                                val cancelAction = parseActionJson(cancelActionJson)
+                                if (cancelAction == null) {
+                                    skipped.add(Result.Skip(index, label, "取消动作解析失败（格式不认识）"))
+                                } else {
+                                    executeWithRepeat(
+                                        cancelAction, index,
+                                        "$label › 取消动作", skipped,
+                                        abortOnRecognitionFail = false
+                                    )
+                                }
+                                return Outcome()
+                            }
+                            else -> log("[$index] $label 点了「${okText.ifBlank { "确定" }}」→ 按配置赋值")
+                        }
+                    }
+                }
+
                 val arr = varsArrayOf(action)
                 if (arr == null) {
                     skipped.add(Result.Skip(index, label, "设置变量：vars 字段缺失或格式不对"))
@@ -2704,6 +2794,19 @@ class ZExecutor(
      */
     private val scriptVars = HashMap<String, String>()
 
+    /** 把 extra 里的"动作 JSON"解析成 Z.Action（弹窗取消动作用）。 */
+    private fun parseActionJson(raw: Any?): Z.Action? {
+        if (raw == null) return null
+        return runCatching {
+            val o = when (raw) {
+                is org.json.JSONObject -> raw
+                is String -> org.json.JSONObject(raw)
+                else -> org.json.JSONObject(raw.toString())
+            }
+            Z.Action.parse(o)
+        }.getOrNull()
+    }
+
     /** 从动作里取 `vars` 数组（可能是 JSONArray，也可能是 JSON 文本）。 */
     private fun varsArrayOf(action: Z.Action): org.json.JSONArray? {
         val raw = action.extra["vars"] ?: return null
@@ -2850,7 +2953,8 @@ class ZExecutor(
     /**
      * 报了但没实现的监听槽位，每个动作只提示一次。
      *
-     * 7 个槽位里我们只跑 afterExecSuc / afterExecFinish（见 [runCallbacks]）。
+     * 7 个槽位现在**全部**执行（见 [runCallbacks]）：检查条件前、条件满足后、
+ * 条件失败后、动作开始前、每次成功、失败、全部结束。
      * 不提示的话，用户看到"动作成功了"，却没发现挂在上面的收尾动作一条都没执行。
      */
     private fun warnUnsupportedCallbacks(
@@ -2868,11 +2972,9 @@ class ZExecutor(
          *   「监听动作未执行…：afterExecFail」，而它明明跑了。
          *   这种"报假警"比漏报更伤：用户会去删一个正常工作配置。
          */
-        val unsupported = action.callbacks.keys.filter {
-            it != Z.CallbackSlot.AFTER_EXEC_SUC &&
-                it != Z.CallbackSlot.AFTER_EXEC_FAIL &&
-                it != Z.CallbackSlot.AFTER_EXEC_FINISH
-        }
+        /** 现在 7 个槽位全部实现；留这个函数是为了"以后协议再加槽位"时能报警。 */
+        val supported = Z.CallbackSlot.entries.toSet()
+        val unsupported = action.callbacks.keys.filter { it !in supported }
         if (unsupported.isEmpty()) return
         // 无限循环里每轮都会走到这里，只报第一次
         if (!warnedCallbackActions.add(index)) return

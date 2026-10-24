@@ -71,6 +71,11 @@ class ZTouchInjectorAdapter(
      */
     var onSetClipboard: ((String) -> Boolean)? = null
 
+    /** 「设置变量」的交互弹窗（0=确定 / 1=取消 / null=没有通道）。 */
+    var onAskDialog: ((ZExecutor.AskDialog) -> Int?)? = null
+
+    override fun askDialog(req: ZExecutor.AskDialog): Int? = onAskDialog?.invoke(req)
+
     override fun setClipboard(text: String): Boolean =
         onSetClipboard?.invoke(text) ?: false
 

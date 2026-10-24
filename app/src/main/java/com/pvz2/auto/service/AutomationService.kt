@@ -723,6 +723,53 @@ class AutomationService : Service() {
                 }
             }
         }
+        /*
+         * 「设置变量」的交互弹窗：脚本线程阻塞等结果。
+         *
+         * 执行器是一条同步线程，弹窗必须在主线程 —— 用 CountDownLatch 把
+         * 两边接起来。autoBtn 非空时到点自动点（对应协议 dialogAutoClickBtn）。
+         */
+        adapter.onAskDialog = { req ->
+            val latch = java.util.concurrent.CountDownLatch(1)
+            val answer = java.util.concurrent.atomic.AtomicInteger(0)
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                runCatching {
+                    val dlg = androidx.appcompat.app.AlertDialog.Builder(this)
+                        .setTitle(req.title)
+                        .setPositiveButton(req.okText) { d, _ ->
+                            answer.set(0); d.dismiss(); latch.countDown()
+                        }
+                        .setNegativeButton(req.cancelText) { d, _ ->
+                            answer.set(1); d.dismiss(); latch.countDown()
+                        }
+                        .setCancelable(false)
+                        .create()
+                    dlg.show()
+                    if (req.autoBtn.isNotEmpty()) {
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            runCatching {
+                                if (dlg.isShowing) {
+                                    answer.set(if (req.autoBtn == "cancel") 1 else 0)
+                                    dlg.dismiss()
+                                    latch.countDown()
+                                }
+                            }
+                        }, req.autoDelayMs.toLong())
+                    }
+                }.onFailure {
+                    com.pvz2.auto.core.ZjsLog.add("弹窗显示失败：${it.message}")
+                    latch.countDown()
+                }
+            }
+            // 最多等 5 分钟，避免用户不看手机导致脚本永远卡住
+            val done = latch.await(5, java.util.concurrent.TimeUnit.MINUTES)
+            if (!done) {
+                com.pvz2.auto.core.ZjsLog.add("弹窗等待超时（5 分钟），按确定继续")
+                0
+            } else {
+                answer.get()
+            }
+        }
         executor.scriptLoader = { name ->
             runCatching {
                 com.pvz2.auto.zjs.ZjsRunner.listSaved(this)
