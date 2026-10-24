@@ -203,9 +203,30 @@ object Z {
          * 实测后果：植物种下后卡槽进入冷却、颜色已经变了，闸门却仍然通过。
          */
         val colorLower: List<Int>?
-            get() = (extra["colorLower"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }
+            get() = rgbList(extra["colorLower"])
         val colorUpper: List<Int>?
-            get() = (extra["colorUpper"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }
+            get() = rgbList(extra["colorUpper"])
+
+        /**
+         * `extra` 里的 RGB 数组可能是 List、JSONArray 或逗号串。
+         *
+         * ★ 踩过的坑：原来只写 `as? List<*>`，而脚本解析出来的是
+         *   org.json.JSONArray（不是 Kotlin List），于是**永远返回 null** ——
+         *   Maa 的"颜色范围"判定从来没生效过，一直退化成"单色 + 相似度"。
+         *   症状：范围写对了也认不出，用户只会去调相似度。
+         */
+        private fun rgbList(v: Any?): List<Int>? {
+            val raw: List<Any?> = when (v) {
+                is List<*> -> v
+                is org.json.JSONArray -> (0 until v.length()).map { v.opt(it) }
+                is String -> v.split(",", " ").filter { it.isNotBlank() }
+                else -> return null
+            }
+            val out = raw.mapNotNull {
+                (it as? Number)?.toInt() ?: (it as? String)?.trim()?.toIntOrNull()
+            }
+            return if (out.size >= 3) out else null
+        }
 
         /**
          * `text` 落盘用哪个值：对象形态还是字符串。

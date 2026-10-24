@@ -180,20 +180,27 @@ def recognition_of(node):
             return None
         roi = node.get("roi") or param.get("roi")
         mid = [(float(lower[i]) + float(upper[i])) / 2 for i in range(3)]
+
+        # ★ 这里有三件事必须和 Maa 一致，写错过一次：
+
+        # 1. Maa 的颜色判定是「每个通道落在 [lower, upper] 里」的**范围**判定，
+        # 不是 100% 精确匹配。写成 similarPercent=100 等于要求像素完全等于某色 ——
+        # 在游戏画面里基本必然识别不到。
+        # 2. 所以相似度按范围的**半宽**折算：半宽 10/255 ≈ 4% → 96。
+        # 这样即使有人把上下界删掉，容差仍接近原来的范围。
+        # 3. 不能只判 roi 中心一个像素（limitPosX/Y）：Maa 是在整个 roi 里找，
+        # 只判中心会把"颜色稍有偏移/被遮挡"的情况全判错。
+
+        half = max(float(upper[i]) - float(lower[i]) for i in range(3)) / 2.0
         pos = {
             "type": "color",
-            # 手写脚本用 "#rrggbb"；上下界保留给匹配器（它优先用上下界）
-            "color": hex_of(mid),
-            "colorLower": list(lower),
+            "color": hex_of(mid),          # 仅供显示（范围中点）
+            "colorLower": list(lower),      # 真正的判定依据
             "colorUpper": list(upper),
-            "similarPercent": 100,
+            "similarPercent": max(1, int(round(100 - half / 255.0 * 100))),
         }
         if roi:
             x, y, w, h = roi
-            cx, cy = int(x + w / 2), int(y + h / 2)
-            # 单像素判定（手写脚本的做法），同时保留区域便于排查
-            pos["limitPosX"] = str(cx)
-            pos["limitPosY"] = str(cy)
             pos["limitArea"] = "%d %d %d %d" % (x, y, x + w, y + h)
         return pos
 
@@ -361,6 +368,29 @@ class Conv:
             return self.pts[v]
         raise SystemExit("点未解析：%r" % (v,))
 
+    def chain_end(self, name, acts, succ, depth=0):
+        """
+        穿透"空节点"（无动作、单后继）直到落到有动作或分叉的节点。
+
+        为什么需要：`tower_banana_前期` 是 DoNothing + 单后继，被丢掉后，
+        过渡1 的三路分叉里指向它的候选就成了悬空跳转。它存在的意义就是
+        "无条件继续往下"，所以直接把候选指向它的下一站即可。
+        """
+        seen = set()
+        cur = name
+        while depth < 50:
+            depth += 1
+            if cur in acts and acts[cur] is not None:
+                return cur
+            nxt = succ.get(cur) or []
+            if len(nxt) != 1:
+                return cur          # 分叉或终点：保留原样
+            cur = nxt[0]
+            if cur in seen:
+                return cur
+            seen.add(cur)
+        return cur
+
     def build(self, entry_hint=None):
         out = []
         # 1) 每个节点产出"自己的动作"（丢掉纯空节点）
@@ -372,7 +402,14 @@ class Conv:
 
         # 2) 分叉节点与后继统计
         succ = {n: self.successors(n) for n in self.by_name}
-        # 3) 顺序输出：入口优先，其余按原文件顺序
+        # ★ "丢掉纯空节点"这条只对**非分叉**成立。
+        #   `通用_神器补给_判断是否有神器` 就是 DoNothing + 6 个 next —— 它没有动作，
+        #   但那次分叉是真实存在的流程。第一版把它一起丢了，整个补给选择分支消失，
+        #   而且不报错（脚本照跑，只是再也不会去选补给）。
+        branch_only = [n for n in self.by_name
+                       if n not in acts and len(succ.get(n) or []) >= 2]
+        for n in branch_only:
+            acts[n] = None
         order = [n for n in self.by_name if n in acts]
         if entry_hint and entry_hint in order:
             order.remove(entry_hint)
@@ -382,15 +419,16 @@ class Conv:
         for name in order:
             node = self.by_name[name]
             a = acts[name]
-            # post_delay 累加进下一个节点的 delay 由调用方处理；这里先记在 desc 边上
-            out.append(a)
-            emitted_names.append(name)
+            if a is not None:
+                out.append(a)
+                emitted_names.append(name)
 
             nxt = succ.get(name) or []
             if len(nxt) >= 2:
                 # 真分叉：等待候选（这才是需要它的地方）
                 cands = []
                 for child in nxt:
+                    child = self.chain_end(child, acts, succ)
                     cnode = self.by_name.get(child) or {}
                     cpos = recognition_of(cnode)
                     if cpos is None:
@@ -419,7 +457,7 @@ class Conv:
                 if err:
                     tgt = self.resolve(err[0], from_node=name)
                     if tgt:
-                        w["onTimeoutJump"] = tgt
+                        w["onTimeoutJump"] = self.chain_end(tgt, acts, succ)
                 else:
                     w["onTimeoutStop"] = True
                 out.append(w)

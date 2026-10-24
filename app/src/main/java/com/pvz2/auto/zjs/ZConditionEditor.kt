@@ -212,11 +212,28 @@ private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
 
                 Z.PosType.COLOR -> {
                     rows += Row("颜色", pos.color.orEmpty(), Kind.TEXT, field = "cond.color")
+                /*
+                 * 范围（Maa 的 lower/upper）。Maa 的颜色判定是"每通道落在区间里"，
+                 * 不是某个精确色 —— 只显示一个色值会让人把相似度往 100 调，
+                 * 结果反而认不出来。真实依据摊在这里。
+                 */
+                run {
+                    val lo = pos.colorLower
+                    val hi = pos.colorUpper
+                    if (lo != null && hi != null && lo.size >= 3 && hi.size >= 3) {
+                        fun hex(c: List<Int>) = String.format("#%02x%02x%02x", c[0], c[1], c[2])
+                        rows += Row(
+                            "颜色范围",
+                            "${hex(lo)} ~ ${hex(hi)}（范围判定，不是精确色）",
+                            Kind.READONLY
+                        )
+                    }
+                }
             // 颜色从屏幕取，不靠手输（理由同动作侧）
             rows += Row(
                 "从屏幕取色",
                 if (pos.color.isNullOrBlank()) "点右边按钮在画面上取一个颜色"
-                else "重新取色（当前 #${pos.color}）",
+                else "重新取色（当前 ${if (pos.color!!.startsWith("#")) pos.color else "#" + pos.color}）",
                 Kind.COORD,
                 field = "cond.colorPick"
             )

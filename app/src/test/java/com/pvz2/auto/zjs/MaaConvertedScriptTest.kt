@@ -83,6 +83,27 @@ class MaaConvertedScriptTest {
         // 不能再出现"凭空编的整数色"：颜色应当是 #rrggbb 形式
         val c = pd.color.orEmpty()
         assertTrue("颜色应当写成 #rrggbb，实际：$c", c.startsWith("#"))
+        /*
+         * Maa 的颜色判定是「每通道落在 [lower,upper]」的范围判定。
+         * 写 similarPercent=100 等于要求像素完全等于某个值 —— 游戏画面里基本必然认不出。
+         * （用户指出：调到 100% 就识别不出来。）
+         */
+        assertTrue("相似度不该是 100：${pd.similarPercent}", (pd.similarPercent ?: 0) < 100)
+        // 也不能只判 roi 中心一个像素：Maa 是整个 roi 里找
+        assertTrue("不该合成单像素判定", !extra.containsKey("limitPosX"))
+        assertTrue("应当保留 roi 作为搜索范围", pd.limitArea != null)
+    }
+
+    /** 条件弹窗里要能看到范围（Maa 的真实判定依据），否则用户会以为就一个色值。 */
+    @Test
+    fun `条件弹窗里有颜色范围行`() {
+        val s = many()
+        val cond = s.actions.mapNotNull { it.common.condition }
+            .first { it.type == Z.ConditionType.COLOR }
+        val rows = ZConditionEditor.describe(cond)
+        val range = rows.firstOrNull { it.label.contains("颜色范围") }
+        assertTrue("条件弹窗里没有「颜色范围」行：${rows.map { it.label }}", range != null)
+        assertTrue("范围行内容不该是空的：${range!!.value}", range.value.contains("~"))
     }
 
     @Test

@@ -660,6 +660,25 @@ object ZActionDescriber {
         }
 
         Z.PosType.COLOR -> {
+            /*
+             * 颜色范围（从 Maa 的 lower/upper 来的）。
+             *
+             * Maa 的颜色判定是"每通道落在 [lower,upper]"——范围，不是某个精确色。
+             * 编辑器原来只显示 color 一个值（范围中点），用户会以为判定就靠它，
+             * 于是把相似度往 100 调，反而认不出来。把真实依据摊出来。
+             */
+            run {
+                val lo = pos.colorLower
+                val hi = pos.colorUpper
+                if (lo != null && hi != null && lo.size >= 3 && hi.size >= 3) {
+                    fun hex(c: List<Int>) = String.format("#%02x%02x%02x", c[0], c[1], c[2])
+                    rec += Row(
+                        "${p}颜色范围",
+                        "${hex(lo)} ~ ${hex(hi)}（范围判定，不是精确色）",
+                        Kind.READONLY
+                    )
+                }
+            }
                 rec += Row("${p}颜色", pos.color.orEmpty(), Kind.TEXT, field = "$prefix.color")
                 // 颜色必须能从画面上取，不靠手输 #RRGGBB（手输要么靠截图取色已经偏了，
                 // 要么填错一个字符就永远匹配不到，而失败信息里只有"没找到这个颜色"）
