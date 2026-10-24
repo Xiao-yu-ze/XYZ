@@ -45,6 +45,14 @@ class ZExecutor(
         fun key(keyCode: Int, holdMs: Int)
         fun inputText(text: String)
 
+    /**
+     * 写剪贴板（「识别屏幕」默认结果模式就是这个）。
+     *
+     * 默认返回 false = 这条通道没接（单测里的假注入器不用管）。
+     * 真机实现走 Android 的 ClipboardManager。
+     */
+    fun setClipboard(text: String): Boolean = false
+
         /**
          * 多指同时滑动。
          *
@@ -179,6 +187,9 @@ class ZExecutor(
     /** 子列表内 `&` 跳转的次数上限：防止 `&-1` 这种写法变成死循环。 */
     private val MAX_SUB_JUMPS = 10000
 
+    /** 条件嵌套层数上限（畸形文件防栈溢出）。 */
+    private val MAX_COND_DEPTH = 8
+
     /** 周围条件挂在位置对象上的键名（协议：posData.filterByAroundConditionSet）。 */
     private val AROUND_KEY = "filterByAroundConditionSet"
 
@@ -209,12 +220,33 @@ class ZExecutor(
         // 「设置变量」写入的运行时变量：每次 run 从空开始（协议里变量属于一次运行）
         scriptVars.clear()
         runStartedAt = System.currentTimeMillis()
+        runActions = actions
         com.pvz2.auto.core.ScriptRunState.requestResume()
 
         // jumpId → 下标，跳转时用
         val jumpTable = HashMap<String, Int>()
-        actions.forEachIndexed { i, a ->
-            a.common.jumpId?.takeIf { it.isNotBlank() }?.let { jumpTable[it] = i }
+        /*
+         * 跳转表按协议建：
+         *  - 只收**启用**的动作（官方 `if(!t||t.disabled) return !1`）——
+         *    跳到一条禁用动作上，官方是跳过它，我们原来会白执行一次；
+         *  - 子动作（运行多个动作里）上的标识**记下来**，好给出准确的报错，
+         *    而不是笼统的"目标不存在"（跳进子列表本机还不支持）。
+         */
+        run {
+            fun collect(list: List<Z.Action>, topLevel: Boolean) {
+                list.forEachIndexed { i, a ->
+                    val id = a.common.jumpId
+                    if (!id.isNullOrBlank()) {
+                        when {
+                            !topLevel -> subJumpIds.add(id)
+                            a.common.disabled -> Unit
+                            else -> jumpTable[id] = i
+                        }
+                    }
+                    if (a.scriptSet.isNotEmpty()) collect(a.scriptSet, topLevel = false)
+                }
+            }
+            collect(actions, topLevel = true)
         }
         // resolveJump 要用这张表（同一个对象，后面不会再被替换）
         jumpTableOf = jumpTable
@@ -308,7 +340,7 @@ class ZExecutor(
                 val outcome = executeWithRepeat(action, pc, label, skipped)
                 // 「动作运行状态」条件要查别的动作跑成功没有 —— 这里记一笔。
                 // stop/jump 也算成功（它们确实按意图执行了）。
-                actionOutcome[pc] = outcome.abort == null
+                actionOutcome[pc] = outcome.abort == null && !outcome.condSkipped
                 com.pvz2.auto.core.ScriptRunState.finishAction(pc)
 
                 /*
@@ -388,6 +420,14 @@ class ZExecutor(
     // ------------------------------------------------------------ 单个动作
 
     private data class Outcome(
+        /**
+         * true = 这一条是**条件不满足被跳过**的（不是执行成功）。
+         *
+         * 「动作运行状态」条件要区分成功/失败：协议里条件不满足算失败
+         * （界面文案就是「运行失败/条件失败」）。原来这种情况返回的是
+         * 不带 abort 的 Outcome()，被记成"成功"，于是 fail 永远判不出来。
+         */
+        val condSkipped: Boolean = false,
         val jumpTo: String? = null,
         val stop: Boolean = false,
         /**
@@ -461,7 +501,7 @@ class ZExecutor(
                     return Outcome(abort = msg)
                 }
                 log("[跳过] $msg")
-                return Outcome()
+                return Outcome(condSkipped = true)
             }
             if (!delayDone) {
                 val pre = preDelay(action)
@@ -855,7 +895,26 @@ class ZExecutor(
                     )
                     return null
                 }
-                val rect = intArrayOf(0, 0, screen.width, screen.height)
+                /*
+                 * 识别区域：协议里 `config.recognitionArea` 是**必填**且决定识别范围
+                 * （官方 `if(!n) throw "识别区域缺失"`）。缺省时才退回全屏 ——
+                 * 全屏识别会把无关文字一起读进来，串进结果。
+                 */
+                val areaRaw = runCatching {
+                    val o = when (cfg) {
+                        is org.json.JSONObject -> cfg
+                        is String -> org.json.JSONObject(cfg)
+                        else -> null
+                    }
+                    o?.opt("recognitionArea")?.toString()
+                }.getOrNull()
+                val rect = if (!areaRaw.isNullOrBlank()) {
+                    runCatching {
+                        ZArea.parse(areaRaw)?.toPxRect(screen.width, screen.height, screen.density)
+                    }.getOrNull() ?: intArrayOf(0, 0, screen.width, screen.height)
+                } else {
+                    intArrayOf(0, 0, screen.width, screen.height)
+                }
                 val texts = try {
                     matcher.ocrTexts(rect)
                 } catch (e: Throwable) {
@@ -868,11 +927,45 @@ class ZExecutor(
                     )
                     return null
                 }
-                val joined = texts.joinToString("\n")
+                /*
+                 * 拼接方式：协议 `ocrResultType` 为 `raw` 时返回条目数组，
+                 * 否则用**空格**拼（官方行为）。我们固定吃过前一种表达方式下的
+                 * "空格拼接"，raw 模式用换行保留结构（也方便日志里看行）。
+                 */
+                val rawMode = runCatching {
+                    val o = when (cfg) {
+                        is org.json.JSONObject -> cfg
+                        is String -> org.json.JSONObject(cfg)
+                        else -> null
+                    }
+                    o?.optString("ocrResultType")
+                }.getOrNull() == "raw"
+                val joined = texts.joinToString(if (rawMode) "\n" else " ")
                 log("[$index] $label 识别屏幕：${texts.size} 行，共 ${joined.length} 字")
                 val useResult = action.extra["useResultMode"]?.toString()?.trim().orEmpty()
                     .ifBlank { "clipboard" }
                 if (useResult == "input") {
+                    /*
+                     * ★ 先把"打不进去"的情况挡在前面。
+                     *
+                     *   `input text` 走 KeyCharacterMap，只能打**单行 ASCII**：
+                     *   中文打不出来、换行会被截断。而本项目的场景是中文游戏，
+                     *   OCR 结果基本全是中文 —— 直接 injection 的后果是
+                     *   "动作报成功、游戏里什么都没输入"，而且注入层还把异常
+                     *   用 runCatching 吞了，连日志都没有。
+                     */
+                    val bad = when {
+                        joined.contains('\n') -> "多行"
+                        joined.any { it.code > 127 } -> "含非 ASCII 字符"
+                        else -> null
+                    }
+                    if (bad != null) {
+                        skipped.add(
+                            Result.Skip(index, label, "识别屏幕：结果$bad，本机 input text 只能注入单行 ASCII")
+                        )
+                        log("[$index] $label 识别到的文字：${joined.take(120)}")
+                        return null
+                    }
                     try {
                         inject.inputText(joined)
                     } catch (e: Throwable) {
@@ -880,10 +973,17 @@ class ZExecutor(
                         return null
                     }
                 } else {
-                    // clipboard：剪贴板是 UI 侧能力，执行器没有这个通道，如实报
-                    skipped.add(
-                        Result.Skip(index, label, "识别屏幕：结果模式「clipboard」本机未接剪贴板通道")
-                    )
+                    /*
+                     * clipboard 是协议的**默认**结果模式（FIELDS.md:494）。
+                     * 原来这里直接跳过 —— 于是所有没写这个字段的脚本导入后，
+                     * 「识别屏幕」100% 不生效，等于动作白跑。
+                     */
+                    val ok = runCatching { inject.setClipboard(joined) }.getOrDefault(false)
+                    if (!ok) {
+                        skipped.add(
+                            Result.Skip(index, label, "识别屏幕：剪贴板通道未接，结果没写进去")
+                        )
+                    }
                     log("[$index] $label 识别到的文字：${joined.take(120)}")
                 }
                 Outcome()
@@ -1248,8 +1348,22 @@ class ZExecutor(
 
         val mode = obj.optString("matchMode").ifBlank { "and" }
         val need = obj.optInt("matchCount", subs.size).coerceAtLeast(1)
-        val baseX = aroundPx(obj.opt("basePosX"), isX = true)
-        val baseY = aroundPx(obj.opt("basePosY"), isX = false)
+        /*
+         * ★ 缺 basePos 时**不过滤**。
+         *
+         *   官方（40791/13901）：`if (!base?.x || !base?.y)` 直接不构建子条件项 →
+         *   and 模式下"没有项"= 真空成立 → 等于不做任何过滤。
+         *   我们原来把缺失当成 (0,0)，于是以屏幕左上为基准去平移子条件区域，
+         *   结果是"全过滤掉"或"过滤错点"，比不过滤更糟。
+         */
+        val bxRaw = obj.opt("basePosX")?.toString()?.trim()
+        val byRaw = obj.opt("basePosY")?.toString()?.trim()
+        if (bxRaw.isNullOrEmpty() || byRaw.isNullOrEmpty()) {
+            log("   周围条件：没有基准坐标 basePosX/basePosY，按不过滤处理")
+            return hits
+        }
+        val baseX = aroundPx(bxRaw, isX = true)
+        val baseY = aroundPx(byRaw, isX = false)
 
         val tmpSkips = ArrayList<Result.Skip>()
         val kept = hits.filter { hit ->
@@ -1653,12 +1767,29 @@ class ZExecutor(
     private fun evaluate(
         cond: Z.Condition,
         index: Int,
-        skipped: MutableList<Result.Skip>
+        skipped: MutableList<Result.Skip>,
+        depth: Int = 0
     ): Boolean {
+        if (depth > MAX_COND_DEPTH) {
+            // 畸形文件可能把条件自己套自己几百层 —— 直接算会 StackOverflowError，
+            // 报出来比崩掉强（崩掉时界面只能显示"执行异常：null"）。
+            log("   条件嵌套超过 $MAX_COND_DEPTH 层，视为不成立")
+            skipped.add(Result.Skip(index, "条件", "条件嵌套超过 $MAX_COND_DEPTH 层"))
+            return false
+        }
         val raw = when (cond.type) {
             Z.ConditionType.IMAGE, Z.ConditionType.TEXT,
             Z.ConditionType.COLOR, Z.ConditionType.NODE -> {
-                val pos = cond.posData ?: return applyInvert(cond, false)
+                /*
+                 * ★ 没配位置 → 判不出来，**不取反**。
+                 *   和下面 else 分支同一个道理：false 再被 runWhenFalse 翻成 true，
+                 *   动作就变成"无条件执行"，而界面上这个条件看着配得好好的。
+                 */
+                val pos = cond.posData ?: run {
+                    log("   条件 ${cond.type.wire}：没有位置数据，判不了（不取反）")
+                    skipped.add(Result.Skip(index, "条件", "条件 ${cond.type.wire} 没配位置，视为不成立"))
+                    return false
+                }
                 val rect = ZPosResolver.searchRect(pos, screen)
                 val hits = when (cond.type) {
                     Z.ConditionType.IMAGE -> matcher.findImage(pos, rect)
@@ -1681,18 +1812,38 @@ class ZExecutor(
             }
 
             // ---- 多个条件（FIELDS.md:277 conditionSet / 278 AroundCondition）
-            Z.ConditionType.CONDITION_SET -> combineConditions(cond, index, skipped)
+            Z.ConditionType.CONDITION_SET -> combineConditions(cond, index, skipped, depth)
 
-            // 位置周围条件作为**独立条件**时，没有"命中点"可当基准，
-            // 直接按写好的 basePos 评估（平移量 0）。
-            Z.ConditionType.AROUND -> combineConditions(cond, index, skipped)
+            /*
+             * 独立的 `AroundCondition` 在协议里**不成立**：
+             * 官方实现第一句就是 `if (willCheckX<0||willCheckY<0) throw ...`
+             * —— 它只能在 `posData.filterByAroundConditionSet` 上用（那一路我们已实现）。
+             * 这里如实报不成立，且**不参与取反**（抛异常 ≠ false）。
+             */
+            Z.ConditionType.AROUND -> {
+                log("   条件 周围条件：独立使用时协议不支持（只能挂在位置上），视为不成立")
+                skipped.add(
+                    Result.Skip(index, "条件", "独立的周围条件不被协议支持，视为不成立")
+                )
+                return false
+            }
 
             // ---- 限制运行次数（FIELDS.md:271）
             Z.ConditionType.LIMIT_RUN_TIMES -> {
                 val limit = (cond.extra["limitTimes"] as? Number)?.toInt() ?: 0
-                val used = limitUsed[index] ?: 0
+                val key = condKey(cond)
+                // resetTime 决定"脚本整体重复"时要不要清零：
+                //   afterRepeat（每轮清零） / afterFinish（默认，动作跑完清零）
+                //   onLoad（只在载入时清零 —— 整个运行只给 N 次）
+                limitResetTime[key] = cond.extra["resetTime"]?.toString()?.trim().orEmpty()
+                    .ifBlank { "afterFinish" }
+                // syncNowRunTimesToVarName：协议要求把当前次数同步到脚本变量
+                cond.extra["syncNowRunTimesToVarName"]?.toString()?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let { varName -> scriptVars[varName] = (limitUsed[key] ?: 0).toString() }
+                val used = limitUsed[key] ?: 0
                 val ok = limit <= 0 || used < limit
-                if (ok) limitUsed[index] = used + 1
+                if (ok) limitUsed[key] = used + 1
                 log("   条件 限制运行次数：已用 $used / $limit → ${if (ok) "成立" else "不成立"}")
                 ok
             }
@@ -1701,7 +1852,20 @@ class ZExecutor(
             Z.ConditionType.SCRIPT_RUN_STATE -> {
                 val aim = cond.extra["aimPosition"]?.toString()?.trim().orEmpty()
                 val want = cond.extra["aimScriptRunState"]?.toString()?.trim() ?: "suc"
-                val target = aim.toIntOrNull()?.minus(1) ?: jumpTableOf[aim]
+                /*
+                 * ★ aimPosition 有四种写法（80865.js 的字段帮助）：
+                 *     2   → 列表里第 2 个动作
+                 *     +2  → 当前位置**后面**第 2 个
+                 *     -1  → 当前位置**前面** 1 个
+                 *     :A  → 跳转标识为 A 的动作
+                 *   原来只用 `toIntOrNull()`：`+2` 被当成 2（错条）、`-1` 变成 -2（错条）、
+                 *   `:A` 查表查的是裸 id（永远查不到）→ "未运行"条件恒真，守卫失效。
+                 */
+                val target = when {
+                    aim.startsWith(":") -> jumpTableOf[aim.substring(1)]
+                    aim.startsWith("+") || aim.startsWith("-") -> aim.toIntOrNull()?.let { index + it }
+                    else -> aim.toIntOrNull()?.minus(1)
+                }?.takeIf { it in runActions.indices }
                 val ran = target?.let { actionOutcome[it] }
                 val ok = when (want) {
                     "suc" -> ran == true
@@ -1716,7 +1880,7 @@ class ZExecutor(
             // ---- 在时间之后（FIELDS.md:274）
             Z.ConditionType.TIME_AFTER -> {
                 val v = cond.extra["timeValue"]?.toString().orEmpty()
-                val ok = timeAfterPassed(v)
+                val ok = timeAfterPassed(v, condKey(cond))
                 log("   条件 在时间之后「$v」→ $ok")
                 ok
             }
@@ -1727,23 +1891,34 @@ class ZExecutor(
                 val unit = (cond.extra["timeIntervalUnit"] as? Number)?.toInt() ?: 1
                 val gapMs = (randomIn(v) ?: 0.0).toLong() * unitToMs(unit)
                 val now = System.currentTimeMillis()
-                val last = intervalLast[index]
+                val key = condKey(cond)
+                val anchor = intervalLast[key]
                 val ignoreInit = boolExtra(cond, "ignoreInitPass")
                 /*
-                 * ignoreInitPass = 忽略第一次（刚启动那一次也算"没到间隔"）。
-                 *  - true ：第一次直接通过（脚本刚起来不该被间隔卡住）
-                 *  - false：第一次要等满间隔，基准用**脚本开始时刻**
-                 * 字段原来读了没分支，等于两档一样 —— 现在分开了。
+                 * ★ ignoreInitPass 的语义是"**首次条件检查不满足**"。
+                 *
+                 *   自动精灵（91969.js）:
+                 *     if (null == lastConditionPassTime)
+                 *         return this.lastConditionPassTime = Date.now(), !this.condition.ignoreInitPass;
+                 *
+                 *   也就是：第一次检查先把基准时间记下来，
+                 *   勾了 ignoreInitPass 就**返回不通过**，没勾就通过。
+                 *   我上一版写反了（勾了就立刻通过），等于这个开关唯一的作用消失。
                  */
-                val ok = when {
-                    gapMs <= 0L -> true
-                    last != null -> now - last >= gapMs
-                    else -> ignoreInit || now - runStartedAt >= gapMs
+                val ok = if (gapMs <= 0L) {
+                    true
+                } else if (anchor == null) {
+                    intervalLast[key] = now
+                    !ignoreInit
+                } else if (now - anchor >= gapMs) {
+                    intervalLast[key] = now
+                    true
+                } else {
+                    false
                 }
-                if (ok) intervalLast[index] = now
                 log(
                     "   条件 时间间隔 ${gapMs}ms：" +
-                        (if (last == null) "首次" else "距上次 ${now - last}ms") + " → $ok"
+                        (if (anchor == null) "首次" else "距上次 ${now - anchor}ms") + " → $ok"
                 )
                 ok
             }
@@ -2163,17 +2338,40 @@ class ZExecutor(
      */
     private val WATCHED_VAR_FIELDS = listOf("delay", "duration", "repeatCount", "posData")
 
-    /** 「限制运行次数」的计数，键 = 动作下标（一次 run 内有效）。 */
+    /**
+     * 「限制运行次数」的计数。
+     *
+     * ★ 键必须是**条件实例**，不能是动作下标：
+     *   自动精灵把计数存在 `WeakMap`、以条件对象为键（6005.js），
+     *   每个条件各算各的。用下标的话，同一个 `conditionSet` 里两个
+     *   限制条件会共用一格、每轮各 +1（等于「只跑 N 次」变成「跑 N/2 次」），
+     *   子动作又会复用父动作的下标。
+     */
+    /** 每个「限制运行次数」条件的 resetTime（决定脚本整体重复时清不清零）。 */
+    private val limitResetTime = HashMap<Int, String>()
+
     private val limitUsed = HashMap<Int, Int>()
 
     /** 每个动作最近一次运行结果：true=成功 / false=失败 / 缺键=还没跑过。 */
     private val actionOutcome = HashMap<Int, Boolean>()
 
+    /** 只出现在「运行多个动作」子动作里的跳转标识（跳进去本机还不支持）。 */
+    private val subJumpIds = HashSet<String>()
+
+    /** 本次 run 的动作列表（条件里要判断"目标动作下标是否合法"）。 */
+    private var runActions: List<Z.Action> = emptyList()
+
     /** 本次 run 的开始时刻：`+HH:MM:SS` 这种"运行 N 小时后"要以它为基准。 */
     private var runStartedAt: Long = 0L
 
-    /** 「时间间隔」上次通过的时刻（毫秒）。 */
+    /** 「时间间隔」上次通过的时刻（毫秒），键 = 条件实例。 */
     private val intervalLast = HashMap<Int, Long>()
+
+    /** 「在时间之后」+N 写法的基准时刻，键 = 条件实例（首次检查时确定）。 */
+    private val timeAfterAnchor = HashMap<Int, Long>()
+
+    /** 条件实例的稳定键（Condition 是 data class，用身份而不是 equals）。 */
+    private fun condKey(cond: Z.Condition): Int = System.identityHashCode(cond)
 
     private fun unitToMs(unit: Int): Long = when (unit) {
         0 -> 1L                    // ms
@@ -2191,7 +2389,8 @@ class ZExecutor(
     private fun combineConditions(
         cond: Z.Condition,
         index: Int,
-        skipped: MutableList<Result.Skip>
+        skipped: MutableList<Result.Skip>,
+        depth: Int = 0
     ): Boolean {
         val subs = subConditionsOf(cond)
         if (subs.isEmpty()) {
@@ -2199,11 +2398,14 @@ class ZExecutor(
             return false
         }
         val mode = cond.extra["matchMode"]?.toString()?.trim().orEmpty().ifBlank { "and" }
-        val need = (cond.extra["matchCount"] as? Number)?.toInt() ?: subs.size
+        // 官方：matchMode=count 且 matchCount 缺省时是 `>= (n||0)` = **恒真**。
+        // 原来缺省取 subs.size（要求全满足），行为正好相反。
+        val need = (cond.extra["matchCount"] as? Number)?.toInt()
+            ?: if (mode == "count") 0 else subs.size
         var okCount = 0
         for (sub in subs) {
             if (sub.disabled) continue
-            if (evaluate(sub, index, skipped)) okCount++
+            if (evaluate(sub, index, skipped, depth + 1)) okCount++
         }
         val ok = when (mode) {
             "or" -> okCount > 0
@@ -2239,11 +2441,22 @@ class ZExecutor(
      *  - `09:30:58`            今天这个时刻
      *  - `+02:00:00`           从**脚本开始运行**算起 2 小时后
      */
-    private fun timeAfterPassed(value: String): Boolean {
+    private fun timeAfterPassed(value: String, key: Int): Boolean {
         val v = value.trim()
         if (v.isEmpty()) return false
         val now = System.currentTimeMillis()
-        if (v.startsWith("+")) return now >= runStartedAt + durationMs(v.substring(1))
+        if (v.startsWith("+")) {
+            /*
+             * ★ `+HH:MM:SS` 的基准是**这个条件第一次被检查的时刻**，不是脚本开始时刻。
+             *
+             *   自动精灵（10426.js）：`parsedTime = Date.now() + offset`，
+             *   首次算出来后缓存（`null==parsedTime || "+"!==t[0]` 才重算）。
+             *   用脚本开始时刻做基准的话，脚本跑了 10 分钟才走到这一条，
+             *   `+00:00:05` 会立刻成立 —— 而作者要的是"到这里再等 5 秒"。
+             */
+            val anchor = timeAfterAnchor.getOrPut(key) { now }
+            return now >= anchor + durationMs(v.substring(1))
+        }
         if (v.contains("=")) {
             val m = Regex("""(\d{4})=(\d{1,2})=(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})""").find(v)
                 ?: return false
@@ -2269,14 +2482,20 @@ class ZExecutor(
         return now >= cal.timeInMillis
     }
 
-    /** `HH:MM:SS` → 毫秒。 */
+    /**
+     * `+` 后面的时长 → 毫秒。协议三种写法（10426.js）：
+     *   `+30`      → 30 秒
+     *   `+02:00`   → 2 分 00 秒
+     *   `+02:00:00`→ 2 小时
+     */
     private fun durationMs(hms: String): Long {
-        val p = hms.split(":")
-        if (p.size != 3) return 0L
-        val h = p[0].toLongOrNull() ?: 0
-        val m = p[1].toLongOrNull() ?: 0
-        val s = p[2].toLongOrNull() ?: 0
-        return ((h * 60 + m) * 60 + s) * 1000
+        val p = hms.split(":").map { it.toLongOrNull() ?: 0L }
+        return when (p.size) {
+            1 -> p[0] * 1000
+            2 -> (p[0] * 60 + p[1]) * 1000
+            3 -> ((p[0] * 60 + p[1]) * 60 + p[2]) * 1000
+            else -> 0L
+        }
     }
 
     /**

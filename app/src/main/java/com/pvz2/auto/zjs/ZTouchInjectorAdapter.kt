@@ -63,6 +63,17 @@ class ZTouchInjectorAdapter(
         ch(keyCode, holdMs)
     }
 
+    /**
+     * 写剪贴板（「识别屏幕」的默认结果模式）。
+     *
+     * 走回调而不是直接用 Context：执行器/适配器都不认识 Android 的 UI 组件，
+     * 和 appLauncher / toaster 同一套路。
+     */
+    var onSetClipboard: ((String) -> Boolean)? = null
+
+    override fun setClipboard(text: String): Boolean =
+        onSetClipboard?.invoke(text) ?: false
+
     override fun inputText(text: String) {
         // 同上：没通道就抛，别让"输入了什么"这件事无声消失。
         val ch = delegateText

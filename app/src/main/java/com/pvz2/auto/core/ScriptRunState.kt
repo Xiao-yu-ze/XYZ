@@ -150,6 +150,14 @@ object ScriptRunState {
     }
 
     fun begin(scriptName: String, entry: String) {
+        /*
+         * 开跑先清暂停闸门。
+         *
+         * 上一轮如果是在「暂停」动作上被停止的，`paused` 仍然是 true；
+         * 而 run() 里的清空在 actions.isEmpty() 之后才执行，中间这段
+         * 会让「继续」按钮闪一下（running=true 且 paused=true）。
+         */
+        paused = false
         shared.updateAndGet {
             State(
                 running = true,

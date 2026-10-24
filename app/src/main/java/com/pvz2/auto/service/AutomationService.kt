@@ -669,6 +669,18 @@ class AutomationService : Service() {
          * 「执行脚本」动作要读另一个脚本文件。执行器不认识 Context，
          * 所以这里把加载通道接进去（和 appLauncher/toaster 同一个套路）。
          */
+        /*
+         * 「识别屏幕」默认把结果写剪贴板（协议默认就是 clipboard）。
+         * 没有这条通道，这个动作在导入脚本里等于白跑。
+         */
+        adapter.onSetClipboard = { text ->
+            runCatching {
+                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                    as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("识别屏幕", text))
+                true
+            }.getOrDefault(false)
+        }
         executor.scriptLoader = { name ->
             runCatching {
                 com.pvz2.auto.zjs.ZjsRunner.listSaved(this)
