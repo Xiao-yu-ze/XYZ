@@ -1731,6 +1731,28 @@ class ZExecutor(
         val vars = action.common.vars
         if (vars.isEmpty()) return VarsApplied(action)
 
+        /*
+         * ★ 变量覆盖了**我们不认识**的字段时，必须说出来。
+         *
+         *   协议落盘时会把被变量化的原字段**删掉**。于是像 `indexNum`
+         *   （选第几个）、`xOffset`、`similarPercent`、`text`、`color`
+         *   被变量化之后，文件里根本没有这个字段 —— 我们读不到，
+         *   就静默用默认值：点第一个命中、偏移 0、阈值 90%、找空文字。
+         *
+         *   界面上"含变量"的标记还在，运行起来却毫无提示，用户只会觉得
+         *   "这脚本在别的软件里能用，在你这里乱点"。
+         *   这里把超出代换能力的字段明确记下来（日志 + 结果里的跳过原因），
+         *   不装作求值成功。
+         */
+        val unsupported = vars.keys.filter { it !in WATCHED_VAR_FIELDS }
+        if (unsupported.isNotEmpty()) {
+            log(
+                "   变量：字段 ${unsupported.joinToString("、")} 由变量定义，" +
+                    "本机只能代换 ${WATCHED_VAR_FIELDS.joinToString("/")}，" +
+                    "其余字段会按默认值执行"
+            )
+        }
+
         var common = action.common
         var changed = false
         for (field in WATCHED_VAR_FIELDS) {

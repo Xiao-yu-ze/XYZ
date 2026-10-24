@@ -394,8 +394,16 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
     RUN_MULTI("运行多个动作", executable = true),
         CONTROL_RUN_AIM("控制执行", "runAimAction", executable = true),
         CONTROL_JUMP("控制执行", "jumpTo", executable = true),
-        CONTROL_SET_JUMP_ID("控制执行", "setJumpId", executable = true),
-        CONTROL_PAUSE("控制执行", "pause", executable = true),
+        /*
+         * ★ setJumpId / pause 执行器里**没有分支**（ZExecutor 的 when 零引用），
+         *   原来却标成 executable=true —— 界面不显示"暂不支持"，用户以为能用；
+         *   运行时被 when 的 else 当"还没实现"跳过：
+         *     · setJumpId 被跳过 → 后面的 `跳转到 :那个标识` 找不到目标 → **整条任务终止**；
+         *     · pause 被跳过 → 该停的地方**继续点**，比停下来更危险。
+         *   标回 false：界面如实显示"暂不支持"，保存前校验也会提示。
+         */
+        CONTROL_SET_JUMP_ID("控制执行", "setJumpId"),
+        CONTROL_PAUSE("控制执行", "pause"),
         CONTROL_STOP("控制执行", "stop", executable = true),
         CONTROL_WAIT("控制执行", "waitDelay", executable = true),
         PROMPT("系统提示", executable = true),

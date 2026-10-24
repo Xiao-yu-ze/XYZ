@@ -44,6 +44,26 @@ class ZActionDescriberTest {
     }
 
     @Test
+    fun `每个类型标签都能反查回同一个类型（防止下拉与枚举错位）`() {
+        /*
+         * ★ 这条钉住一个真实的 P0：「类型」下拉把 AI点击 过滤掉之后，
+         *   反查还在用 `ActionType.entries[i]` 索引未过滤的枚举 ——
+         *   从第 6 项起整体错位一位，用户选「滑动」拿到的却是「AI点击」，
+         *   而且 changeType 会连带把 posData 重建成错类型的形状。
+         *
+         *   护栏就是这条回环：标签 → 类型 必须回到它自己。
+         */
+        val a = action("""{"type":"点击","delayUnit":1,"posData":{"type":"location","x":"1","y":"2"}}""")
+        Z.ActionType.entries
+            .filter { it != Z.ActionType.AI_CLICK }
+            .forEach { t ->
+                val label = ZFieldEditor.actionTypeLabel(t)
+                val got = ZFieldEditor.apply(a, "type", label)?.type
+                assertEquals("标签「$label」反查错位", t, got)
+            }
+    }
+
+    @Test
     fun `控制执行要显示 controlRunType，否则五种动作看起来一样`() {
         val r = rows("""{"type":"控制执行","controlRunType":"jumpTo","delayUnit":1}""")
         // 类型行现在是可点的下拉，六个控制执行靠 ·子类型 区分。

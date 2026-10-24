@@ -793,7 +793,10 @@ class ZjsEditorPage(
                     .show()
             }
 
-            // ---- 监听
+            // ---- 运行多个动作的子动作列表（点「子动作」那行进这里）
+        row.field == "scriptSet" -> enterScriptSet(actionIndex)
+
+        // ---- 监听
             row.field == "callbacks" -> {
                 val slots = Z.CallbackSlot.entries
                 val labels = slots.map {
@@ -1874,11 +1877,27 @@ class ZjsEditorPage(
             x = com.pvz2.auto.zjs.ZValue.parse("$cx"),
             y = com.pvz2.auto.zjs.ZValue.parse("$cy")
         )
+        /*
+         * ★ 滑动**不能带 posData**。
+         *
+         *   协议 10.7 里滑动只有 startPos/endPos，执行器也只读这两个。
+         *   原来 `expectedPosType(SWIPE)` 返回 LOCATION（非空），于是新建的滑动
+         *   同时带 posData + startPos + endPos —— 界面按协议不显示 posData，
+         *   但 toJson 照写，文件里就多出一个用户既看不见也删不掉的字段，
+         *   到自动精灵里是垃圾数据。
+         */
+        val isSwipe = type == Z.ActionType.SWIPE
+        val end = if (!isSwipe) null else Z.PosData(
+            type = Z.PosType.LOCATION,
+            x = com.pvz2.auto.zjs.ZValue.parse("$cx"),
+            // 终点默认往上挪一点：起终点重合的滑动什么也不做，用户还看不出哪里错
+            y = com.pvz2.auto.zjs.ZValue.parse("${(cy - 120).coerceAtLeast(0)}")
+        )
         return Z.Action(
             type = type,
-            posData = if (ZFieldEditor.expectedPosType(type) != null) pos else null,
-            startPos = if (type == Z.ActionType.SWIPE) pos else null,
-            endPos = if (type == Z.ActionType.SWIPE) pos else null
+            posData = if (!isSwipe && ZFieldEditor.expectedPosType(type) != null) pos else null,
+            startPos = if (isSwipe) pos else null,
+            endPos = end
         )
     }
 

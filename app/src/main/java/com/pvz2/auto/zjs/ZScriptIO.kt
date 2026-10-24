@@ -260,6 +260,6 @@ object ZScriptIO {
         val t = action.type
         // 未知 controlRunType 要显示原始字符串：显示枚举里的 "waitDelay"
         // 会让用户以为脚本里写的是"等待"，而文件里其实是别的东西。
-        return (action.rawControlRunType ?: t.controlRunType)?.let { "${t.wire}·$it" } ?: t.wire
+        return (action.rawControlRunType ?: t.controlRunType)?.let { "${t.wire}·${Z.controlRunTypeLabel(it) ?: it}" } ?: t.wire
     }
 }

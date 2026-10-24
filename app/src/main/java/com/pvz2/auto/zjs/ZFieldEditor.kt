@@ -349,7 +349,14 @@ object ZFieldEditor {
         }
         // 换类型要清掉 rawControlRunType：toJson 会优先写回那个旧原串，
         // 否则界面显示「控制执行·stop」，文件里还是那个认不出的值。
-        return action.copy(type = newType, rawControlRunType = null, posData = newPos)
+        // 滑动不持有 posData（协议 10.7 只有 startPos/endPos），换类型时同理
+        return action.copy(
+            type = newType,
+            rawControlRunType = null,
+            posData = if (newType == Z.ActionType.SWIPE) null else newPos,
+            startPos = if (newType == Z.ActionType.SWIPE) (action.startPos ?: newPos) else action.startPos,
+            endPos = if (newType == Z.ActionType.SWIPE) (action.endPos ?: newPos) else action.endPos
+        )
     }
 
     /** 动作类型要求的位置类型。返回 null = 这个动作没有位置。 */
@@ -540,9 +547,15 @@ object ZFieldEditor {
     private fun actionTypeFrom(raw: String): Z.ActionType? {
         val t = raw.trim()
         if (t.isEmpty()) return null
-        actionTypeLabels().forEachIndexed { i, label ->
-            if (label == t) return Z.ActionType.entries[i]
-        }
+        /*
+         * ★ 必须按**标签反查枚举**，不能用 `entries[i]`。
+         *
+         *   `actionTypeLabels()` 过滤掉了 AI_CLICK（它要云接口，本机不跑），
+         *   而 `ActionType.entries` 里 AI_CLICK 排第 6 —— 于是从第 6 项起
+         *   下标整体错位一位：用户在下拉里选「滑动」，拿到的却是「AI点击」，
+         *   还会连带把 posData 重建成 aiLoc 存进文件。这是静默的数据损坏。
+         */
+        Z.ActionType.entries.firstOrNull { actionTypeLabel(it) == t }?.let { return it }
         Z.ActionType.entries.firstOrNull { it.name.equals(t, ignoreCase = true) }?.let { return it }
         // "控制执行·jumpTo" 拆开按 wire + controlRunType 找
         val dot = t.indexOf('·')

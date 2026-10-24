@@ -118,11 +118,15 @@ class ZScriptIOTest {
         val noDesc = Z.Action.parse(JSONObject("""{"type":"点击","delayUnit":1}"""))!!
         assertEquals("点击", ZScriptIO.actionLabel(noDesc))
 
-        // 控制执行族要带上 controlRunType，否则五种动作看起来都叫"控制执行"
+        // 控制执行族要带上 controlRunType，否则五种动作看起来都叫"控制执行"。
+        // 子类型显示**中文**：中文界面里孤零零一段 jumpTo 用户看不懂；
+        // 落盘仍是英文 wire（ZModel.toJson 只写 controlRunType 原值）。
         val jump = Z.Action.parse(
             JSONObject("""{"type":"控制执行","controlRunType":"jumpTo","delayUnit":1}""")
         )!!
-        assertEquals("控制执行·jumpTo", ZScriptIO.actionLabel(jump))
+        assertEquals("控制执行·跳转到", ZScriptIO.actionLabel(jump))
+        // 落盘不受显示影响
+        assertEquals("jumpTo", jump.toJson().optString("controlRunType"))
     }
     // ------------------------------------------------------------ 校验的漏报
 

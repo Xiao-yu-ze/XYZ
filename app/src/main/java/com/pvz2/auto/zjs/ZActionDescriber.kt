@@ -552,16 +552,21 @@ object ZActionDescriber {
                 // 本机刻意不实现（只影响速度、不影响判定），所以不给开关：
                 // 拨了不生效的开关比没有这个字段更糟。
                 oth += Row(
-                    "${p}快速搜图",
-                    if (extraBool(pos, "quickSearch")) "是（本机未实现，不影响识别）" else "否（本机未实现）",
-                    Kind.READONLY
+                    "${p}快速搜图（本机不生效）",
+                    if (extraBool(pos, "quickSearch")) "是" else "否",
+                    Kind.SWITCH, field = "$prefix.quickSearch"
                 )
+                val sm = extraStr(pos, "searchMode") ?: "color_2.21"
+                // 文件里可能是 HOG 之类我们没实现的模式：保留在选项里（并标注），
+                // 否则弹窗预选会落到第一项，用户点一下就把原值改掉了。
+                val smOpts = buildList {
+                    add("color_2.21"); add("outline_2.21"); add("COLOR")
+                    if (sm !in this) add(sm)
+                }
                 oth += Row(
                     "${p}搜索模式",
-                    extraStr(pos, "searchMode") ?: "color_2.21",
-                    Kind.ENUM,
-                    listOf("color_2.21", "outline_2.21", "COLOR"),
-                    field = "$prefix.searchMode"
+                    if (sm in listOf("color_2.21", "COLOR", "outline_2.21")) sm else "$sm（本机按默认模式跑）",
+                    Kind.ENUM, smOpts, field = "$prefix.searchMode"
                 )
                 oth += Row(
                     "${p}缩放方式",
@@ -582,11 +587,15 @@ object ZActionDescriber {
                     pos.similarPercent?.let { "$it%" } ?: "未设置（默认 90%）",
                     Kind.PERCENT, field = "$prefix.similarPercent"
                 )
+                val om = extraStr(pos, "ocrMode") ?: "local_v2"
+                val omOpts = buildList {
+                    add("local_v2"); add("local")
+                    if (om !in this) add(om)   // 文件里是 online 时也要能预选回去
+                }
                 oth += Row(
                     "${p}OCR 模式",
-                    extraStr(pos, "ocrMode") ?: "local_v2",
-                    Kind.ENUM, listOf("local_v2", "local"),
-                    field = "$prefix.ocrMode"
+                    if (om == "online") "online（云识别，本机按本地跑）" else om,
+                    Kind.ENUM, omOpts, field = "$prefix.ocrMode"
                 )
             }
 
@@ -652,8 +661,8 @@ object ZActionDescriber {
             }.getOrNull()
         }
         oth += Row(
-            "${p}周围条件",
-            aroundSummary ?: if (aroundRaw == null) "（未设置，点击添加）" else "（格式无法解析）",
+            "${p}周围条件（本机不生效）",
+            aroundSummary ?: if (aroundRaw == null) "（未设置）" else "（格式无法解析）",
             Kind.ENTER, field = "$prefix.around"
         )
 
@@ -697,18 +706,18 @@ object ZActionDescriber {
         if (action.type in CLICK_FAMILY) {
             // 极速点击（10.1）：按下立即抬起、不等回执。本机注入本来就异步，不需要它。
             rows += Row(
-                "极速点击",
-                if (anyBool(e, "highSpeedTap")) "是（本机未实现，不影响速度）" else "否（本机未实现）",
-                Kind.READONLY
+                "极速点击（本机不生效）",
+                if (anyBool(e, "highSpeedTap")) "是" else "否",
+                Kind.SWITCH, field = "highSpeedTap"
             )
         }
         if (action.type == Z.ActionType.INPUT_TEXT) {
             // clearBeforeInput（10.11）：先清空再输入。本机是"直接输入"，
             // 不清空 —— 是否清空取决于目标输入框本身。
             rows += Row(
-                "先清空",
-                if (anyBool(e, "clearBeforeInput")) "是（本机未实现，直接输入）" else "否（本机未实现）",
-                Kind.READONLY
+                "先清空（本机不生效）",
+                if (anyBool(e, "clearBeforeInput")) "是" else "否",
+                Kind.SWITCH, field = "clearBeforeInput"
             )
         }
         return rows
