@@ -1070,7 +1070,7 @@ return PosGroup(rec, par, oth)
             if (pt != "toast") {
                 rows += Row(
                     "说明",
-                    "本机只实现 toast：选 $pt 也会按 toast 弹，且**不会阻塞**等按钮",
+                    "本机只实现 toast：选 $pt 也会按 toast 弹，且不会阻塞等按钮",
                     Kind.READONLY
                 )
             }
