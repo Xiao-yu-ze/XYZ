@@ -910,11 +910,16 @@ class ZjsEditorPage(
         val coordField = row.field
         val isCoordAnchor = coordField.endsWith(".x") ||
             coordField.endsWith("limitPosX") ||
-            coordField.endsWith("limitPosY")
+            coordField.endsWith("limitPosY") ||
+            // 取色行：按钮走同一套准星，只是拿到点之后读像素而不是写坐标。
+            // 少了这一条，「从屏幕取色」那一行就只有文字、没有 ⊕ ——
+            // 用户会以为功能没做。
+            coordField.endsWith(".colorPick")
         if (row.kind == ZActionDescriber.Kind.COORD && isCoordAnchor &&
             !coordField.endsWith("limitPosY")
         ) {
-            line.addView(glyphButton("⊕", "在画面上取这一步的坐标") {
+            val pickTip = if (coordField.endsWith(".colorPick")) "在画面上取颜色" else "在画面上取这一步的坐标"
+        line.addView(glyphButton("⊕", pickTip) {
                 onClick()
             })
         }

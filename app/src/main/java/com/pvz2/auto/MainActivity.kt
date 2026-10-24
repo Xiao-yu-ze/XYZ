@@ -685,6 +685,28 @@ class MainActivity : AppCompatActivity() {
     // ------------------------------------------------------------ 取点准星
 
     /**
+     * 准星提示文字：`x, y  #RRGGBB`。
+     *
+     * 取色时用户需要**看着颜色**移动准星，而不是盲拖到一个坐标再点确定。
+     * 拖到哪、那里是什么颜色必须实时可见 —— 和取坐标是同一套交互。
+     * 颜色从冻结帧取（arm 时那一帧），坐标与它天然对齐。
+     */
+    private fun crosshairText(x: Int, y: Int): String {
+        val bmp = com.pvz2.auto.core.PreviewPicker.frozen.value
+            ?: com.pvz2.auto.service.VirtualDisplaySession.previewFlow.value
+        if (bmp == null || bmp.isRecycled || bmp.width <= 0 || bmp.height <= 0) return "$x, $y"
+        val px = x.coerceIn(0, bmp.width - 1)
+        val py = y.coerceIn(0, bmp.height - 1)
+        val c = runCatching { bmp.getPixel(px, py) }.getOrNull() ?: return "$x, $y"
+        val hex = "%02X%02X%02X".format(
+            android.graphics.Color.red(c),
+            android.graphics.Color.green(c),
+            android.graphics.Color.blue(c)
+        )
+        return "$x, $y  #$hex"
+    }
+
+    /**
      * 进入准星模式：显示准星和底部工具条，接管预览的触摸。
      *
      * ## 为什么和 [setupPreviewTouch] 分开
@@ -722,13 +744,13 @@ class MainActivity : AppCompatActivity() {
                 val sx = (init.x.toFloat() / iw) * (r[2] - r[0]) + r[0]
                 val sy = (init.y.toFloat() / ih) * (r[3] - r[1]) + r[1]
                 overlay.show(sx, sy)
-                pos.text = "${init.x}, ${init.y}"
+                pos.text = crosshairText(init.x, init.y)
             } else {
                 val cx = (r[0] + r[2]) / 2f
                 val cy = (r[1] + r[3]) / 2f
                 overlay.show(cx, cy)
                 PreviewPicker.moveCrosshair(iw / 2, ih / 2, iw, ih)
-                pos.text = "${iw / 2}, ${ih / 2}"
+                pos.text = crosshairText(iw / 2, ih / 2)
             }
         }
 
@@ -738,7 +760,7 @@ class MainActivity : AppCompatActivity() {
             val vx = ((x - r[0]) / (r[2] - r[0]) * iw).toInt()
             val vy = ((y - r[1]) / (r[3] - r[1]) * ih).toInt()
             PreviewPicker.moveCrosshair(vx, vy, iw, ih)
-            pos.text = "${vx.coerceIn(0, iw - 1)}, ${vy.coerceIn(0, ih - 1)}"
+            pos.text = crosshairText(vx.coerceIn(0, iw - 1), vy.coerceIn(0, ih - 1))
         }
 
         setupPickerBar(iw, ih)

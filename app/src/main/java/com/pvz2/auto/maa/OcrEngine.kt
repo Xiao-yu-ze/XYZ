@@ -139,7 +139,16 @@ class OcrEngine(private val context: Context) : AutoCloseable {
             for ((name, m) in variants) {
                 val lines = try {
                     val boxes = detect(environment, det, m)
-                    boxes.mapNotNull { box -> recognizeBox(environment, rec, m, box, minConfidence) }
+                    val out = boxes.mapNotNull { box ->
+                        recognizeBox(environment, rec, m, box, minConfidence)
+                    }
+                    // 每种读法都记一行：分不清"没框出来"和"框出来但没认出"时靠它
+                    Log.i(
+                        TAG,
+                        "OCR[$name] 区域 ${m.width()}x${m.height()} ch=${m.channels()} " +
+                            "框=${boxes.size} 行=${out.size}"
+                    )
+                    out
                 } catch (t: Throwable) {
                     Log.w(TAG, "OCR 检测失败（$name）", t)
                     emptyList()
@@ -170,6 +179,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
                         Log.i(TAG, "OCR 整块兜底命中（$name）：${line.text}")
                         return listOf(line)
                     }
+                    Log.i(TAG, "OCR 整块兜底失败（$name）")
                 }
             }
             emptyList()
