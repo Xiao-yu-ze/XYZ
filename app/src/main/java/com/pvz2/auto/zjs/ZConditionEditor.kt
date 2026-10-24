@@ -48,7 +48,7 @@ object ZConditionEditor {
         Z.ConditionType.RANDOM to "随机运行",
         Z.ConditionType.TIME_AFTER to "在时间之后",
         Z.ConditionType.TIME_INTERVAL to "时间间隔",
-        Z.ConditionType.JS_EXPRESSION to "JS 表达式（本机不支持）",
+        Z.ConditionType.JS_EXPRESSION to "JS 表达式",
         Z.ConditionType.CONDITION_SET to "多个条件"
     )
 

@@ -75,7 +75,7 @@ class ZActionDescriberTest {
 
     @Test
     fun `安卓做不了的动作会有一行醒目提示`() {
-        val r = rows("""{"type":"运行JS代码","delayUnit":1}""")
+        val r = rows("""{"type":"加密动作","delayUnit":1}""")
         assertTrue("应提示暂不支持：$r", r.any { it.label.contains("执行") && it.value.contains("暂不支持") })
     }
 

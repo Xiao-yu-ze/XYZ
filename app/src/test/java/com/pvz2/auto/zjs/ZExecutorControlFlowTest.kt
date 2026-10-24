@@ -132,6 +132,87 @@ class ZExecutorControlFlowTest {
     }
 
     @Test
+    fun `运行JS代码能改运行时变量（无尽模式关卡加一）`() {
+        val logs = ArrayList<String>()
+        // 初值 1 → 每跑一次 +1。这就是"每打一关加一"的最小写法。
+        val s = script(
+            "{\"type\":\"设置变量\",\"vars\":[{\"name\":\"关卡\",\"value\":{\"varType\":\"number\",\"valueExp\":\"1\"}}]}",
+            "{\"type\":\"运行JS代码\",\"jsCode\":\"关卡 = 关卡 + 1; console.log('现在是 ' + 关卡 + ' 关')\"}",
+            "{\"type\":\"运行JS代码\",\"jsCode\":\"zdjl.setVar('关卡', zdjl.getVar('关卡') + 1)\"}",
+            "{\"type\":\"JS 表达式\",\"delay\":\"0\"}".replace(
+                "\"type\":\"JS 表达式\"", "\"type\":\"控制执行\",\"controlRunType\":\"waitDelay\""
+            ).replace(
+                "\"delay\":\"0\"",
+                "\"delay\":\"0\",\"condition\":{\"type\":\"jsExpression\",\"expression\":\"关卡 === 3\"}"
+            )
+        )
+        val r = executor(logs).run(s)
+        assertEquals("JS 与条件都该成功：${r.skipped}", 0, r.skipped.size)
+        assertTrue("第一次 +1 后应打印 2：$logs", logs.any { it.contains("现在是 2 关") })
+        assertTrue("表达式 关卡===3 应成立：$logs", logs.any { it.contains("→ true") })
+    }
+
+    @Test
+    fun `界面里填的初值能被 JS 读到并加一（无尽模式关卡）`() {
+        // 这一步模拟用户操作：在「设置变量」那行填 `关卡=1`
+        val raw = Z.Action.parse(
+            org.json.JSONObject("""{"type":"设置变量","delayUnit":0}""")
+        )!!
+        val withVars = ZFieldEditor.apply(raw, "vars", "关卡=1")!!
+        val arr = withVars.extra["vars"] as org.json.JSONArray
+        assertEquals(1, arr.length())
+        assertEquals("关卡", arr.getJSONObject(0).getString("name"))
+        assertEquals("number", arr.getJSONObject(0).getJSONObject("value").getString("varType"))
+
+        // 描述器要能把它显示回 `关卡=1`（否则用户改完看不见）
+        val rows = ZActionDescriber.describe(withVars)
+        assertTrue(
+            "应有一行显示 关卡=1：$rows",
+            rows.any { it.value.contains("关卡=1") }
+        )
+
+        // 真跑：初值 1 → JS 加一 → 2，条件 关卡===2 成立
+        val logs = ArrayList<String>()
+        val r = executor(logs).run(
+            script(
+                """{"type":"设置变量","delayUnit":0,"vars":[{"name":"关卡","value":{"varType":"number","valueExp":"1"}}]}""",
+                """{"type":"运行JS代码","delayUnit":0,"jsCode":"关卡 = 关卡 + 1"}""",
+                """{"type":"控制执行","controlRunType":"waitDelay","delay":"0","delayUnit":0,""" +
+                    """"condition":{"type":"jsExpression","expression":"关卡 === 2"}}"""
+            )
+        )
+        assertEquals("都该成功：${r.skipped}", 0, r.skipped.size)
+        assertTrue("表达式 关卡===2 应成立：$logs", logs.any { it.contains("→ true") })
+    }
+
+    @Test
+    fun `JS 语法错误要报出来，不能装作跑过`() {
+        val logs = ArrayList<String>()
+        val r = executor(logs).run(
+            script("{\"type\":\"运行JS代码\",\"jsCode\":\"this is not js(\"}")
+        )
+        assertEquals(1, r.skipped.size)
+        assertTrue("原因要带出语法错误：${r.skipped[0].reason}", r.skipped[0].reason.contains("JS"))
+    }
+
+    @Test
+    fun `JS 表达式求值失败算不成立，且不被取反`() {
+        val logs = ArrayList<String>()
+        val r = executor(logs).run(
+            script(
+                "{\"type\":\"控制执行\",\"controlRunType\":\"waitDelay\",\"delay\":\"0\"," +
+                    "\"condition\":{\"type\":\"jsExpression\",\"expression\":\"###\"," +
+                    "\"runWhenFalse\":false}}"
+            )
+        )
+        assertTrue("表达式坏了应当被判为不成立：${r.skipped}", r.skipped.isNotEmpty())
+        assertTrue(
+            "原因要指向 JS 求值：${r.skipped}",
+            r.skipped.any { it.reason.contains("JS") || it.reason.contains("不满足") }
+        )
+    }
+
+    @Test
     fun `暂停能被打断，不会把停止吞掉`() {
         val logs = ArrayList<String>()
         val ex = executor(logs)

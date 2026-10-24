@@ -86,6 +86,16 @@ android {
 }
 
 dependencies {
+    /*
+     * 运行JS代码 / JS表达式条件：Rhino 是纯 Java 的 ES5 引擎。
+     *
+     * 为什么不是 WebView：WebView 的 evaluateJavascript 是**异步 + 必须主线程**，
+     * 而执行器是同步阻塞的一条线程，接进来要么死等要么改架构。
+     * Rhino 直接在调用线程上算，语义干净，Android 上只要关掉字节码优化
+     * （optimizationLevel = -1，解释模式）就不会踩 DEX 那一堆坑。
+     */
+    implementation("org.mozilla:rhino:1.7.15")
+
     implementation("androidx.core:core-ktx:1.13.1")
     // 预览固定在顶部、功能页左右滑动切换。viewpager2 之前只是传递依赖，显式声明避免版本漂移。
     implementation("androidx.viewpager2:viewpager2:1.1.0")

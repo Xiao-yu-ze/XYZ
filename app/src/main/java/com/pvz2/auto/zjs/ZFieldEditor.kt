@@ -469,6 +469,40 @@ object ZFieldEditor {
         field in EXTRA_INTS ->
             action.copy(extra = extraWith(action.extra, field, value.trim().toIntOrNull()))
 
+        /*
+         * `vars`（设置变量）：界面用 `名字=值;名字2=值2` 表达。
+         *
+         * 值能当数字就按 number 存、否则 string —— 协议里 varType 决定后面
+         * 怎么求值，类型存错会让「关卡+1」变成字符串拼接。
+         */
+        field == "vars" -> {
+            val arr = org.json.JSONArray()
+            value.split(';', '\n', '；').forEach { piece ->
+                val seg = piece.trim()
+                if (seg.isEmpty()) return@forEach
+                val eq = seg.indexOf('=')
+                if (eq <= 0) return@forEach
+                val name = seg.substring(0, eq).trim()
+                val raw = seg.substring(eq + 1).trim()
+                if (name.isEmpty()) return@forEach
+                val isNum = raw.toDoubleOrNull() != null
+                arr.put(
+                    org.json.JSONObject().apply {
+                        put("name", name)
+                        put("value", org.json.JSONObject().apply {
+                            put("varType", if (isNum) "number" else "string")
+                            put("valueExp", if (isNum) raw else "\"" + raw + "\"")
+                        })
+                    }
+                )
+            }
+            action.copy(
+                extra = action.extra.toMutableMap().apply {
+                    if (arr.length() == 0) remove("vars") else put("vars", arr)
+                }
+            )
+        }
+
         field in EXTRA_STRINGS ->
             action.copy(extra = extraWith(action.extra, field, value.ifBlank { null }))
 

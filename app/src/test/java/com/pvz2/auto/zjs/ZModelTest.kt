@@ -24,7 +24,7 @@ class ZModelTest {
             "点击", "点击图片", "点击文字", "点击颜色", "点击节点", "AI点击",
             "滑动", "单指手势", "多指滑动", "按键", "输入内容", "识别屏幕",
             "打开应用", "打开链接", "执行脚本", "运行多个动作",
-            "系统提示", "设置变量", "运行JS代码", "加密动作"
+            "系统提示", "设置变量", "加密动作", "加密动作"
         )
         for (w in wires) {
             assertNotNull("认不出动作类型 [$w]", Z.ActionType.ofWire(w, null))
@@ -49,9 +49,10 @@ class ZModelTest {
     fun `执行器只标在安卓能做的那部分上`() {
         assertTrue(Z.ActionType.CLICK.executable)
         assertTrue(Z.ActionType.SWIPE.executable)
-        // 这三类需要 PC 能力或 JS 沙箱，先不标
         assertTrue(Z.ActionType.MULTI_SWIPE.executable)
-        assertTrue(!Z.ActionType.RUN_JS.executable)
+        // 运行JS代码现在有 Rhino 引擎，能真跑
+        assertTrue(Z.ActionType.RUN_JS.executable)
+        // 加密动作仍需要自动精灵的解密方案
         assertTrue(!Z.ActionType.ENCRYPTED.executable)
     }
 

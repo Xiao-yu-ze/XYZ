@@ -31,12 +31,63 @@ class ZExecutor(
 ) {
 
     /**
+     * 给 JS 引擎准备宿主能力。
+     *
+     * 只传本机真有的那几样：变量表、日志、持久化存储、屏幕信息、注入、剪贴板。
+     * 没传的能力在脚本里调用会明确报"本机未实现"（见 JsEngine.UNSUPPORTED）。
+     */
+    private fun jsEnv(): JsEngine.Env = JsEngine.Env(
+        vars = scriptVars,
+        log = { line -> log(line) },
+        storageGet = jsStorage?.get?.let { g -> { k: String -> g(k) } },
+        storageSet = jsStorage?.set,
+        storageRemove = jsStorage?.remove,
+        deviceInfo = {
+            mapOf(
+                "width" to screen.width,
+                "height" to screen.height,
+                "screenWidth" to screen.width,
+                "screenHeight" to screen.height,
+                "density" to screen.density,
+                "densityDpi" to (screen.density * 160).toInt(),
+                "clientType" to "android"
+            )
+        },
+        tap = { x, y, hold -> inject.tap(x, y, hold) },
+        swipe = { x1, y1, x2, y2, dur -> inject.swipe(x1, y1, x2, y2, dur) },
+        clipboardGet = { jsClipboard?.get?.invoke() },
+        clipboardSet = { text -> jsClipboard?.set?.invoke(text) ?: false },
+        toast = jsToast
+    )
+
+    /**
      * 读另一个脚本（「执行脚本」动作用）。null = 通道未接（单测里就是 null）。
      *
      * 走回调而不是直接依赖 ZjsRunner：执行器不认识 Android 的 Context，
      * 也就能在没有文件系统的单测里跑。和 appLauncher/toaster 是同一个套路。
      */
     var scriptLoader: ((String) -> Z.Script?)? = null
+
+    /** JS 的持久化存储（zdjl.getStorage/setStorage）。null = 未接通道 */
+    var jsStorage: JsStorage? = null
+
+    /** JS 的剪贴板通道。 */
+    var jsClipboard: JsClipboard? = null
+
+    /** JS 的 toast 通道。 */
+    var jsToast: ((String) -> Unit)? = null
+
+    /** 持久化存储接口（跨运保留：关卡数这类用得上）。 */
+    interface JsStorage {
+        val get: (String) -> String?
+        val set: (String, String) -> Unit
+        val remove: (String) -> Unit
+    }
+
+    interface JsClipboard {
+        val get: () -> String?
+        val set: (String) -> Boolean
+    }
 
     /** 注入接口。真机实现走 Shizuku，测试实现记录调用。 */
     interface Injector {
@@ -858,6 +909,9 @@ class ZExecutor(
                 val subResult = try {
                     ZExecutor(inject, screen, matcher, log).also { e ->
                         e.scriptLoader = loader
+                        e.jsStorage = jsStorage
+                        e.jsClipboard = jsClipboard
+                        e.jsToast = jsToast
                         e.scriptVars.putAll(scriptVars)
                     }.run(sub)
                 } finally {
@@ -1011,6 +1065,31 @@ class ZExecutor(
                     return Outcome(stop = true)
                 }
                 log("[$index] $label 继续执行")
+                Outcome()
+            }
+
+            // ---- 运行JS代码（10.25 m23689）：jsCode 直接跑在沙箱里
+            //
+            // 自动精灵那边是 QuickJS；我们用 Rhino（纯 Java、解释模式），
+            // 差别集中在 ES6 语法（箭头函数/let/模板串）—— 用到时会明确报语法错误。
+            // 变量和执行器的运行时变量是同一份：全局名直接读写，
+            // 也可以 get('名字') / set('名字', 值)。
+            Z.ActionType.RUN_JS -> {
+                val code = action.extra["jsCode"]?.toString().orEmpty()
+                if (code.isBlank()) {
+                    skipped.add(Result.Skip(index, label, "运行JS代码：jsCode 是空的"))
+                    return null
+                }
+                val out = JsEngine.run(code, jsEnv())
+                if (!out.ok) {
+                    skipped.add(Result.Skip(index, label, "运行JS代码出错：${out.error}"))
+                    log("[$index] $label JS 出错：${out.error}")
+                    return null
+                }
+                log(
+                    "[$index] $label JS 执行完成" +
+                        (out.value?.let { "，结果 $it" } ?: "")
+                )
                 Outcome()
             }
 
@@ -1931,6 +2010,25 @@ class ZExecutor(
                         (if (anchor == null) "首次" else "距上次 ${now - anchor}ms") + " → $ok"
                 )
                 ok
+            }
+
+            // ---- JS 表达式（FIELDS.md:273）
+            Z.ConditionType.JS_EXPRESSION -> {
+                val expr = cond.extra["expression"]?.toString().orEmpty()
+                if (expr.isBlank()) {
+                    log("   条件 JS 表达式：expression 是空的，判不了")
+                    skipped.add(Result.Skip(index, "条件", "JS 表达式是空的"))
+                    return false
+                }
+                val v = JsEngine.evalBool(expr, jsEnv())
+                if (v == null) {
+                    // 求值失败 ≠ false，更不能被 runWhenFalse 翻成 true
+                    log("   条件 JS 表达式「$expr」求值失败（语法/运行时错误）")
+                    skipped.add(Result.Skip(index, "条件", "JS 表达式求值失败：$expr"))
+                    return false
+                }
+                log("   条件 JS 表达式「$expr」→ $v")
+                v
             }
 
             // 其余条件安卓上暂时判不了

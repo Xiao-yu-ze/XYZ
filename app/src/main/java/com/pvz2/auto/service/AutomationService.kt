@@ -681,6 +681,43 @@ class AutomationService : Service() {
                 true
             }.getOrDefault(false)
         }
+        /*
+         * JS 的持久化存储（zdjl.getStorage/setStorage）：
+         * 关卡计数这类要跨次运行保留的值就存在这里。
+         * 用 SharedPreferences 而不是文件，读写都是同步的，执行器里能直接调。
+         */
+        val jsPrefs = getSharedPreferences("zjs_js_storage", android.content.Context.MODE_PRIVATE)
+        executor.jsStorage = object : ZExecutor.JsStorage {
+            override val get: (String) -> String? = { k -> jsPrefs.getString(k, null) }
+            override val set: (String, String) -> Unit = { k, v ->
+                jsPrefs.edit().putString(k, v).apply()
+            }
+            override val remove: (String) -> Unit = { k -> jsPrefs.edit().remove(k).apply() }
+        }
+        executor.jsClipboard = object : ZExecutor.JsClipboard {
+            override val get: () -> String? = {
+                runCatching {
+                    val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                        as android.content.ClipboardManager
+                    cm.primaryClip?.getItemAt(0)?.coerceToText(this@AutomationService)?.toString()
+                }.getOrNull()
+            }
+            override val set: (String) -> Boolean = { text ->
+                runCatching {
+                    val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                        as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("zdjl", text))
+                    true
+                }.getOrDefault(false)
+            }
+        }
+        executor.jsToast = { msg ->
+            runCatching {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
         executor.scriptLoader = { name ->
             runCatching {
                 com.pvz2.auto.zjs.ZjsRunner.listSaved(this)

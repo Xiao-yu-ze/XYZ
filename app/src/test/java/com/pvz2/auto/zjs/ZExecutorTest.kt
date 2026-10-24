@@ -210,7 +210,7 @@ class ZExecutorTest {
 
     @Test
     fun `安卓不支持的动作跳过并记原因`() {
-        val (r, inj) = exec("""{"actions":[{"type":"运行JS代码","delayUnit":0}]}""")
+        val (r, inj) = exec("""{"actions":[{"type":"加密动作","delayUnit":0}]}""")
         assertEquals(0, inj.taps.size)
         assertTrue("应说明不支持：${r.skipped}", r.skipped.any { it.reason.contains("暂不支持") })
     }
@@ -274,14 +274,26 @@ class ZExecutorTest {
 
     @Test
     fun `判不出来的条件按不成立处理`() {
-        // 按成立会乱点，按不成立只是不动 —— 后者用户能查，前者查不出来
+        // 按成立会乱点，按不成立只是不动 —— 后者用户能查，前者查不出来。
+        // JS 表达式现在真能求值；**求值失败**（语法错误）才落到这一支。
         val (r, inj) = exec(
             """{"actions":[{"type":"点击","delayUnit":0,
-                "condition":{"type":"jsExpression","expression":"1+1==2"},
+                "condition":{"type":"jsExpression","expression":"###不是表达式"},
                 "posData":{"type":"location","x":"1","y":"1"}}]}"""
         )
         assertEquals(0, inj.taps.size)
         assertTrue(r.skipped.any { it.reason.contains("条件不满足") })
+    }
+
+    @Test
+    fun `JS 表达式成立时动作照常执行`() {
+        val (r, inj) = exec(
+            """{"actions":[{"type":"点击","delayUnit":0,
+                "condition":{"type":"jsExpression","expression":"1+1==2"},
+                "posData":{"type":"location","x":"7","y":"9"}}]}"""
+        )
+        assertEquals(1, inj.taps.size)
+        assertEquals(0, r.skipped.size)
     }
 
     @Test

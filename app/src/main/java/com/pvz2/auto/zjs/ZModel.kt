@@ -421,7 +421,8 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
      * 表达式、随机、取文本等其余 20 种 VarValue 仍求不出来（会明确报出来）。
      */
     SET_VARS("设置变量", executable = true),
-        RUN_JS("运行JS代码"),
+        /* 运行JS代码：Rhino 解释执行，变量与运行时变量表互通。 */
+    RUN_JS("运行JS代码", executable = true),
         ENCRYPTED("加密动作"),
 
         /**

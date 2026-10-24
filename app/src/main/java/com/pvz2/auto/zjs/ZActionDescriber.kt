@@ -740,6 +740,28 @@ object ZActionDescriber {
         return rows
     }
 
+    /** 把 `extra["vars"]`（[{name, value:{varType,valueExp}}]）摊成 name=value。 */
+    private fun varsPairsOf(e: Map<String, Any?>): List<Pair<String, String>> {
+        val raw = e["vars"] ?: return emptyList()
+        val arr = runCatching {
+            when (raw) {
+                is org.json.JSONArray -> raw
+                is String -> org.json.JSONArray(raw)
+                else -> org.json.JSONArray(raw.toString())
+            }
+        }.getOrNull() ?: return emptyList()
+        val out = ArrayList<Pair<String, String>>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val name = o.optString("name").trim()
+            if (name.isEmpty()) continue
+            val v = o.optJSONObject("value")
+            val exp = v?.optString("valueExp").orEmpty()
+            out.add(name to exp)
+        }
+        return out
+    }
+
     private fun typeRows(action: Z.Action): List<Row> {
         val e = action.extra
         val rows = ArrayList<Row>()
@@ -763,7 +785,51 @@ object ZActionDescriber {
                 field = "keyCode"
             )
 
-            // 输入内容（10.11）
+            /*
+         * 运行JS代码（10.25）：jsCode 原样跑在 Rhino 沙箱里。
+         *
+         * ★ 变量和执行器的运行时变量是**同一份**，所以「设置变量」建的
+         *   变量在这里直接当全局变量用；改动会写回去。
+         *   标签里把可用的东西写清楚，用户不用去翻文档。
+         */
+        Z.ActionType.RUN_JS -> {
+            rows += Row(
+                "JS 代码",
+                anyStr(e, "jsCode").orEmpty(),
+                Kind.TEXT,
+                field = "jsCode"
+            )
+            rows += Row(
+                "可用变量/函数",
+                "zdjl.getVar/setVar（同自动精灵）；console.log 写脚本日志",
+                Kind.READONLY
+            )
+        }
+
+        /*
+         * 设置变量（10.24）：`vars` 是 [{name, value}] 数组。
+         *
+         * ★ 以前这里**一行都没有** —— 用户能在脚本里"设置变量"，
+         *   却在界面上设不了初值，只能去改 JSON。而"给初始关卡设初值"
+         *   正是这个动作最常见的用法。
+         *   用一行 `名字=值;名字2=值2` 表达，读写都是它。
+         */
+        Z.ActionType.SET_VARS -> {
+            val pairs = varsPairsOf(e)
+            rows += Row(
+                "变量（名字=值，多个用 ; 分隔）",
+                if (pairs.isEmpty()) "（空）" else pairs.joinToString("; ") { "${it.first}=${it.second}" },
+                Kind.TEXT,
+                field = "vars"
+            )
+            rows += Row(
+                "说明",
+                "运行JS代码 里用 zdjl.getVar/setVar 读写；也能用 \${名字} 代换进查找文字",
+                Kind.READONLY
+            )
+        }
+
+        // 输入内容（10.11）
             Z.ActionType.INPUT_TEXT -> {
                 rows += Row(
                     "输入内容",
