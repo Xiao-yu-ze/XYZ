@@ -1396,6 +1396,12 @@ class ZExecutor(
                          * **不传递跳转/停止**（协议如此），而 on_error 本质是控制流。
                          */
                         val to = (action.extra["onTimeoutJump"] as? String)?.trim().orEmpty()
+                if (to.isEmpty() && boolExtra(action, "onTimeoutStop")) {
+                    val why = "等待候选超时（${timeout}ms），按 Maa 语义结束任务"
+                    skipped.add(Result.Skip(index, label, why))
+                    log("[等待候选] $why")
+                    return Outcome(abort = why)
+                }
                         if (to.isNotEmpty()) {
                             log("[等待候选] 等了 ${timeout}ms 没命中 → 超时跳转 $to（Maa on_error）")
                             skipped.add(Result.Skip(index, label, "超时（${timeout}ms）转 on_error：$to"))

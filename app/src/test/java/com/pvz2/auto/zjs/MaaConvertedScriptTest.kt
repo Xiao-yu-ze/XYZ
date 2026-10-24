@@ -6,11 +6,11 @@ import org.junit.Test
 import java.io.File
 
 /**
- * 转换出来的 Maa 脚本必须能被我们的解析器完整吃下。
+ * 转换出来的 Maa 脚本必须能解析、并且结构与手写脚本一致。
  *
- * 这些文件是 `tools/maa2zjs_towerbanana.py` 用 Maa pipeline 生成的，
- * 一旦转换器产出的字段名/类型和模型对不上，这里立刻红 —— 而不是等到
- * 手机上打开编辑器才发现"这一行不认识"。
+ * 手写脚本（常规四脚僵王无尽）的做法是：**动作自己带条件 + 反复检查**，
+ * 一个节点干完，不额外开路由/等待/跳转节点。第一版转换器把每个节点拆成四个，
+ * 181 个节点、149 条跳转 —— 用户一眼看出不对。这里是那次的回归线。
  */
 class MaaConvertedScriptTest {
 
@@ -22,22 +22,67 @@ class MaaConvertedScriptTest {
         return r.script ?: error("没有解析出脚本")
     }
 
+    private fun many(): Z.Script = parse("../build/zjs/塔香蕉_无尽.zjs")
+
     @Test
-    fun `塔香蕉完整脚本能解析且节点类型都认识`() {
-        val s = parse("../build/zjs/塔香蕉_无尽.zjs")
-        assertTrue("节点太少：${s.actions.size}", s.actions.size > 90)
-        // 不允许出现"未知类型"——未知类型在自动精灵里会直接抛错
-        val unknown = s.actions.map { it.type }.distinct()
-        assertTrue("类型集合空", unknown.isNotEmpty())
-        // 关键：等待候选与滑动都要有
-        assertTrue(
-            "应当有等待候选节点",
-            s.actions.any { it.type == Z.ActionType.WAIT_CANDIDATES }
-        )
-        assertTrue(
-            "应当有滑动节点",
-            s.actions.any { it.type == Z.ActionType.SWIPE }
-        )
+    fun `能解析且节点类型都认识`() {
+        val s = many()
+        assertTrue("节点太少：${s.actions.size}", s.actions.size > 60)
+        assertTrue("应当有滑动", s.actions.any { it.type == Z.ActionType.SWIPE })
+        assertTrue("应当有分支（等待候选）", s.actions.any { it.type == Z.ActionType.WAIT_CANDIDATES })
+    }
+
+    /** 旧设计每个节点后面跟一个「收尾等待」节点 —— 现在 post_delay 折进下一个节点的 delay。 */
+    @Test
+    fun `不再生成独立的等待节点`() {
+        val bad = many().actions.filter { a ->
+            a.type == Z.ActionType.CONTROL_WAIT &&
+                (a.extra["desc"] as? String ?: a.common.desc ?: "").contains("收尾等待")
+        }
+        assertTrue("不该再有收尾等待节点：${bad.size} 个", bad.isEmpty())
+    }
+
+    /** 线性节点的识别要变成**条件 + repeatWhenFalse**，而不是另开一个等待候选。 */
+    @Test
+    fun `线性等待用条件表达而不是等待候选`() {
+        val s = many()
+        val withRetry = s.actions.filter { a ->
+            val c = a.common.condition
+            c != null && c.repeatWhenFalse
+        }
+        assertTrue("应当有带反复检查的条件：${withRetry.size}", withRetry.isNotEmpty())
+        // 分支节点只应出现在真正的分叉处（本脚本 7 处）
+        val waits = s.actions.count { it.type == Z.ActionType.WAIT_CANDIDATES }
+        assertTrue("分支节点太多，说明又在拆节点：$waits", waits <= 12)
+    }
+
+    /** 每个分支都要有超时去向，不能"超时就掉进下一个无关节点"。 */
+    @Test
+    fun `每个分支都有超时处理`() {
+        val bad = many().actions
+            .filter { it.type == Z.ActionType.WAIT_CANDIDATES }
+            .filter { a ->
+                val jump = (a.extra["onTimeoutJump"] as? String).orEmpty()
+                val stop = a.extra["onTimeoutStop"]
+                jump.isEmpty() && (stop == null || stop.toString() != "true")
+            }
+        assertTrue("这些分支超时后没有去处：${bad.size} 个", bad.isEmpty())
+    }
+
+    /** 颜色必须写成真实可显示的值，并且上下界要保留（Maa 的判定依据）。 */
+    @Test
+    fun `颜色写成十六进制且保留下界上界`() {
+        val s = many()
+        val colorCond = s.actions.mapNotNull { it.common.condition }
+            .firstOrNull { it.type == Z.ConditionType.COLOR }
+        assertTrue("应当有颜色条件", colorCond != null)
+        val pd = colorCond!!.posData
+        assertTrue("颜色位置不该为空", pd != null)
+        val extra = pd!!.extra
+        assertTrue("上下界应当保留：$extra", extra.containsKey("colorLower"))
+        // 不能再出现"凭空编的整数色"：颜色应当是 #rrggbb 形式
+        val c = pd.color.orEmpty()
+        assertTrue("颜色应当写成 #rrggbb，实际：$c", c.startsWith("#"))
     }
 
     @Test
@@ -48,90 +93,37 @@ class MaaConvertedScriptTest {
         }
     }
 
-    @Test
-    fun `颜色条件把上下界带过来了`() {
-        val s = parse("../build/zjs/塔香蕉_无尽.zjs")
-        val colorCond = s.actions
-            .mapNotNull { it.common.condition }
-            .firstOrNull { it.type == Z.ConditionType.COLOR }
-        assertTrue("应当有颜色条件", colorCond != null)
-        val pd = colorCond!!.posData
-        assertTrue("颜色位置不该为空", pd != null)
-        assertTrue("上下界应当保留：${pd!!.extra}", pd.extra.containsKey("colorLower"))
-    }
-
-    /**
-     * 语义断言：Maa 的 next 扫到 timeout = 节点失败。
-     * 所以每个「等待候选」后面必须紧跟一条「停止」——绝不允许继续执行文件里的下一条。
-     */
-    @Test
-    fun `每个等待候选后面都跟停止`() {
-        val s = parse("../build/zjs/塔香蕉_无尽.zjs")
-        val a = s.actions
-        val bad = ArrayList<String>()
-        for (i in a.indices) {
-            if (a[i].type != Z.ActionType.WAIT_CANDIDATES) continue
-            val nxt = a.getOrNull(i + 1)
-            if (nxt?.type != Z.ActionType.CONTROL_STOP) {
-                bad.add("第 ${i + 1} 条等待候选后面是 ${nxt?.type?.wire ?: "（末尾）"}")
-            }
-        }
-        assertTrue("这些等待候选超时后会掉进无关节点：\n  " + bad.joinToString("\n  "), bad.isEmpty())
-    }
-
-    /**
-     * 语义断言：只有 Maa 里写 `timeout: -1` 的才是一直等。
-     * 缺省在 Maa 是 20000ms —— 转成"无限等"会让脚本在没画面时永远卡住。
-     */
-    @Test
-    fun `等待候选的超时符合 Maa 的缺省 20 秒`() {
-        val s = parse("../build/zjs/塔香蕉_无尽.zjs")
-        val waits = s.actions.filter { it.type == Z.ActionType.WAIT_CANDIDATES }
-        assertTrue("应当有等待候选", waits.isNotEmpty())
-        val forever = waits.count { (it.waitTimeoutMs ?: 0) <= 0 }
-        // 原脚本里 timeout:-1 的节点就那么几个，全都转成 0 才对
-        assertTrue("一直等的节点数量异常：$forever", forever <= waits.size / 2)
-        val twenty = waits.count { it.waitTimeoutMs == 20000 }
-        assertTrue("缺省 20 秒的节点应当占多数：20s=$twenty / 共${waits.size}", twenty > 0)
-    }
-
-    /**
-     * anchor 是「跳进共享节点、再用它跳回来」的机制。
-     *
-     * `下一个动作` 这个 anchor 在整套资源里被 **3 个文件**声明过（塔香蕉一个、
-     * 无尽框架两个）。如果按"谁先入表用谁"，补给链回来时可能跳进框架管线里。
-     * 这条测试钉死：补给链尾部的回跳必须落在**本任务**的那个节点上。
-     */
+    /** anchor 是"跳进共享节点、再跳回调用方"，回跳必须落在本任务的节点上。 */
     @Test
     fun `共享节点的 anchor 回跳到本任务的节点`() {
-        val s = parse("../build/zjs/塔香蕉_无尽.zjs")
+        val s = many()
         val waiter = s.actions.firstOrNull { a ->
             a.type == Z.ActionType.WAIT_CANDIDATES &&
                 (a.common.desc ?: "").contains("神器补给_确定3")
         }
-        assertTrue("没找到补给链的等待候选节点", waiter != null)
+        assertTrue("没找到补给链的分支节点", waiter != null)
         val targets = waiter!!.candidates.mapNotNull { it.jumpTo }
-        assertTrue(
-            "回跳目标应当是 tower_banana_boss_识别开始，实际：$targets",
-            targets.contains("tower_banana_boss_识别开始")
-        )
-        // 反过来：绝不该串到框架管线里去
-        assertTrue(
-            "不该跳到框架管线的节点：$targets",
-            targets.none { it.startsWith("frame_wj") || it.startsWith("无尽框架") }
-        )
+        assertTrue("回跳应当是 tower_banana_boss_识别开始，实际：$targets",
+            targets.contains("tower_banana_boss_识别开始"))
+        assertTrue("不该串到框架管线：$targets",
+            targets.none { it.startsWith("frame_wj") || it.startsWith("无尽框架") })
     }
 
     @Test
     fun `跳转目标都指向存在的 jumpId`() {
-        val s = parse("../build/zjs/塔香蕉_无尽.zjs")
+        val s = many()
         val ids = s.actions.mapNotNull { it.common.jumpId }.toSet()
-        // 单后继用 :名字 跳转，目标必须存在
-        val missing = s.actions
-            .filter { it.type == Z.ActionType.CONTROL_JUMP }
-            .mapNotNull { (it.extra["jumpToPosition"] as? String)?.removePrefix(":") }
-            .filter { it.isNotEmpty() && !it.startsWith("&") && it !in ids }
-            .distinct()
-        assertTrue("这些跳转目标没有对应的 jumpId：$missing", missing.isEmpty())
+        val missing = ArrayList<String>()
+        for (a in s.actions) {
+            for (c in a.candidates) {
+                val t = c.jumpTo ?: continue
+                if (t !in ids) missing.add("候选 → $t")
+            }
+            val jump = (a.extra["jumpToPosition"] as? String).orEmpty().removePrefix(":")
+            if (jump.isNotEmpty() && !jump.startsWith("&") && jump !in ids) missing.add("jumpTo → $jump")
+            val to = (a.extra["onTimeoutJump"] as? String).orEmpty()
+            if (to.isNotEmpty() && to !in ids) missing.add("onTimeoutJump → $to")
+        }
+        assertTrue("这些目标没有对应 jumpId：$missing", missing.isEmpty())
     }
 }
