@@ -1133,6 +1133,18 @@ return PosGroup(rec, par, oth)
 
             else -> Unit
         }
+        /*
+         * 识别后等待：Maa 的 pre_delay 真正的位置（识别 → 等待 → 动作）。
+         * 我们的 delay 在识别之前，补上这一段才能和 Maa 对齐。
+         */
+        if (action.type in CLICK_FAMILY) {
+            rows += Row(
+                "识别后等待",
+                anyStr(e, "delayAfterLocate").orEmpty(),
+                Kind.NUMBER, field = "delayAfterLocate"
+            )
+        }
+
         return rows
     }
 

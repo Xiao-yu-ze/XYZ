@@ -194,6 +194,13 @@ DEFAULT_RATE_LIMIT = 1000
 DEFAULT_TIMEOUT = 20000
 DEFAULT_DELAY = 200
 
+# 连点的间隔。
+#
+# Maa 里每次重复都要重新截图 + 识别（DirectHit 也要一帧），实测一次 30~70ms，
+# 所以脚本里写 `repeat_delay: 0` 实际并不是 0ms。我们是直接注入，
+# 一次点击只要 5~15ms —— 想贴近原来的节拍就传 --repeat-gap-ms 30。
+REPEAT_GAP_MS = 0
+
 
 def int_field(node, key, default):
     v = node.get(key)
@@ -223,23 +230,38 @@ def next_names(node):
     return [x for x in out if x]
 
 
-def common(node):
-    """通用字段：延迟、重复、jumpId。"""
+def common(node, after_locate=False):
+    """
+    通用字段：延迟、重复、jumpId。
+
+    ★ Maa 的顺序是「识别 → pre_delay → 动作」，中间没有别的识别。
+      我们这条链上，识别发生在**动作节点内部**（点击文字/颜色会自己找），
+      所以 pre_delay 必须放到「识别后等待」而不是「等待」——
+      否则语义变成"先等一会儿再认"，画面刚出现时就会认错。
+      只有不需要识别的动作（坐标点击、滑动）才放进「等待」。
+    """
     c = {}
     pre = int_field(node, "pre_delay", DEFAULT_DELAY)
     if pre > 0:
-        c["delay"] = str(pre)
+        c["delayAfterLocate" if after_locate else "delay"] = str(pre)
     if node.get("repeat"):
-        c["repeatCount"] = int(node["repeat"])
-    if node.get("repeat_delay") is not None:
-        c["repeatDelayValue"] = str(int(node["repeat_delay"]))
+        rc = int(node["repeat"])
+        c["repeatCount"] = rc
+        if rc > 1:
+            c["repeatDelayValue"] = str(REPEAT_GAP_MS)
     return c
 
 
 def zjs_action(atype, act_param, node, pts, jump_id):
     """一个 Maa 节点 → 我们的动作 dict（不含 next 路由）。"""
-    c = common(node)
     cond = condition_of(node)
+    # 这个动作会不会自己识别：点击文字/点击颜色 = 会（识别在动作内部）
+    will_locate = False
+    if atype == "Click":
+        _t = act_param.get("target", node.get("target"))
+        _use_rec = _t is True or (_t is None and cond is not None)
+        will_locate = bool(_use_rec and cond is not None)
+    c = common(node, after_locate=will_locate)
 
     if atype in ("DoNothing", "none"):
         # 什么都不做：用 0 延迟的等待充当"路由节点"
@@ -477,7 +499,19 @@ def write(path, nodes, desc):
 
 
 def main():
-    outdir = sys.argv[1] if len(sys.argv) > 1 else "build/zjs"
+    """
+    用法：python tools/maa2zjs_towerbanana.py [输出目录] [--repeat-gap-ms N]
+    """
+    args = [a for a in sys.argv[1:]]
+    repeat_gap = None
+    if "--repeat-gap-ms" in args:
+        i = args.index("--repeat-gap-ms")
+        repeat_gap = int(args[i + 1])
+        del args[i:i + 2]
+    global REPEAT_GAP_MS
+    if repeat_gap is not None:
+        REPEAT_GAP_MS = repeat_gap
+    outdir = args[0] if args else "build/zjs"
     os.makedirs(outdir, exist_ok=True)
     pts = load_points()
     print("点位表：%d 个固定点" % len(pts))

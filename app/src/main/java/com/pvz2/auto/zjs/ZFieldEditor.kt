@@ -464,7 +464,9 @@ object ZFieldEditor {
         //   「值不合法，未保存」—— 用户以为改了，其实文件没动。
         "jsCode", "filePath", "promptTitle",
         // 设置变量的交互弹窗（FIELDS 576-580）
-        "dialogTitle", "dialogOKText", "dialogCancelText", "dialogAutoClickBtn"
+        "dialogTitle", "dialogOKText", "dialogCancelText", "dialogAutoClickBtn",
+        // 识别后等待（Maa 的 pre_delay 位置）
+        "delayAfterLocate"
     )
 
     /** 取出（或新建）`extra["vars"]` 数组，改完写回；空数组就把键删掉。 */

@@ -759,6 +759,21 @@ class ZExecutor(
             action.type == Z.ActionType.CLICK_COLOR
         val fast = clickFamily && boolExtra(action, "highSpeedTap")
         val hold = if (fast) 0 else holdRaw
+        /*
+         * 「识别后等待」（Maa 的 pre_delay 真正的位置）。
+         *
+         * Maa 的顺序是：**识别 → pre_delay → 动作**。
+         * 我们原来只有一个 delay，而它在识别**之前**（前置阶段里就睡了），
+         * 于是"等画面稳定再认"变成了"等一会儿再认"，语义不同。
+         *
+         * 这个字段专补这一段：命中之后、注入之前睡。
+         */
+        // extra 里可能是数字，也可能是字符串（界面上填的是文本），两种都认
+        val afterLocateMs = when (val v = action.extra["delayAfterLocate"]) {
+            is Number -> v.toInt()
+            is String -> v.trim().toIntOrNull() ?: 0
+            else -> 0
+        }
 
         return when (action.type) {
             // ---- 点击系列
@@ -786,7 +801,7 @@ class ZExecutor(
                 if (c.fastRepeatMode) memo.hits = hits
 
                 // indexNum 可能选出**多个**点（"1,3,4" = 这几个都点），所以是列表
-                tapHits(hits, hold, action, index, label, skipped)
+                tapHits(hits, hold, action, index, label, skipped, afterLocateMs)
                 Outcome()
             }
 
@@ -2357,8 +2372,14 @@ class ZExecutor(
         action: Z.Action,
         index: Int,
         label: String,
-        skipped: MutableList<Result.Skip>
+        skipped: MutableList<Result.Skip>,
+        afterLocateMs: Int = 0
     ) {
+        if (afterLocateMs > 0) {
+            log("   识别后等待 ${afterLocateMs}ms 再点（Maa pre_delay 位置）")
+            waitDelay(afterLocateMs.toString(), Z.TimeUnit.MILLISECONDS, afterLocateMs)
+            if (stopped) return
+        }
         hits.forEachIndexed { i, hit ->
             if (stopped) return
             if (i > 0) waitMultiGap(action)

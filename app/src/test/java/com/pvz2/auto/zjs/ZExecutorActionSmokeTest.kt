@@ -134,6 +134,24 @@ class ZExecutorActionSmokeTest {
         assertEquals(0, r.skipped.size)
     }
 
+    @Test
+    fun `识别后等待——在识别之后、点击之前发生`() {
+        val logs = ArrayList<String>()
+        val rec = Rec()
+        val ex = ZExecutor(rec, ZPosResolver.Screen(1280, 720, 1.5f), matcher()) { logs.add(it) }
+        val script = ZjsFileFormat.parse(
+            listOf(
+                base,
+                """{"type":"点击文字","posData":{"type":"text","text":"开始"},"delayAfterLocate":"40"}"""
+            ).joinToString("\r\n") + "\r\n"
+        ).script!!
+        ex.run(script)
+        // 这条日志必须在点击**之前**出现（Maa 的 pre_delay 位置）
+        val iLog = logs.indexOfFirst { it.contains("识别后等待") }
+        assertTrue("应当有识别后等待的日志：$logs", iLog >= 0)
+        assertEquals(listOf("tap(100,200,100)"), rec.calls)
+    }
+
     // ---------------------------------------------------------------- 手势
 
     @Test
