@@ -118,7 +118,19 @@ object ZActionDescriber {
         val c = action.common
 
         // ---- 身份
-        rows += Row("类型", action.type.wire)
+        //
+        // ★ 「类型」原来是只读、没有 field —— 点不动，于是 ZFieldEditor.changeType()
+        //   成了死代码，用户想换类型只能删了重建（模板/阈值/范围全丢）。
+        //   现在出成 ENUM：选项是全部动作类型，6 个「控制执行」带 controlRunType
+        //   后缀区分（否则下拉里会出现六个一模一样的名字）。
+        //   写回走 ZFieldEditor.apply("type") → changeType()。
+        rows += Row(
+            "类型",
+            ZFieldEditor.actionTypeLabel(action.type),
+            Kind.ENUM,
+            ZFieldEditor.actionTypeLabels(),
+            field = "type"
+        )
         action.type.controlRunType?.let { rows += Row("控制方式", it) }
         if (!action.type.executable) {
             rows += Row("⚠ 执行", "安卓上暂不支持", Kind.READONLY)
@@ -181,6 +193,19 @@ object ZActionDescriber {
         action.posData?.let { rows += posRows("位置", it, showPrefix = false) }
         action.startPos?.let { rows += posRows("起点", it) }
         action.endPos?.let { rows += posRows("终点", it) }
+
+        // ---- 动作类型专属字段（FIELDS.md §10）
+        //
+        // ★ 原坑：这里一行都没有 —— describe() 只对 MULTI_SWIPE / WAIT_CANDIDATES
+        //   出了专属行，其余类型的参数（keyCode、inputText、jumpToPosition…）
+        //   既没有界面行、写回通道也不存在。于是「按键」建出来没有 keyCode，
+        //   运行时被 ZExecutor 以"缺 keyCode"直接跳过；「跳转到」没有目标位置。
+        //   动作能建、能存、配不了，看上去却一切正常。
+        val typeSpecific = typeRows(action)
+        if (typeSpecific.isNotEmpty()) {
+            rows += section("参数")
+            rows += typeSpecific
+        }
 
         // ---- 多指滑动
         //
@@ -262,15 +287,27 @@ object ZActionDescriber {
         rows += section("时机")
         rows += Row("持续(ms)", c.duration.orEmpty(), numberKind("duration", c), field = "duration")
 
-        // 等待时间：**值和单位放同一行**。
+        // 等待时间：**值 和 单位 必须分成两行**。
         //
-        // 分成两行（"等待" + "等待单位"）会让用户先看数字再看单位，
-        // 而这两个必须一起读才有意义 —— "2" 单独看不知道是 2 秒还是 2 毫秒。
+        // ★ 原坑（P0）：这里把值拼成 "3 s" 却把**整串**写回 `delay`
+        //   （field="delay"），而协议里 delay 只允许数字或区间（"1-3"）。
+        //   执行器 randomIn("3 s") 解析不出数字 → 回落默认 200ms。
+        //   用户把等待改成 3 秒，界面上显示 "3 s"，运行时几乎不等，没有任何报错。
+        //   delay 为空时更糟：拼出来是 " s"，用户直接点确定就写进一个 "s"。
+        //
+        //   现在：`delay` 只放纯数字，单位单独一行写 `delayUnit`（FIELDS.md §0.1）。
         rows += Row(
             "等待",
-            "${c.delay.orEmpty()} ${unitLabel(c.delayUnit)}".trim(),
+            c.delay.orEmpty(),
             editKind("delay", c),
             field = "delay"
+        )
+        rows += Row(
+            "等待单位",
+            unitLabel(c.delayUnit),
+            Kind.ENUM,
+            UNITS,
+            field = "delayUnit"
         )
 
         rows += Row(
@@ -284,12 +321,19 @@ object ZActionDescriber {
             field = "repeatCount"
         )
 
-        // 重复间隔同理，值和单位同一行。
+        // 重复间隔同理：值 / 单位拆两行（原坑与「等待」完全一样）。
         rows += Row(
             "重复间隔",
-            "${c.repeatDelayValue.orEmpty()} ${unitLabel(c.repeatDelayUnit)}".trim(),
+            c.repeatDelayValue.orEmpty(),
             numberKind("repeatDelayValue", c),
             field = "repeatDelayValue"
+        )
+        rows += Row(
+            "重复间隔单位",
+            unitLabel(c.repeatDelayUnit),
+            Kind.ENUM,
+            UNITS,
+            field = "repeatDelayUnit"
         )
 
         // 布尔值用开关，不用弹窗：一次点击 vs 三次点击，而且状态一直可见。
@@ -317,7 +361,14 @@ object ZActionDescriber {
         }
 
         // ---- 未知字段：让用户看得见，避免"导入后凭空少了东西"
+        //
+        // ★ 但**本次已经出了可编辑行**的键要跳过，否则同一个 keyCode 会出现两行：
+        //   上面一行能改、下面一行只读，用户改完看到下面还停在旧值，以为没保存。
+        //   只按本次实际出的行去重，不能用"全局可编辑键集合" —— 那样会把别的
+        //   动作类型带来的同名键也一起藏掉（那种键应该继续只读展示）。
+        val editableKeys = typeSpecific.map { it.field }.toSet()
         action.extra.forEach { (k, v) ->
+            if (k in editableKeys) return@forEach
             rows += Row(k, v?.toString().orEmpty(), Kind.READONLY)
         }
 
@@ -344,17 +395,10 @@ object ZActionDescriber {
      * `limitArea` 用 [Kind.AREA]，能挂框选按钮。
      */
     /** 从 posData.extra 里读一个布尔（协议里是可选字段，缺省按 false）。 */
-    private fun extraBool(pos: Z.PosData, key: String): Boolean =
-        when (val v = pos.extra[key]) {
-            is Boolean -> v
-            is String -> v == "true" || v == "是"
-            null -> false
-            else -> false
-        }
+    private fun extraBool(pos: Z.PosData, key: String): Boolean = anyBool(pos.extra, key)
 
     /** 从 posData.extra 里读一个字符串。 */
-    private fun extraStr(pos: Z.PosData, key: String): String? =
-        pos.extra[key]?.toString()?.takeIf { it.isNotBlank() }
+    private fun extraStr(pos: Z.PosData, key: String): String? = anyStr(pos.extra, key)
 
     private fun posRows(prefix: String, pos: Z.PosData, showPrefix: Boolean = true): List<Row> {
         // 小节已经说明了这是"位置"，每行再带「位置」两个字既重复又占宽度
@@ -390,10 +434,23 @@ object ZActionDescriber {
             }
 
             Z.PosType.IMAGE -> {
-                pos.imageData?.let { img ->
-                    val size = if (img.width != null && img.height != null) "${img.width}×${img.height}" else "未知尺寸"
-                    rows += Row("${p}模板", "$size，${img.data.length} 字符", Kind.IMAGE, field = "$prefix.image")
+                // ★ 模板行**无条件**输出。
+                //
+                //   原坑（P0）：整行包在 `pos.imageData?.let {}` 里 —— 新建的
+                //   「点击图片」imageData 是 null，于是这一行根本不生成，界面上
+                //   既没有模板行、也没有 ✂ 截取按钮（按钮只贴在 IMAGE 行上，
+                //   见 ZjsEditorPage 的 makeRow）。结果动作建得出、存得下，
+                //   却永远配不了模板；运行时 ZRealMatcher 只会报
+                //   "图片位置没有模板数据"，用户完全看不出该去哪设置。
+                //   条件侧（ZConditionEditor）一直是无条件输出的，这里对齐。
+                val img = pos.imageData
+                val size = when {
+                    img == null -> "未设置"
+                    img.width != null && img.height != null ->
+                        "${img.width}×${img.height}，${img.data.length} 字符"
+                    else -> "未知尺寸"
                 }
+                rows += Row("${p}模板", size, Kind.IMAGE, field = "$prefix.image")
                 // 阈值是模板匹配唯一的调节旋钮，必须能改。
                 rows += Row(
                     "${p}相似度",
@@ -514,14 +571,178 @@ object ZActionDescriber {
         // 只用于 posData，不出现在条件类型下拉里（FIELDS.md:281）。
         // 之前的实现把它当未知字段，摊出一坨原始 JSON ——
         // 结构没丢，但用户看不懂。现在用条件摘要显示。
-        pos.extra["filterByAroundConditionSet"]?.let { raw ->
-            val summary = runCatching {
+        //
+        // ★ 原坑（P1）：出的是 Kind.READONLY 且没有 field —— 看得见、改不了，
+        //   也加不了（连"没设置"的情况都没有这一行）。现在出成 ENTER：
+        //   点进去由页面编辑（条件和动作共用同一套条件弹窗），
+        //   没设置时也显示一行"未设置，点击添加"，和「条件」行的写法一致。
+        val aroundRaw = pos.extra["filterByAroundConditionSet"]
+        val aroundSummary = aroundRaw?.let { raw ->
+            runCatching {
                 val obj = if (raw is org.json.JSONObject) raw else org.json.JSONObject(raw.toString())
                 Z.Condition.parse(obj)?.let { ZConditionDescriber.summary(it) }
             }.getOrNull()
-            rows += Row("${p}周围条件", summary ?: "（格式无法解析）", Kind.READONLY)
         }
+        rows += Row(
+            "${p}周围条件",
+            aroundSummary ?: if (aroundRaw == null) "（未设置，点击添加）" else "（格式无法解析）",
+            Kind.ENTER,
+            field = "$prefix.around"
+        )
 
         return rows
     }
+
+    // ------------------------------------------------------------ 类型专属字段
+
+    /**
+     * 「点击」族：FIELDS.md 10.1-10.6 是同一个实现类（m25296），字段完全一致，
+     * 只有 type / posData.type 的绑定不同。所以极速点击等开关对这一族统一处理。
+     */
+    private val CLICK_FAMILY = setOf(
+        Z.ActionType.CLICK, Z.ActionType.CLICK_IMAGE, Z.ActionType.CLICK_TEXT,
+        Z.ActionType.CLICK_COLOR, Z.ActionType.CLICK_NODE, Z.ActionType.AI_CLICK
+    )
+
+    /**
+     * 动作类型专属字段（FIELDS.md §10）。
+     *
+     * 全部走 `action.extra`：模型刻意不给这些字段建属性，好让不认识的字段
+     * 原样带过去。写回由 [ZFieldEditor] 的 extra 表负责，键名必须与协议一致。
+     *
+     * ★ 原坑：这里一行都没有 ——「按键」没有 keyCode、「跳转到」没有目标位置，
+     *   动作能建、能存，但配不了；运行时 ZExecutor 只会 skip（"缺 keyCode"）
+     *   或什么都不做。这类"能建不能配"最难查，因为界面看起来一切正常。
+     *
+     * 只做最小可用集（够把动作跑起来），其余字段仍以只读行兜底展示。
+     */
+    private fun typeRows(action: Z.Action): List<Row> {
+        val e = action.extra
+        val rows = ArrayList<Row>()
+
+        // 极速点击（10.1）：按下立即抬起，不等系统回执。整族共用。
+        if (action.type in CLICK_FAMILY) {
+            rows += Row(
+                "极速点击",
+                if (anyBool(e, "highSpeedTap")) "是" else "否",
+                Kind.SWITCH,
+                field = "highSpeedTap"
+            )
+        }
+
+        when (action.type) {
+            // 按键（10.10）：Android KeyEvent keycode，0~288。
+            // 用纯数字而不是下拉 —— 键名表 288 项，塞进下拉反而更难找，
+            // 而"要按哪个键"通常是从别人的脚本或 keycode 表里抄来的。
+            Z.ActionType.KEY -> rows += Row(
+                "键值 keyCode",
+                anyStr(e, "keyCode").orEmpty(),
+                Kind.NUMBER,
+                field = "keyCode"
+            )
+
+            // 输入内容（10.11）
+            Z.ActionType.INPUT_TEXT -> {
+                rows += Row(
+                    "输入内容",
+                    anyStr(e, "inputText").orEmpty(),
+                    Kind.TEXT,
+                    field = "inputText"
+                )
+                rows += Row(
+                    "先清空",
+                    if (anyBool(e, "clearBeforeInput")) "是" else "否",
+                    Kind.SWITCH,
+                    field = "clearBeforeInput"
+                )
+            }
+
+            // 控制执行·跳转到（10.18）：目标位置，语法见 SPEC 6.5
+            Z.ActionType.CONTROL_JUMP -> rows += Row(
+                "跳转目标",
+                anyStr(e, "jumpToPosition").orEmpty(),
+                Kind.TEXT,
+                field = "jumpToPosition"
+            )
+
+            // 控制执行·运行目标动作（10.17）
+            Z.ActionType.CONTROL_RUN_AIM -> rows += Row(
+                "目标动作",
+                anyStr(e, "aimActionPosition").orEmpty(),
+                Kind.TEXT,
+                field = "aimActionPosition"
+            )
+
+            // 控制执行·停止（10.21）：字段名首字母大写，别改
+            Z.ActionType.CONTROL_STOP -> rows += Row(
+                "只结束当前子脚本",
+                if (anyBool(e, "ContinueParentExecute")) "是" else "否",
+                Kind.SWITCH,
+                field = "ContinueParentExecute"
+            )
+
+            // 打开应用（10.13）
+            Z.ActionType.OPEN_APP -> {
+                rows += Row(
+                    "包名/路径",
+                    anyStr(e, "appPackageName").orEmpty(),
+                    Kind.TEXT,
+                    field = "appPackageName"
+                )
+                rows += Row(
+                    "先关再开",
+                    if (anyBool(e, "closeBeforeOpen")) "是" else "否",
+                    Kind.SWITCH,
+                    field = "closeBeforeOpen"
+                )
+                rows += Row(
+                    "仅关闭",
+                    if (anyBool(e, "onlyClose")) "是" else "否",
+                    Kind.SWITCH,
+                    field = "onlyClose"
+                )
+            }
+
+            // 打开链接（10.14）
+            Z.ActionType.OPEN_LINK -> rows += Row(
+                "链接",
+                anyStr(e, "link").orEmpty(),
+                Kind.TEXT,
+                field = "link"
+            )
+
+            // 系统提示（10.23）
+            Z.ActionType.PROMPT -> {
+                rows += Row(
+                    "提示方式",
+                    anyStr(e, "promptType") ?: "toast",
+                    Kind.ENUM,
+                    listOf("toast", "alert", "notification"),
+                    field = "promptType"
+                )
+                rows += Row(
+                    "提示内容",
+                    anyStr(e, "promptText").orEmpty(),
+                    Kind.TEXT,
+                    field = "promptText"
+                )
+            }
+
+            else -> Unit
+        }
+        return rows
+    }
+
+    /** 从任意 extra map 里读布尔（协议里写成 true/false 或 "是"）。 */
+    private fun anyBool(m: Map<String, Any?>, key: String): Boolean =
+        when (val v = m[key]) {
+            is Boolean -> v
+            is String -> v == "true" || v == "是" || v == "1"
+            is Number -> v.toInt() != 0
+            else -> false
+        }
+
+    /** 从任意 extra map 里读字符串。 */
+    private fun anyStr(m: Map<String, Any?>, key: String): String? =
+        m[key]?.toString()?.takeIf { it.isNotBlank() }
 }

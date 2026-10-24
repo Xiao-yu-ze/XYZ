@@ -15,8 +15,17 @@ import org.junit.Test
 class ZConditionEditorTest {
 
     @Test
-    fun `13 种类型都能新建`() {
-        assertEquals(13, ZConditionEditor.TYPE_LABELS.size)
+    fun `下拉里 12 种类型都能新建，位置周围条件单独创建`() {
+        /*
+         * AroundCondition 按协议不进「条件类型」下拉（FIELDS 4.2），
+         * 它只用于 posData.filterByAroundConditionSet。
+         * 但 create() 必须还能造出来 —— 旧脚本里存着这个类型。
+         */
+        assertEquals(12, ZConditionEditor.TYPE_LABELS.size)
+        assertEquals(
+            Z.ConditionType.AROUND,
+            ZConditionEditor.create(Z.ConditionType.AROUND).type
+        )
         for ((type, label) in ZConditionEditor.TYPE_LABELS) {
             val c = ZConditionEditor.create(type)
             assertEquals("[$label] 类型应保持", type, c.type)
@@ -119,12 +128,13 @@ class ZConditionEditorTest {
     }
 
     @Test
-    fun `没开重复检查时次数显示占位符但仍可见`() {
+    fun `没开重复检查时次数也显示真实数字`() {
         val c = ZConditionEditor.create(Z.ConditionType.RANDOM)
         val rows = ZConditionEditor.describe(c)
         val times = rows.firstOrNull { it.label == "识别次数" }
         assertNotNull("识别次数应该一直可见", times)
-        assertEquals("—", times!!.value)
+        // 值恒显示真实数字（默认 0）：原来显示 "—"，用户改了看不到、以为没保存
+        assertEquals("0", times!!.value)
         // 但这几个字段能改，不因为开关关着就变成只读
         assertEquals(ZActionDescriber.Kind.NUMBER, times.kind)
     }

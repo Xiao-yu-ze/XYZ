@@ -60,11 +60,32 @@ class ZRealMatcher(
      */
     private var pendingFrame: org.opencv.core.Mat? = null
 
+    /**
+     * 长度值做 `dp → px` 换算时用的**屏幕密度**。
+     *
+     * ★ 必须是**虚拟屏**的密度，不是宿主手机的。
+     *   虚拟屏固定 1280×720 @ 240dpi（`VirtualDisplaySession.VD_DPI`），
+     *   所以 1dp = 240/160 = **1.5px**。宿主手机普遍 2.75~3.5，按宿主算会让
+     *   所有 dp 值偏大近一倍（100dp：应该 150px，实际 300px）—— 点位和 ROI 一起歪。
+     *
+     * 宿主若改成显式传 `ZPosResolver.Screen`，覆盖这个值即可；默认就是本项目虚拟屏的值。
+     */
+    var density: Float = DEFAULT_DENSITY
+
     private fun nextFrame(): org.opencv.core.Mat? {
         pendingFrame?.release()
-        // 用 nextFrame 回收上一帧：直接 frame() 每次漏一块 3.7MB native Mat，
-        // 识别是 200ms 级循环，漏起来很快。
-        val m = nextFrame()
+        /*
+         * ★ 这里必须调 frame()，**绝对不能**调 nextFrame()。
+         *
+         *   上一版误写成 `val m = nextFrame()` —— 等于自己调自己：
+         *   签名完全一样，编译器不报错，但第一次调用就无限递归 →
+         *   StackOverflowError。现象是**所有**文字/颜色/图片识别一起崩，
+         *   而堆栈里全是 nextFrame 自己，看不出是谁调进来的。
+         *
+         *   直接 frame() 的代价是"每次漏一块 3.7MB native Mat"，
+         *   所以本函数用"取下一帧时回收上一帧"把这个泄漏压到常量级（最多 1 块）。
+         */
+        val m = frame()
         pendingFrame = m
         return m
     }
@@ -85,11 +106,16 @@ class ZRealMatcher(
             return emptyList()
         }
 
-        val m = frame()
-        if (m == null) {
+        // ★ 走 nextFrame()：直接 frame() 每次漏一块 3.7MB native Mat，
+        //   而识别是 200ms 级的循环，漏起来几分钟就能把进程撑爆。
+        val m = nextFrame() ?: run {
             lastUnsupported = "拿不到当前帧"
             return emptyList()
         }
+
+        // 本函数里 new 出来的每个 Mat 都往这里丢，finally 统一释放。
+        // 早退分支很多（解码失败 / 模板比 ROI 大 / 滤镜不支持…），逐个 release 必漏。
+        val garbage = ArrayList<org.opencv.core.Mat>()
 
         val threshold = (pos.minSimilarPercent ?: 90) / 100.0
 
@@ -109,172 +135,148 @@ class ZRealMatcher(
                 return emptyList()
             }
 
+            garbage.add(tmpl0)
+
             /*
-             * ★ 模板必须按"截图时的屏幕宽度"缩放到当前帧宽度。
+             * ★ 模板缩放不再"一步定死"，改为按 `imageScaleType` 分派（见 scaleSpecs）。
              *
-             *   模板是在作者设备上截的（这批 Maa 脚本来自 1920×1080 逻辑空间），
-             *   虚拟屏固定 1280×720。同一张图在两种分辨率下**像素尺寸不同**，
-             *   直接拿原尺寸 matchTemplate，等于拿 301×88 的图去找 200×59 的目标 ——
-             *   相关性永远上不去，而且**不报错**，只表现为"没找到"。
-             *   用户会以为脚本写错了，其实是尺度没对齐。
+             *   原来只按"帧宽 / imageData.screenWidth"缩一次。但协议里这张图有
+             *   **6 种**缩放策略，而且**默认值是 `dpi`**、不是按屏宽：
              *
-             *   基准取 imageData.screenWidth（截图时屏宽）；没有该字段
-             *   （手写的老脚本）就按当前帧处理。
+             *     none                     → 不缩放（图本来就是当前分辨率截的）
+             *     baseScreenWidth          → 帧宽 / screenWidth
+             *     baseScreenHeight         → 帧高 / screenHeight
+             *     dpi                      → 1 / screenDpi
+             *     baseScreenWidthAndHeight → 宽高各算各的（可非等比）
+             *     tryAll                   → 四种都试，取最好的
+             *
+             *   缩错的后果是"相关性永远上不去"，而且**不报错**，只表现为"没找到"，
+             *   用户会去调阈值、换模板，方向全错。所以这里必须按字段真分派，
+             *   取不到字段时才回落到原来的 baseScreenWidth（保持既有行为）。
              */
-            val shotW = img.screenWidth ?: 0
-            val frameW = m.width()
-            val tmpl = if (shotW > 0 && frameW > 0 && kotlin.math.abs(shotW - frameW) > 2) {
-                val k = frameW.toDouble() / shotW
-                val dst = org.opencv.core.Mat()
-                org.opencv.imgproc.Imgproc.resize(
-                    tmpl0, dst, org.opencv.core.Size(), k, k,
-                    org.opencv.imgproc.Imgproc.INTER_AREA
-                )
-                tmpl0.release()
-                dst
-            } else {
-                tmpl0
+
+            // ROI **先裁再转 BGR**：只换算要搜的那一块，不再把整帧 1280×720 全转一遍
+            //（整帧转是 3.7MB 读 + 2.7MB 写，而识别是 200ms 一轮的循环）。
+            // 范围外的画面会给出假高分，这是模板匹配最常见的"明明没这东西却命中"的来源。
+            val roiRect = clampRect(rect, m.width(), m.height())
+            val left = roiRect[0]
+            val top = roiRect[1]
+            val roiW = roiRect[2] - roiRect[0]
+            val roiH = roiRect[3] - roiRect[1]
+            if (roiW < 2 || roiH < 2) {
+                lastUnsupported = "搜索范围太小（${roiW}×${roiH}）"
+                return emptyList()
             }
 
-            // 帧是 RGBA，模板可能是 RGB/RGBA/灰度，统一成 BGR 才能比
-            val frameBgr = org.opencv.core.Mat()
+            val srcRegion = m.submat(org.opencv.core.Rect(left, top, roiW, roiH))
+            val regionBgr = org.opencv.core.Mat()
             org.opencv.imgproc.Imgproc.cvtColor(
-                m, frameBgr, org.opencv.imgproc.Imgproc.COLOR_RGBA2BGR
+                srcRegion, regionBgr, org.opencv.imgproc.Imgproc.COLOR_RGBA2BGR
             )
+            srcRegion.release()
+            garbage.add(regionBgr)
 
-            // 只在实际要搜的范围内匹配。范围外的画面会给出假高分，
-            // 这是模板匹配最常见的"明明没这东西却命中了"的来源。
-            val left = rect[0].coerceIn(0, (frameBgr.width() - 1).coerceAtLeast(0))
-            val top = rect[1].coerceIn(0, (frameBgr.height() - 1).coerceAtLeast(0))
-            val right = rect[2].coerceIn(left + 1, frameBgr.width())
-            val bottom = rect[3].coerceIn(top + 1, frameBgr.height())
-            val roiW = right - left
-            val roiH = bottom - top
+            /*
+             * 滤镜 / 搜索模式：两者都是"对**模板和 ROI 各套一次同一变换**"。
+             *
+             * 必须两边完全对称 —— 只给 ROI 加滤镜而模板不加（或反过来），
+             * 两边像素语义就变了，相关系数被系统性拉低。表现还是"阈值不够"，
+             * 而用户去调阈值只会越调越糟。
+             */
+            var note: String? = null
 
-            if (tmpl.width() > roiW || tmpl.height() > roiH) {
-                lastUnsupported = "模板 ${tmpl.width()}×${tmpl.height()} 比搜索范围 ${roiW}×${roiH} 还大"
-                return emptyList()
+            val fType = filterType(pos)
+            if (fType != null && fType !in SUPPORTED_FILTERS) {
+                // 协议里 filter 有 9 种（bw/grey/outline/reverse/lightness/contrast/
+                // rgb/changeColor/multi），我们只做 grey/bw/reverse。
+                // 没实现的**不能装作生效**：记一条原因，然后按"无滤镜"继续匹配。
+                note = "滤镜 $fType 未实现，按无滤镜执行"
             }
 
-            val region = frameBgr.submat(org.opencv.core.Rect(left, top, roiW, roiH))
-            val result = org.opencv.core.Mat()
-            val peaks: List<org.opencv.core.Point>
-            var bestCorr = 0.0
-            try {
-                org.opencv.imgproc.Imgproc.matchTemplate(
-                    region, tmpl, result, org.opencv.imgproc.Imgproc.TM_CCOEFF_NORMED
-                )
-                bestCorr = org.opencv.core.Core.minMaxLoc(result).maxVal
-
-                /*
-                 * 不只取全局最高点。
-                 *
-                 * 只取一个点的话，画面里只要有一处"碰巧更像"就会选中它 ——
-                 * 而真实目标可能就在旁边，分数低一点点。取所有过线的峰再做
-                 * 非极大值抑制，才谈得上"找到几处"和"选第几个"。
-                 */
-                val rows = result.rows()
-                val cols = result.cols()
-                val buf = FloatArray(rows * cols)
-                result.get(0, 0, buf)
-
-                val cands = ArrayList<Pair<org.opencv.core.Point, Double>>()
-                for (y in 0 until rows) {
-                    for (x in 0 until cols) {
-                        val v = buf[y * cols + x]
-                        if (v.isFinite() && v >= threshold) {
-                            cands.add(org.opencv.core.Point(x.toDouble(), y.toDouble()) to v.toDouble())
-                        }
-                    }
+            val mode = (pos.extra["searchMode"] as? String)?.trim().orEmpty()
+            val edgeMode = when {
+                mode.isEmpty() || mode == "color_2.21" || mode == "COLOR" -> false
+                mode == "outline_2.21" -> true
+                else -> {
+                    // HOG 等未实现：同样如实记录，再按默认模式继续。
+                    note = (note?.plus("；") ?: "") + "搜索模式 $mode 未实现，按 color_2.21 执行"
+                    false
                 }
-                cands.sortByDescending { it.second }
-
-                // 非极大值抑制：两个候选挨得太近就没意义（同一个图案）
-                val minDist = maxOf(8, minOf(tmpl.width(), tmpl.height()) / 2).toDouble()
-                val kept = ArrayList<org.opencv.core.Point>()
-                for ((pt, _) in cands) {
-                    if (kept.size >= MAX_HITS) break
-                    val tooClose = kept.any { k ->
-                        Math.hypot(k.x - pt.x, k.y - pt.y) < minDist
-                    }
-                    if (!tooClose) kept.add(pt)
-                }
-                peaks = kept
-            } finally {
-                region.release()
-                result.release()
             }
 
-            lastScore = bestCorr
-
-            if (peaks.isEmpty()) {
-                // 把"最高多少"报出来 —— 用户据此决定是降阈值还是换模板，
-                // 只说"没找到"等于让他盲调。
-                lastUnsupported = null
-                frameBgr.release()
-                tmpl.release()
-                return emptyList()
+            // `quickSearch`（快速搜图）只影响速度、不影响判定结果 —— 未实现，也**没有副作用**，
+            // 所以这里刻意不读它。读了却不真加速，等于给性能问题加了层假装饰。
+            // ROI 侧的变换只做一次，多尺度模板复用同一份（模板小，重复变换不心疼）。
+            var region: org.opencv.core.Mat = regionBgr
+            val roiFiltered = applyFilter(region, fType)
+            if (roiFiltered != null) {
+                region = roiFiltered
+                garbage.add(roiFiltered)
+            }
+            if (edgeMode) {
+                val edges = toEdges(region)
+                if (edges != null) {
+                    region = edges
+                    garbage.add(edges)
+                }
             }
 
             /*
-             * 命中后复核：过线只说明"相关系数够高"，那只反映形状趋势，
-             * 大片纯色也能给出高分。再比一次逐像素差，把"看着像但其实是
-             * 一块纯色"的假命中剔掉。
+             * `tryAll` 要依次试多种缩放，取**有命中且分数最高**的那一档。
              *
-             * 允许的差随阈值放宽：阈值 90 → 允许差 35，阈值 70 → 允许差 87。
+             * 不能只看分数：某一档可能相关系数更高、但逐像素复核全被剔掉
+             * （尺度差半个像素时很常见：形状对上了、边缘没对上）。
+             * 那种必须让位给真正命中的那一档，否则会出现"明明找到了却报没找到"。
              */
-            val allowMad = 255.0 * (1.0 - threshold) + 10.0
-            val hits = ArrayList<ZPosResolver.Hit>()
-            var rejected = 0
-            try {
-                for (pt in peaks) {
-                    val px = pt.x.toInt()
-                    val py = pt.y.toInt()
-                    val patch = frameBgr.submat(
-                        org.opencv.core.Rect(px + left, py + top, tmpl.width(), tmpl.height())
-                    )
-                    val mad = runCatching { meanAbsDiff(patch, tmpl) }.getOrDefault(0.0)
-                    patch.release()
-                    if (mad <= allowMad) {
-                        hits.add(
-                            ZPosResolver.Hit(
-                                px + left + tmpl.width() / 2,
-                                py + top + tmpl.height() / 2
-                            )
-                        )
-                    } else {
-                        rejected++
+            var bestHit: Attempt? = null
+            var bestAny: Attempt? = null
+            for (spec in scaleSpecs(pos, img, m.width(), m.height())) {
+                val scaled = resizeTo(tmpl0, spec)
+                if (scaled !== tmpl0) garbage.add(scaled)
+
+                // 模板侧也要套同一份滤镜/边缘：和 ROI 保持像素语义一致。
+                var tmpl: org.opencv.core.Mat = scaled
+                val tmplFiltered = applyFilter(tmpl, fType)
+                if (tmplFiltered != null) {
+                    tmpl = tmplFiltered
+                    garbage.add(tmplFiltered)
+                }
+                if (edgeMode) {
+                    val edges = toEdges(tmpl)
+                    if (edges != null) {
+                        tmpl = edges
+                        garbage.add(edges)
                     }
                 }
-            } finally {
-                frameBgr.release()
-                tmpl.release()
+
+                val attempt = matchOnce(region, tmpl, threshold, left, top)
+                if (bestAny == null || attempt.best > bestAny.best) bestAny = attempt
+                if (attempt.hits.isNotEmpty() &&
+                    (bestHit == null || attempt.best > bestHit.best)
+                ) {
+                    bestHit = attempt
+                }
             }
 
-            lastUnsupported = null
-            if (hits.isEmpty()) {
-                lastUnsupported = "有 ${peaks.size} 处相关系数过线，但逐像素差都太大" +
-                    "（允许 ${"%.0f".format(allowMad)}），像是匹配到了纯色区域"
+            val chosen = bestHit ?: bestAny
+            lastScore = (chosen?.best ?: 0.0).coerceIn(0.0, 1.0)
+
+            if (chosen == null || chosen.hits.isEmpty()) {
+                // reason 优先：它比"没找到"具体得多（模板比 ROI 大 / 全被逐像素复核剔除…）
+                lastUnsupported = chosen?.reason ?: note ?: "没有匹配到目标"
                 return emptyList()
             }
-            if (rejected > 0) {
-                Log.i(TAG, "匹配：${hits.size} 处通过，$rejected 处被逐像素复核剔除")
-            }
-            /*
-             * ★ 命中结果按"从上到下、从左到右"排序，不是按相关度。
-             *
-             *   协议（FIELDS.md:156）规定排序是 boundTop 升序、同高再 boundLeft 升序，
-             *   因为 indexNum 选的是"第几个"—— 用户看着画面数是"第 2 个图标"，
-             *   是按位置数的。按相关度排的话，indexNum="2" 点的是分数第 2 高的，
-             *   在多目标场景下会**静默点错**，而且看起来像随机。
-             *   相关度只用于阈值过滤和日志。
-             */
-            hits.sortWith(compareBy({ it.y }, { it.x }))
-            hits
+            // 命中时保留 note —— "滤镜未实现"这类信息仍然有用，不能被清掉。
+            lastUnsupported = note
+            chosen.hits
         } catch (t: Throwable) {
             Log.e(TAG, "图片匹配失败", t)
             lastUnsupported = "图片匹配异常：${t.message}"
             emptyList()
+        } finally {
+            // 统一释放：早退路径太多（解码失败/ROI 太小/滤镜不支持/模板比 ROI 大…），
+            // 逐个 release 必漏一块。Mat 是 native 内存，不受 GC 管理。
+            for (mat in garbage) runCatching { mat.release() }
         }
     }
 
@@ -374,15 +376,37 @@ class ZRealMatcher(
                 return emptyList()
             }
 
-            val best = lines.maxByOrNull { textSimilarity(want, it.text) }
-            val score = if (best == null) 0.0 else textSimilarity(want, best.text)
+            /*
+             * ★ `want` 可能不是字面文字，而是「正则」：
+             *      {"type":"RegExp","source":"第\\d+关","flags":""}
+             *
+             *   协议的文字位置/条件支持这种写法（m18129 的 text 分支：以 `{` 开头、
+             *   以 `}` 结尾就当 RegExp 解析，其余按 `indexOf` 找字面量）。
+             *   **不认它会静默永不命中** —— 界面上只会说"没找到"，用户于是去怀疑
+             *   OCR、去调阈值，方向全错。
+             */
+            // 正则解析统一走 ZPosResolver.textRegex（与 colorProbePoint 同理：
+            // 两套实现迟早漂移，而"正则写法认不出"的表现是**静默永不命中**）。
+            // 返回 null = 不是正则写法，退回包含/相似度匹配。
+            val regex = ZPosResolver.textRegex(pos)
+            val best: com.pvz2.auto.maa.OcrLine?
+            val score: Double
+            if (regex != null) {
+                // 正则命中即 1.0：协议里正则分支给的是 similar=1，不参与"像不像"打分。
+                best = lines.firstOrNull { regex.containsMatchIn(it.text) }
+                score = if (best != null) 1.0 else 0.0
+            } else {
+                best = lines.maxByOrNull { textSimilarity(want, it.text) }
+                score = if (best == null) 0.0 else textSimilarity(want, best.text)
+            }
             lastScore = score
 
             if (best == null || score < threshold) {
                 val seen = lines.take(4).joinToString("、") { it.text }
-                lastUnsupported = "识别到 ${lines.size} 行（$seen…），" +
-                    "最接近「$want」的是「${best?.text ?: ""}」相似度 " +
-                    "${"%.0f".format(score * 100)}%，低于阈值 ${"%.0f".format(threshold * 100)}%"
+                val what = if (regex != null) "正则「${regex.pattern}」" else "「$want」"
+                lastUnsupported = "识别到 ${lines.size} 行（$seen…），没有一行匹配 $what" +
+                    "（最接近的相似度 ${"%.0f".format(score * 100)}%，" +
+                    "低于阈值 ${"%.0f".format(threshold * 100)}%）"
                 emptyList()
             } else {
                 lastUnsupported = null
@@ -390,7 +414,9 @@ class ZRealMatcher(
                 listOf(
                     ZPosResolver.Hit(
                         roi[0] + best.centerX.toInt(),
-                        roi[1] + best.centerY.toInt()
+                        roi[1] + best.centerY.toInt(),
+                        // 文字命中码给"文字相似度"（正则命中是 1.0），供执行器选最优命中。
+                        score = score
                     )
                 )
             }
@@ -429,6 +455,24 @@ class ZRealMatcher(
             lastUnsupported = "拿不到当前帧"
             return emptyList()
         }
+
+        /*
+         * ★ 「指定位置取色」优先：只判这一个点，**忽略 limitArea**。
+         *
+         *   协议（FIELDS.md §3.4）里 color 位置有两种"只看一个点"的写法：
+         *   `limitPosX/limitPosY`（指定位置，填了就忽略 limitArea）和取色点 `x/y`。
+         *   坐标计算统一由 `ZPosResolver.colorProbePoint` 负责，本类只判这个像素。
+         *
+         *   原来一律按 ROI 扫描 + 重心，于是：
+         *    · 用户指定了一个点，我们却在整块 limitArea 里找 —— 区域里**任意一处**
+         *      有近似色就过闸，闸门被放大成"这块区域里有这个颜色"；
+         *    · 返回的是重心，不是用户指定的那个点，点击位置也跟着偏。
+         *   两处偏差都不报错，只表现为"条件过了但后面操作不对"，最难查。
+         */
+        ZPosResolver.colorProbePoint(pos, m.width(), m.height(), density)?.let { point ->
+            return judgeProbePoint(pos, m, point, rgb)
+        }
+
         val roi = clampRect(rect, m.width(), m.height())
         val region = m.submat(org.opencv.core.Rect(roi[0], roi[1], roi[2] - roi[0], roi[3] - roi[1]))
         val bgr = org.opencv.core.Mat()
@@ -473,13 +517,16 @@ class ZRealMatcher(
             }
 
             /*
-             * ★ 要求足够比例的像素落在范围内，不是"有一个像素就算"。
+             * 判定就是**至少一个像素**（`nonzero > 0`），不是"足够比例"。
              *
-             *   实测问题：植物种下去进入冷却后卡槽颜色会变，但卡片上残留的一点
-             *   原色像素仍然命中 —— 于是闸门照样通过，脚本继续往下种。
+             * ★ 上一版这段注释写的是"要求足够比例的像素"，代码却一直是
+             *   `nonzero > 0` —— 注释和实现直接矛盾。后来人照着注释去加比例，
+             *   只会把正常闸门卡死（实测过：要求一半像素，直接把"是否进入关内"
+             *   这种正常判断判成不成立）。
              *
-             *   判定块通常很小（比如 8×96），语义就是"这一块是不是这个颜色"，
-             *   所以按比例卡才对。比例也打进日志，方便按实际画面调。
+             * Maa 的 ColorMatch 默认 `count: 1`，语义就是"这个区域里有没有这个颜色"。
+             * 抗"冷却后残留像素"要靠 lower/upper 逐通道上下界（见上面那段），
+             * 不是靠收紧像素数量。下面的 ratio 只作诊断（进 lastScore 与日志）。
              */
             val nonzero = org.opencv.core.Core.countNonZero(mask)
             val total = (mask.rows() * mask.cols()).coerceAtLeast(1)
@@ -508,7 +555,9 @@ class ZRealMatcher(
             val cx = roi[0] + (moments.m10 / moments.m00).toInt()
             val cy = roi[1] + (moments.m01 / moments.m00).toInt()
             lastUnsupported = null
-            listOf(ZPosResolver.Hit(cx, cy))
+            // 颜色没有"相关度"可谈，命中即 1.0（协议里颜色命中也是 similar=1）。
+            // 命中像素占比留在 lastScore 里，只作诊断。
+            listOf(ZPosResolver.Hit(cx, cy, 1.0))
         } catch (t: Throwable) {
             Log.e(TAG, "颜色匹配失败", t)
             lastUnsupported = "颜色匹配异常：${t.message}"
@@ -518,6 +567,74 @@ class ZRealMatcher(
             bgr.release()
             mask.release()
         }
+    }
+
+    /**
+     * 单点取色判定：只看 [point] 这一个像素。
+     *
+     * 直接读帧里的那一个像素（`Mat.get(row, col, byte[])`，一次 JNI、不产生任何拷贝），
+     * 而不是裁 ROI 再 cvtColor —— 单点判定没必要为 1 个像素搬 2.7MB。
+     *
+     * 帧是 RGBA_8888，内存顺序 **R,G,B,A**（与 ROI 分支的 BGR 相反，别搞混）。
+     */
+    private fun judgeProbePoint(
+        pos: Z.PosData,
+        // 参数名故意不叫 frame：会遮住构造参数里的 `frame: () -> Mat?`，读代码时极易看串。
+        shot: Mat,
+        point: Pair<Int, Int>,
+        rgb: IntArray
+    ): List<ZPosResolver.Hit> {
+        // 空帧上 get(0,0) 会直接抛 OpenCV 断言 —— 而这个函数在 findColor 的 try 之外，
+        // 抛出去会变成"整条脚本执行异常"，代价远大于少判一次颜色。
+        if (shot.empty()) {
+            lastUnsupported = "帧是空的，无法单点取色"
+            return emptyList()
+        }
+        val maxX = (shot.width() - 1).coerceAtLeast(0)
+        val maxY = (shot.height() - 1).coerceAtLeast(0)
+        val x = point.first.coerceIn(0, maxX)
+        val y = point.second.coerceIn(0, maxY)
+
+        val channels = shot.channels()
+        if (channels < 3) {
+            lastUnsupported = "单点取色需要 ≥3 通道的帧（当前 $channels 通道）"
+            return emptyList()
+        }
+
+        val buf = ByteArray(channels)
+        shot.get(y, x, buf)
+        val r = buf[0].toInt() and 0xFF
+        val g = buf[1].toInt() and 0xFF
+        val b = buf[2].toInt() and 0xFF
+
+        val lo = pos.colorLower
+        val hi = pos.colorUpper
+        val ok: Boolean
+        val rule: String
+        if (lo != null && hi != null && lo.size >= 3 && hi.size >= 3) {
+            // colorLower/colorUpper 是 RGB 顺序（与 ROI 分支的 Scalar(lo[2],lo[1],lo[0]) 一致）
+            ok = r in lo[0]..hi[0] && g in lo[1]..hi[1] && b in lo[2]..hi[2]
+            rule = "R${lo[0]}~${hi[0]} G${lo[1]}~${hi[1]} B${lo[2]}~${hi[2]}"
+        } else {
+            // 容差公式必须与 ROI 分支**逐字一致**：两边判定不同的话，
+            // "区域里过、点上不过"就没法向用户解释，也没法排查。
+            val tol = ((100 - (pos.similarPercent ?: 100)) * 255 / 100).coerceIn(0, 255)
+            ok = kotlin.math.abs(r - rgb[0]) <= tol &&
+                kotlin.math.abs(g - rgb[1]) <= tol &&
+                kotlin.math.abs(b - rgb[2]) <= tol
+            rule = "#%02X%02X%02X ±%d".format(rgb[0], rgb[1], rgb[2], tol)
+        }
+
+        lastScore = if (ok) 1.0 else 0.0
+        if (!ok) {
+            // 报出这个点**实际**是什么颜色：只说"没找到"，用户只能猜着改色值。
+            val actual = "#%02X%02X%02X".format(r, g, b)
+            lastUnsupported = "指定点 ($x,$y) 实际是 $actual，不在 $rule 内"
+            return emptyList()
+        }
+        lastUnsupported = null
+        // 单点判定没有"相关度"可言（就是等于/不等于），命中即 1.0。
+        return listOf(ZPosResolver.Hit(x, y, 1.0))
     }
 
     /**
@@ -546,6 +663,349 @@ class ZRealMatcher(
         return intArrayOf(l, t, r, b)
     }
 
+    // =========================================== 缩放 / 滤镜 / 单次匹配
+
+    /** 一档缩放策略。kx/ky 允许不等比（协议里 `baseScreenWidthAndHeight` 宽高各算）。 */
+    private data class ScaleSpec(val label: String, val kx: Double, val ky: Double)
+
+    /** 一次匹配的结果。`reason` 非 null = 比"没找到"更具体的原因。 */
+    private class Attempt(
+        val hits: List<ZPosResolver.Hit>,
+        val best: Double,
+        val reason: String?
+    )
+
+    /**
+     * 按 `imageScaleType` 算出要尝试的缩放档位（对应协议 m18129 的 `image` 分支）。
+     *
+     * 字段还没在模型层加强类型，先从 `extra` 取；**取不到就按 `baseScreenWidth`**，
+     * 也就是改动前的行为 —— 保证现有脚本的行为不变。
+     */
+    private fun scaleSpecs(
+        pos: Z.PosData,
+        img: Z.ImageData,
+        frameW: Int,
+        frameH: Int
+    ): List<ScaleSpec> {
+        val type = (pos.extra["imageScaleType"] as? String)?.trim().orEmpty()
+            .ifEmpty { "baseScreenWidth" }
+
+        val shotW = img.screenWidth ?: 0
+        val shotH = img.screenHeight ?: 0
+        val shotDpi = img.screenDpi ?: 0f
+
+        fun kByWidth(): Double? =
+            if (shotW > 0 && frameW > 0) frameW.toDouble() / shotW else null
+        fun kByHeight(): Double? =
+            if (shotH > 0 && frameH > 0) frameH.toDouble() / shotH else null
+        fun kByDpi(): Double? = if (shotDpi > 0f) 1.0 / shotDpi else null
+        fun one(label: String, k: Double?): ScaleSpec? = k?.let { ScaleSpec(label, it, it) }
+
+        val specs: List<ScaleSpec> = when (type) {
+            // 图本来就是按当前分辨率截的，再缩就错。
+            "none" -> listOf(ScaleSpec("none", 1.0, 1.0))
+            "baseScreenHeight" -> listOfNotNull(one(type, kByHeight()))
+            "dpi" -> listOfNotNull(one(type, kByDpi()))
+            "baseScreenWidthAndHeight" -> {
+                val a = kByWidth()
+                val b = kByHeight()
+                if (a != null && b != null) {
+                    listOf(ScaleSpec(type, a, b))
+                } else {
+                    listOfNotNull(one("baseScreenWidth", a))
+                }
+            }
+            // 四种都试，由 findImage 取"有命中且分数最高"的一档。
+            "tryAll" -> {
+                val a = kByWidth()
+                val b = kByHeight()
+                val d = kByDpi()
+                listOfNotNull(
+                    one("dpi", d),
+                    one("baseScreenWidth", a),
+                    one("baseScreenHeight", b),
+                    if (a != null && b != null) ScaleSpec("baseScreenWidthAndHeight", a, b) else null
+                )
+            }
+            // 缺省与未知取值都按原行为（按屏宽）。
+            else -> listOfNotNull(one("baseScreenWidth", kByWidth()))
+        }
+        // 一个都算不出来（缺 screenWidth/screenHeight/screenDpi）→ 按原尺寸，别瞎缩。
+        return specs.ifEmpty { listOf(ScaleSpec("raw", 1.0, 1.0)) }
+    }
+
+    /**
+     * 按档位缩放模板。
+     *
+     * ★ 插值方向必须跟着缩放方向走：
+     *   缩小用 `INTER_AREA`（面积平均 = 低通，抗混叠）；
+     *   放大必须用 `INTER_LINEAR` —— 放大时 `INTER_AREA` 会退化成最近邻，
+     *   边缘全是锯齿，相关系数被系统性拉低。原来不分方向一律 AREA，
+     *   等于"放大档"白给。
+     */
+    private fun resizeTo(src: Mat, spec: ScaleSpec): Mat {
+        // 比例几乎为 1 就别缩：重采样哪怕一像素也会掉几分，纯损失。
+        if (kotlin.math.abs(spec.kx - 1.0) < 0.01 && kotlin.math.abs(spec.ky - 1.0) < 0.01) {
+            return src
+        }
+        val dst = Mat()
+        val interp = if (spec.kx < 1.0 || spec.ky < 1.0) {
+            org.opencv.imgproc.Imgproc.INTER_AREA
+        } else {
+            org.opencv.imgproc.Imgproc.INTER_LINEAR
+        }
+        org.opencv.imgproc.Imgproc.resize(
+            src, dst, org.opencv.core.Size(), spec.kx, spec.ky, interp
+        )
+        return if (dst.empty()) {
+            dst.release()
+            src
+        } else {
+            dst
+        }
+    }
+
+    /** 从 `imageFilter` / `filter` 里取滤镜类型；取不到返回 null。 */
+    private fun filterType(pos: Z.PosData): String? {
+        val raw = pos.extra["imageFilter"] ?: pos.extra["filter"] ?: return null
+        val obj = raw as? org.json.JSONObject ?: return null
+        return obj.optString("type").trim().ifEmpty { null }
+    }
+
+    /**
+     * 套一层滤镜，返回**新的** Mat（调用方负责 release）；null = 没处理或不支持。
+     *
+     * 只实现 `grey` / `bw` / `reverse` —— 这三种是纯像素级、无参数的。
+     * 其余（lightness/contrast/rgb/changeColor/multi）要读各自参数，而参数形状
+     * 在不同版本里变过：**猜错的滤镜比不加滤镜更难查**，宁可不做，
+     * 由调用方记一条"未实现"。
+     *
+     * 输出统一 3 通道 BGR：模板和 ROI 必须同类型，否则 matchTemplate 直接抛断言。
+     */
+    private fun applyFilter(src: Mat, type: String?): Mat? {
+        if (type == null || type !in SUPPORTED_FILTERS) return null
+        if (src.empty()) return null
+        val gray = Mat()
+        return try {
+            when (type) {
+                "grey" -> {
+                    toGray(src, gray)
+                    val out = Mat()
+                    org.opencv.imgproc.Imgproc.cvtColor(
+                        gray, out, org.opencv.imgproc.Imgproc.COLOR_GRAY2BGR
+                    )
+                    out
+                }
+                "bw" -> {
+                    toGray(src, gray)
+                    val bin = Mat()
+                    // OTSU 自适应阈值：写死 128 在明暗差别大的 UI 上会整块变黑/变白。
+                    org.opencv.imgproc.Imgproc.threshold(
+                        gray, bin, 0.0, 255.0,
+                        org.opencv.imgproc.Imgproc.THRESH_BINARY +
+                            org.opencv.imgproc.Imgproc.THRESH_OTSU
+                    )
+                    val out = Mat()
+                    org.opencv.imgproc.Imgproc.cvtColor(
+                        bin, out, org.opencv.imgproc.Imgproc.COLOR_GRAY2BGR
+                    )
+                    bin.release()
+                    out
+                }
+                "reverse" -> {
+                    val out = Mat()
+                    org.opencv.core.Core.bitwise_not(src, out)
+                    out
+                }
+                else -> null
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "滤镜 $type 失败", t)
+            null
+        } finally {
+            gray.release()
+        }
+    }
+
+    /**
+     * `searchMode = outline_2.21`：先 Canny 取轮廓再匹配。
+     *
+     * 阈值写死 50/150（Canny 常用 1:3 经验值），**不跟着相似度滑块变**：
+     * 让滑块同时控制"边缘密度"会让同一脚本在不同阈值下走完全不同的判定，
+     * 用户一调结果全变，反而没法排查。
+     */
+    private fun toEdges(src: Mat): Mat? {
+        if (src.empty()) return null
+        val gray = Mat()
+        val edges = Mat()
+        return try {
+            toGray(src, gray)
+            org.opencv.imgproc.Imgproc.Canny(gray, edges, 50.0, 150.0)
+            val out = Mat()
+            org.opencv.imgproc.Imgproc.cvtColor(
+                edges, out, org.opencv.imgproc.Imgproc.COLOR_GRAY2BGR
+            )
+            out
+        } catch (t: Throwable) {
+            Log.w(TAG, "轮廓模式失败", t)
+            null
+        } finally {
+            gray.release()
+            edges.release()
+        }
+    }
+
+    /** BGR / BGRA / GRAY → 单通道灰度。 */
+    private fun toGray(src: Mat, dst: Mat) {
+        when (src.channels()) {
+            1 -> src.copyTo(dst)
+            4 -> org.opencv.imgproc.Imgproc.cvtColor(
+                src, dst, org.opencv.imgproc.Imgproc.COLOR_BGRA2GRAY
+            )
+            else -> org.opencv.imgproc.Imgproc.cvtColor(
+                src, dst, org.opencv.imgproc.Imgproc.COLOR_BGR2GRAY
+            )
+        }
+    }
+
+    /**
+     * 在**已经做过同样变换**的 [region] 上跑一次模板匹配。
+     *
+     * 为什么从 findImage 里抽出来：`tryAll` 要对同一块 ROI 用多个模板尺度各跑一遍，
+     * 而"匹配 + 取峰 + NMS + 逐像素复核"必须完全一致 —— 复制两份迟早跑偏。
+     *
+     * @param left / top ROI 在整帧里的左上角，用来把区域坐标还原成屏幕坐标
+     */
+    private fun matchOnce(
+        region: Mat,
+        tmpl: Mat,
+        threshold: Double,
+        left: Int,
+        top: Int
+    ): Attempt {
+        if (tmpl.width() > region.width() || tmpl.height() > region.height()) {
+            return Attempt(
+                emptyList(), -2.0,
+                "模板 ${tmpl.width()}×${tmpl.height()} 比搜索范围 " +
+                    "${region.width()}×${region.height()} 还大"
+            )
+        }
+        val result = Mat()
+        try {
+            org.opencv.imgproc.Imgproc.matchTemplate(
+                region, tmpl, result, org.opencv.imgproc.Imgproc.TM_CCOEFF_NORMED
+            )
+            val bestCorr = org.opencv.core.Core.minMaxLoc(result).maxVal
+
+            /*
+             * 不只取全局最高点。
+             *
+             * 只取一个点的话，画面里只要有一处"碰巧更像"就会选中它 ——
+             * 而真实目标可能就在旁边，分数低一点点。取所有过线的峰再做
+             * 非极大值抑制，才谈得上"找到几处"和"选第几个"。
+             */
+            val rows = result.rows()
+            val cols = result.cols()
+            val buf = FloatArray(rows * cols)
+            result.get(0, 0, buf)
+
+            val cands = ArrayList<Pair<org.opencv.core.Point, Double>>()
+            for (y in 0 until rows) {
+                for (x in 0 until cols) {
+                    val v = buf[y * cols + x]
+                    // 二值化（bw 滤镜）后模板方差可能为 0，CCOEFF 会给 NaN —— 必须挡掉。
+                    if (v.isFinite() && v >= threshold) {
+                        cands.add(org.opencv.core.Point(x.toDouble(), y.toDouble()) to v.toDouble())
+                    }
+                }
+            }
+            cands.sortByDescending { it.second }
+
+            // 非极大值抑制：两个候选挨得太近就没意义（同一个图案）
+            val minDist = maxOf(8, minOf(tmpl.width(), tmpl.height()) / 2).toDouble()
+            // 峰要**带上自己的相关系数**：协议里 indexNum 缺省是"相似度最高"那一个，
+            // 而执行器只能从 Hit.score 读到这个数 —— 只留坐标的话它只能退回"取第一个"。
+            val peaks = ArrayList<Pair<org.opencv.core.Point, Double>>()
+            for ((pt, sc) in cands) {
+                if (peaks.size >= MAX_HITS) break
+                val tooClose = peaks.any { k ->
+                    Math.hypot(k.first.x - pt.x, k.first.y - pt.y) < minDist
+                }
+                if (!tooClose) peaks.add(pt to sc)
+            }
+
+            if (peaks.isEmpty()) return Attempt(emptyList(), bestCorr, null)
+
+            /*
+             * 命中后复核：过线只说明"相关系数够高"，那只反映形状趋势，
+             * 大片纯色也能给出高分。再比一次逐像素差，把"看着像但其实是
+             * 一块纯色"的假命中剔掉。
+             *
+             * 允许的差随阈值放宽：阈值 90 → 允许差 35，阈值 70 → 允许差 87。
+             */
+            val allowMad = 255.0 * (1.0 - threshold) + 10.0
+            val hits = ArrayList<ZPosResolver.Hit>()
+            var rejected = 0
+            for ((pt, sc) in peaks) {
+                val px = pt.x.toInt()
+                val py = pt.y.toInt()
+                // 坐标基准是 region（ROI 内），不是整帧 —— 所以最后统一加 left/top。
+                val patch = region.submat(
+                    org.opencv.core.Rect(px, py, tmpl.width(), tmpl.height())
+                )
+                // 复核失败按 0 处理（= 放行），与改动前的行为一致；patch 必须释放。
+                val mad = try {
+                    meanAbsDiff(patch, tmpl)
+                } catch (t: Throwable) {
+                    0.0
+                } finally {
+                    patch.release()
+                }
+                if (mad <= allowMad) {
+                    hits.add(
+                        ZPosResolver.Hit(
+                            px + left + tmpl.width() / 2,
+                            py + top + tmpl.height() / 2,
+                            // 传这个峰自己的相关系数：多命中时执行器据此选"最像的那个"。
+                            score = sc
+                        )
+                    )
+                } else {
+                    rejected++
+                }
+            }
+
+            if (hits.isEmpty()) {
+                return Attempt(
+                    emptyList(), bestCorr,
+                    "有 ${peaks.size} 处相关系数过线，但逐像素差都太大" +
+                        "（允许 ${"%.0f".format(allowMad)}），像是匹配到了纯色区域"
+                )
+            }
+            if (rejected > 0) {
+                Log.i(TAG, "匹配：${hits.size} 处通过，$rejected 处被逐像素复核剔除")
+            }
+            /*
+             * ★ 命中结果按"从上到下、从左到右"排序，不是按相关度。
+             *
+             *   协议（FIELDS.md:156）规定排序是 boundTop 升序、同高再 boundLeft 升序，
+             *   因为 indexNum 选的是"第几个"—— 用户看着画面数是"第 2 个图标"，
+             *   是按位置数的。按相关度排的话，indexNum="2" 点的是分数第 2 高的，
+             *   在多目标场景下会**静默点错**，而且看起来像随机。
+             *   相关度只用于阈值过滤和日志。
+             */
+            hits.sortWith(compareBy({ it.y }, { it.x }))
+            return Attempt(hits, bestCorr, null)
+        } finally {
+            result.release()
+        }
+    }
+
+    // ------------------------------------------------------ 颜色：单点取色
+    //
+    // 单点的**坐标计算**已移到 `ZPosResolver.colorProbePoint`（和位置语义同类，
+    // 也避免两个人同时改这个文件里的同一段）。本类只保留**判定**（judgeProbePoint）。
+
     companion object {
         /**
          * OCR 引擎是进程级的：加载 20MB 模型要几百毫秒，
@@ -555,6 +1015,17 @@ class ZRealMatcher(
 
         /** 一次最多返回多少个命中。太多了没意义，用户也不会去选第 50 个。 */
         private const val MAX_HITS = 20
+
+        /** 虚拟屏 240dpi → 1.5（见 [density] 的说明）。 */
+        private const val DEFAULT_DENSITY = 1.5f
+
+        /**
+         * 已实现的滤镜类型（协议共 9 种）。
+         *
+         * 只收纯像素级、无参数的那三种；其余要读各自参数，参数形状跨版本变过 ——
+         * 猜错的滤镜比不加滤镜更难查，所以明确不做，由 findImage 记一条"未实现"。
+         */
+        private val SUPPORTED_FILTERS = setOf("grey", "bw", "reverse")
 
         /**
          * `#RRGGBB` / `RRGGBB` / `0xAARRGGBB` → `[r, g, b]`。认不出返回 null。

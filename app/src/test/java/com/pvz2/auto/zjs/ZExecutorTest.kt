@@ -168,7 +168,11 @@ class ZExecutorTest {
                 {"type":"控制执行","controlRunType":"jumpTo","delayUnit":0,"jumpToPosition":"nowhere"}]}"""
         )
         assertEquals(0, inj.taps.size)
-        assertTrue("应记录跳转失败：${r.skipped}", r.skipped.any { it.reason.contains("不存在") })
+        // 文案改成能区分"没有这个名字"和"没实现"，不再是笼统的"不存在"
+        assertTrue(
+            "应记录跳转失败：${r.skipped}",
+            r.skipped.any { it.reason.contains("jumpId") || it.reason.contains("不存在") }
+        )
     }
 
     @Test

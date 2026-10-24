@@ -1,5 +1,6 @@
 package com.pvz2.auto.zjs
 
+import org.json.JSONObject
 import kotlin.random.Random
 
 /**
@@ -44,6 +45,28 @@ sealed interface ZValue {
     data class Px(override val raw: String, val value: Double) : ZValue
 
     /**
+     * 区间写法，例如 `"100-300"`、`"30%-70%"`、`"10dp-20dp"`。
+     *
+     * ## 为什么必须单独一个类型（原坑）
+     *
+     * FIELDS.md:55 明确「凡是 string 类型的时长/坐标，都允许 `"1-3"` 表示范围内随机」。
+     * 旧实现是**在解析那一刻**就随机取一个值，然后把 `raw` 换成那个随机数：
+     *
+     * ```
+     * parse("100-300")  →  Px("234.56", 234.56)     // 区间没了
+     * parse("30%-70%")  →  Percent("30%-70%", 0.0)  // 两端带 % 时 toDoubleOrNull 失败 → 0
+     * ```
+     *
+     * 第一种的后果是**把用户的脚本改坏**（存盘时按 `raw` 写回，区间永久消失，
+     * 从此每次点同一个点）；第二种的后果是点击稳定落到屏幕左边缘（x=0）。
+     * 两者都不报错。
+     *
+     * 正确做法是保留原文，只在 [toPx] 时才在区间内随机 —— 这样
+     * ① 落盘原样、② 每次执行都重新随机，正是反检测想要的效果。
+     */
+    data class Range(val lo: ZValue, val hi: ZValue, override val raw: String) : ZValue
+
+    /**
      * 换算成像素。
      *
      * @param percentBase 百分比基准 —— **x 轴传屏幕宽，y 轴传屏幕高**
@@ -53,6 +76,13 @@ sealed interface ZValue {
         is Percent -> (percentBase * value / 100.0).toFloat()
         is Dp -> (value * density).toFloat()
         is Px -> value.toFloat()
+        // 两端各自换算成像素后再随机，所以 "30%-70%" 与 "384-896" 等价，
+        // 混合单位（虽然没人这么写）也不会算错。
+        is Range -> {
+            val a = lo.toPx(percentBase, density)
+            val b = hi.toPx(percentBase, density)
+            if (b <= a) a else a + Random.nextFloat() * (b - a)
+        }
     }
 
     companion object {
@@ -60,8 +90,8 @@ sealed interface ZValue {
         /**
          * 解析一个字面量。
          *
-         * 支持区间写法 `"1-3"`（协议里表示范围内随机），此时取随机值 ——
-         * 用于"点击位置每次略有不同"这类反检测场景。
+         * 区间写法 `"1-3"` / `"30%-70%"`（协议里表示范围内随机）解析成
+         * [Range]，**原文保留**，随机发生在 [toPx] 那一刻。
          *
          * 解析不出来时退化成 0%：宁可点到左上角也不要崩，
          * 而且 0% 在界面上很容易看出来是没设置。
@@ -70,36 +100,42 @@ sealed interface ZValue {
             val s = text?.trim().orEmpty()
             if (s.isEmpty()) return Percent("0%", 0.0)
 
-            // 区间 "a-b"：随机取一个。
-            // 注意负号："-5--1" 也是合法区间，所以只在中间位置切分。
+            // 区间：两端各自解析成 ZValue（所以带 % / dp 后缀也认）。
+            // 负号："-5--1" 里第一个 '-' 是符号，所以从下标 1 开始找分隔符。
+            //
+            // ★ 以前这里用 toDoubleOrNull 判两端 —— "30%-70%" 的后半段
+            //   是 "70%" 而不是数字，判不过去，于是整串落到 parseSingle，
+            //   变成 Percent("30%-70%", 0.0)。现在改成递归解析。
             val dash = s.indexOf('-', startIndex = 1)
             if (dash > 0 && !s.endsWith("-")) {
-                val lo = s.substring(0, dash).toDoubleOrNull()
-                val hi = s.substring(dash + 1).toDoubleOrNull()
-                if (lo != null && hi != null && hi >= lo) {
-                    val picked = if (hi == lo) lo else lo + Random.nextDouble() * (hi - lo)
-                    // 单位跟着整体走，取后半段的单位
-                    return parseSingle("$picked")
-                }
+                val lo = parseSingleOrNull(s.substring(0, dash))
+                val hi = parseSingleOrNull(s.substring(dash + 1))
+                if (lo != null && hi != null) return Range(lo, hi, s)
             }
             return parseSingle(s)
         }
 
-        /** 不含区间的解析。 */
-        private fun parseSingle(text: String): ZValue {
+        /** 不含区间的解析；认不出时退化成 0%（不崩）。 */
+        private fun parseSingle(text: String): ZValue =
+            parseSingleOrNull(text) ?: Percent("0%", 0.0)
+
+        /** 不含区间的解析；认不出返回 null（供区间判断用，不能和"真的是 0%"混淆）。 */
+        private fun parseSingleOrNull(text: String): ZValue? {
             val s = text.trim()
+            if (s.isEmpty()) return null
             return when {
                 s.endsWith("dp") ->
-                    Dp(s, s.dropLast(2).toDoubleOrNull() ?: 0.0)
+                    s.dropLast(2).toDoubleOrNull()?.let { Dp(s, it) }
 
                 s.endsWith("%") ->
-                    Percent(s, s.dropLast(1).toDoubleOrNull() ?: 0.0)
+                    s.dropLast(1).toDoubleOrNull()?.let { Percent(s, it) }
 
                 // 以数字结尾 = 像素（协议规则）
                 s.lastOrNull()?.isDigit() == true ->
-                    Px(s, s.filter { it.isDigit() || it == '.' || it == '-' }.toDoubleOrNull() ?: 0.0)
+                    s.filter { it.isDigit() || it == '.' || it == '-' }.toDoubleOrNull()
+                        ?.let { Px(s, it) }
 
-                else -> Percent("0%", 0.0)
+                else -> null
             }
         }
     }
@@ -181,6 +217,33 @@ data class ZArea(
                 top = px(y),
                 right = px(x + w),
                 bottom = px(y + h)
+            )
+        }
+
+        /**
+         * 对象写法：`{"left":"10%","top":100,"right":"200dp","bottom":"50%"}`。
+         *
+         * ## 原坑
+         *
+         * FIELDS.md:51 明确这是三种合法写法之一，但以前只实现了字符串分支
+         * （`optString("limitArea")`）。对对象调用 `optString` 拿到的是**JSON 文本**
+         * `{"left":...}`，按空格切只有一段 → 解析 null；而调用方
+         * （[Z.PosData.parse]）又把 `limitArea` 记成"已处理"，
+         * 于是这块区域**读写两头都丢**：搜索范围静默变成全屏。
+         *
+         * 四个键缺任何一个都返回 null（交给调用方保留原文），不做部分填充 ——
+         * 半块 ROI 比没有 ROI 更危险。
+         */
+        fun parseObject(o: JSONObject?): ZArea? {
+            if (o == null) return null
+            for (k in listOf("left", "top", "right", "bottom")) {
+                if (!o.has(k) || o.isNull(k)) return null
+            }
+            return ZArea(
+                left = ZValue.parse(o.opt("left").toString()),
+                top = ZValue.parse(o.opt("top").toString()),
+                right = ZValue.parse(o.opt("right").toString()),
+                bottom = ZValue.parse(o.opt("bottom").toString())
             )
         }
 

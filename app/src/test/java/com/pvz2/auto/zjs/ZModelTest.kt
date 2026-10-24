@@ -234,9 +234,13 @@ class ZModelTest {
     }
 
     @Test
-    fun `旧名字存出去时写成新名字`() {
-        // 读一次存一次就自动升级，用户不用手工改文件
+    fun `多指手势必须原样写回协议名`() {
+        /*
+         * 曾经写成 "多指滑动"（我们自造的名字）。自动精灵的动作注册表里
+         * 没有这个类型，它的构造器遇到未知 type 直接抛异常 ——
+         * 结果是**整份脚本打不开**，不是少一条动作。
+         */
         val a = Z.Action.parse(JSONObject("""{"type":"多指手势","delayUnit":1}"""))!!
-        assertEquals("多指滑动", a.toJson().getString("type"))
+        assertEquals("多指手势", a.toJson().getString("type"))
     }
 }

@@ -106,6 +106,28 @@ class ZExecutor(
     }
 
     /**
+     * 脚本级的默认等待（`baseInfo.delay`）与它的单位，`run()` 里填。
+     *
+     * 协议（FIELDS.md:113）：动作没写 `delay` 时**先**取脚本级的 `baseInfo.delay`，
+     * 两者都没有才缺省 1000ms。以前只有硬编码的 200ms —— 作者把全局节奏设成 3 秒，
+     * 我们照样 200ms 一个动作，界面还没打开就开始点，后面每一步都点在过渡画面上。
+     */
+    private var scriptBaseDelay: String? = null
+    private var scriptBaseDelayUnit: Z.TimeUnit = Z.TimeUnit.SECONDS
+
+    /**
+     * 「等待」动作（controlRun:waitDelay）没写 delay 时的兜底。
+     *
+     * 协议里 `delay` 是这个动作**唯一**的时长来源（FIELDS.md:559）—— 没有它，
+     * "等待"就等于一个空操作。以前这里传 0，用户放一条"等 2 秒"根本不生效，
+     * 而动作在列表里看起来清清楚楚。
+     */
+    private val DEFAULT_WAIT_ACTION_MS = 1000
+
+    /** 已经报过"监听动作不执行"的动作下标。避免无限循环里每轮都刷一条。 */
+    private val warnedCallbackActions = HashSet<Int>()
+
+    /**
      * 跑完整个脚本。
      *
      * @param maxSteps 步数上限，防止 `重复次数=0` + 无条件跳转变成死循环
@@ -131,6 +153,9 @@ class ZExecutor(
         jumpTableOf = jumpTable
 
         val scriptRepeat = script.baseInfo.repeatCount ?: 1
+        // 脚本级默认等待：动作没写 delay 时按它走（见 scriptBaseDelay 的注释）
+        scriptBaseDelay = script.baseInfo.delay?.takeIf { it.isNotBlank() }
+        scriptBaseDelayUnit = script.baseInfo.delayUnit
         var loop = 0
 
         while (!stopped) {
@@ -144,8 +169,8 @@ class ZExecutor(
                     return Result(executed, skipped, "执行步数超过 $maxSteps，可能有死循环")
                 }
 
-                val action = actions[pc]
-                val label = ZScriptIO.actionLabel(action)
+                val rawAction = actions[pc]
+                val label = ZScriptIO.actionLabel(rawAction)
 
                 /*
                  * ★ 每条动作先打一行头。
@@ -154,7 +179,28 @@ class ZExecutor(
                  *   猜哪段属于哪条动作。带上序号/类型/节点名，配合下面
                  *   每步的实测值，就能直接定位到"哪个字段算错了"。
                  */
-                log("── [${pc + 1}/${actions.size}] ${action.type.wire} · $label")
+                log("── [${pc + 1}/${actions.size}] ${rawAction.type.wire} · $label")
+
+                /*
+                 * ★ __vars：字段被变量化时，自动精灵落盘会**把原字段删掉**
+                 *   （FIELDS.md:127-133）。所以我们读到的"字段不存在"有两种完全
+                 *   不同的含义：用户没写 / 它是变量。
+                 *
+                 *   以前一律按前者处理：`delay` 是变量就按 200ms 跑、`duration`
+                 *   是变量就按 100ms —— 脚本节奏全错，而脚本在界面上看起来一切正常。
+                 *   这里先把能代换的字面量代换掉；代换不了的**明确跳过这一条**，
+                 *   绝不静默套默认值。
+                 */
+                val varsApplied = applyLiteralVars(rawAction)
+                if (varsApplied.blockedField != null) {
+                    val field = varsApplied.blockedField
+                    val why = "__vars：字段「$field」由变量定义，本机只能代换字面量，无法求值"
+                    skipped.add(Result.Skip(pc, label, why))
+                    log("[跳过] $why")
+                    pc++
+                    continue
+                }
+                val action = varsApplied.action
 
                 // 禁用：跳过，不算失败
                 if (action.common.disabled) {
@@ -187,7 +233,8 @@ class ZExecutor(
                 val mustCheck = cond != null && cond.disabled.not()
                 var delayDone = false
                 if (mustCheck && !cond!!.checkBeforeDelay) {
-                    waitDelay(action.common.delay, action.common.delayUnit, interactionDefaultMs(action))
+                    val pre = preDelay(action)
+                    waitDelay(pre.first, pre.second, delayDefaultMs(action))
                     delayDone = true
                 }
                 if (mustCheck && !evaluateWithRetry(cond!!, pc, skipped)) {
@@ -223,7 +270,8 @@ class ZExecutor(
                     continue
                 }
                 if (!delayDone) {
-                    waitDelay(action.common.delay, action.common.delayUnit, interactionDefaultMs(action))
+                    val pre = preDelay(action)
+                    waitDelay(pre.first, pre.second, delayDefaultMs(action))
                 }
 
                 // 执行（含重复）
@@ -244,24 +292,40 @@ class ZExecutor(
                     return Result(executed, skipped, outcome.abort)
                 }
                 if (outcome.jumpTo != null) {
-                    val resolved = resolveJump(outcome.jumpTo!!, pc, actions.size)
-                    if (resolved == null) {
-                        /*
-                         * ★ 找不到目标时**停在原地**，不要把 pc 推到末尾。
-                         *
-                         *   推到末尾 = 整条脚本静默结束，界面上只有一条跳过原因 ——
-                         *   用户看到的是"脚本跑完了但什么都没做"，最难查。
-                         *   停在原地至少让"停止"和"往下看"都还可控，
-                         *   而且这条 skip 会留在结果里。
-                         */
-                        skipped.add(
-                            Result.Skip(pc, label, "跳转目标「${outcome.jumpTo}」不存在")
-                        )
-                        log("[跳转] 目标「${outcome.jumpTo}」不存在，停在这一条")
-                        return Result(executed, skipped, "跳转目标「${outcome.jumpTo}」不存在")
+                    /*
+                     * ★ 跳转结果必须分**三种**，不能都用 null 表示"跳不了"。
+                     *
+                     *   `&1`（子动作列表内跳转）是协议里的写法、我们没实现；
+                     *   `:a` 查不到 / 序号越界才是"目标不存在"。
+                     *   以前两者都返回 null → 上层一律当"目标不存在"终止脚本 ——
+                     *   用户按"不存在"去改脚本，改多久都不对（我们其实根本不支持）。
+                     */
+                    when (val resolved = resolveJump(outcome.jumpTo!!, pc, actions.size)) {
+                        is JumpResult.Found -> {
+                            pc = resolved.index
+                            continue
+                        }
+
+                        is JumpResult.Unsupported -> {
+                            skipped.add(Result.Skip(pc, label, resolved.message))
+                            log("[跳转] ${resolved.message}，停在这一条")
+                            return Result(executed, skipped, resolved.message)
+                        }
+
+                        is JumpResult.NotFound -> {
+                            /*
+                             * ★ 找不到目标时**停在原地**，不要把 pc 推到末尾。
+                             *
+                             *   推到末尾 = 整条脚本静默结束，界面上只有一条跳过原因 ——
+                             *   用户看到的是"脚本跑完了但什么都没做"，最难查。
+                             *   停在原地至少让"停止"和"往下看"都还可控，
+                             *   而且这条 skip 会留在结果里。
+                             */
+                            skipped.add(Result.Skip(pc, label, resolved.message))
+                            log("[跳转] ${resolved.message}，停在这一条")
+                            return Result(executed, skipped, resolved.message)
+                        }
                     }
-                    pc = resolved
-                    continue
                 }
                 if (outcome.stop) {
                     return Result(executed, skipped, null)
@@ -334,6 +398,19 @@ class ZExecutor(
         }
         val times = if (infinite) Int.MAX_VALUE else if (repeat <= 0) 1 else repeat
 
+        /*
+         * 监听（scriptCallbacks，7 个槽位）。
+         *
+         * 协议里这些槽位都会**真的跑**（FIELDS.md:292-300）。我们只实现了
+         * afterExecSuc / afterExecFinish，其余槽位在这里明确说一次 ——
+         * 以前完全不提，用户看到"动作成功了"，却没发现挂在上面的收尾动作
+         * 一条都没执行。静默失效里最难查的一种。
+         */
+        warnUnsupportedCallbacks(action, index, label, skipped)
+
+        // fastRepeatMode 的复用缓存：首轮识别出来的坐标，后面几轮直接用（见 RepeatMemo）
+        val memo = RepeatMemo()
+
         for (n in 0 until times) {
             if (stopped) break
             if (n > 0) {
@@ -345,24 +422,54 @@ class ZExecutor(
                 val hasOwn = !action.common.repeatDelayValue.isNullOrBlank()
                 val v = if (hasOwn) action.common.repeatDelayValue else action.common.delay
                 val u = if (hasOwn) action.common.repeatDelayUnit else action.common.delayUnit
-                waitDelay(v, u, interactionDefaultMs(action))
+                waitDelay(v, u, delayDefaultMs(action))
             }
 
-            when (val r = executeOnce(action, index, label, skipped)) {
+            when (val r = executeOnce(action, index, label, skipped, memo)) {
                 // 执行不了：若原因是"识别不到"就结束整个任务，否则继续
-                null -> return Outcome(abort = abortReason)
-                else -> if (r.jumpTo != null || r.stop) return r
+                null -> {
+                    /*
+                     * ★ 快速重复的后续轮次**不得 abort**。
+                     *
+                     *   此时识别根本没跑（坐标是首轮缓存下来的），失败只可能是注入/
+                     *   参数问题。把它升格成"整个任务结束"，会让一条连点动作在第二轮
+                     *   就把脚本杀掉 —— 而首轮明明是成功的。
+                     */
+                    if (n > 0 && action.common.fastRepeatMode) {
+                        abortReason = null
+                        runCallbacks(action, Z.CallbackSlot.AFTER_EXEC_FAIL, index, label)
+                        return Outcome()
+                    }
+                    // afterExecFail：协议里设置后忽略 pauseOnFail 与全局失败监听
+                    runCallbacks(action, Z.CallbackSlot.AFTER_EXEC_FAIL, index, label)
+                    return Outcome(abort = abortReason)
+                }
+
+                else -> {
+                    // 跳转转出：协议规定 afterExecFinish **不触发**（FIELDS.md:300）
+                    if (r.jumpTo != null || r.stop) return r
+                    // afterExecSuc：**每次重复成功**都触发（FIELDS.md:298）
+                    runCallbacks(action, Z.CallbackSlot.AFTER_EXEC_SUC, index, label)
+                }
             }
         }
+        // afterExecFinish：所有重复结束触发一次
+        runCallbacks(action, Z.CallbackSlot.AFTER_EXEC_FINISH, index, label)
         return Outcome()
     }
 
-    /** 执行一次。返回 null 表示这个动作做不了（已记录原因）。 */
+    /**
+     * 执行一次。返回 null 表示这个动作做不了（已记录原因）。
+     *
+     * [memo] 是 `fastRepeatMode` 的复用缓存：首轮把命中点算出来存在里面，
+     * 后续轮次直接重放（FIELDS.md:118）。
+     */
     private fun executeOnce(
         action: Z.Action,
         index: Int,
         label: String,
-        skipped: MutableList<Result.Skip>
+        skipped: MutableList<Result.Skip>,
+        memo: RepeatMemo
     ): Outcome? {
         val c = action.common
         // duration 支持区间 "100-300"（FIELDS.md:112），取区间内随机；
@@ -382,14 +489,23 @@ class ZExecutor(
                     skipped.add(Result.Skip(index, label, "缺位置"))
                     return null
                 }
-                // 等待参数来自动作本身（转换出来的脚本会带上 Maa 的 timeout）
-                val hit = locate(
+                /*
+                 * ★ fastRepeatMode：首轮把命中点算出来，后面几轮直接重放。
+                 *
+                 *   协议原文是"跳过条件检查/坐标计算/变量计算/监听，只重放第一次结果"
+                 *   （FIELDS.md:118）。以前这个字段只出现在注释里 —— 用户勾了
+                 *   「快速重复」，行为一个像素都没变，连点二十次就白算二十次识别。
+                 */
+                val cached = if (c.fastRepeatMode) memo.hits else null
+                val hits = cached ?: locate(
                     pos, index, label, skipped,
                     timeoutMs = action.waitTimeoutMs ?: 0,
                     intervalMs = action.waitIntervalMs ?: 200
                 ) ?: return null
-                log("   点击 (${hit.x},${hit.y}) 按住 ${hold}ms")
-                inject.tap(hit.x, hit.y, hold)
+                if (c.fastRepeatMode) memo.hits = hits
+
+                // indexNum 可能选出**多个**点（"1,3,4" = 这几个都点），所以是列表
+                tapHits(hits, hold, c)
                 Outcome()
             }
 
@@ -401,10 +517,38 @@ class ZExecutor(
                     skipped.add(Result.Skip(index, label, "缺起点或终点"))
                     return null
                 }
-                val a = ZPosResolver.resolveLocation(s, screen)
-                val b = ZPosResolver.resolveLocation(e, screen)
-                log("   滑动 (${a.x},${a.y})→(${b.x},${b.y}) 用时 ${hold}ms")
-                inject.swipe(a.x, a.y, b.x, b.y, hold)
+                /*
+                 * 起点/终点也可能是"图片/文字/颜色"位置，这时 indexNum 会选出多个点。
+                 * 协议里多点滑动就是"**每一对**起终点各滑一次"，所以这里按下标配对；
+                 * 两边数量不等时用最后一个兜底（宁可多滑一次，也不要静默少滑一半）。
+                 */
+                val starts = (if (c.fastRepeatMode) memo.starts else null) ?: locate(
+                    s, index, label, skipped,
+                    timeoutMs = action.waitTimeoutMs ?: 0,
+                    intervalMs = action.waitIntervalMs ?: 200
+                ) ?: return null
+                val ends = (if (c.fastRepeatMode) memo.ends else null) ?: locate(
+                    e, index, label, skipped,
+                    timeoutMs = action.waitTimeoutMs ?: 0,
+                    intervalMs = action.waitIntervalMs ?: 200
+                ) ?: return null
+                if (c.fastRepeatMode) {
+                    memo.starts = starts
+                    memo.ends = ends
+                }
+
+                val lastStart = starts.last()
+                val lastEnd = ends.last()
+                val pairs = maxOf(starts.size, ends.size)
+                for (i in 0 until pairs) {
+                    if (stopped) break
+                    // 第 2 对起先等重复间隔（与多点点击同一套理由：连发会被游戏合并）
+                    if (i > 0) waitMultiGap(c)
+                    val a = starts.getOrNull(i) ?: lastStart
+                    val b = ends.getOrNull(i) ?: lastEnd
+                    log("   滑动 (${a.x},${a.y})→(${b.x},${b.y}) 用时 ${hold}ms")
+                    inject.swipe(a.x, a.y, b.x, b.y, hold)
+                }
                 Outcome()
             }
 
@@ -573,9 +717,10 @@ class ZExecutor(
     }
 
     /**
-     * 按位置对象的类型找命中点。
+     * 按位置对象的类型找命中点，并选出**要处理的那几个**。
      *
-     * 找到多个时按 `indexNum` 选一个 —— 这是协议里"选第几个"的语义。
+     * 返回列表而不是单点：`indexNum = "1,3,4"` 的语义是"这三个都点"
+     * （FIELDS.md:151-154），以前随机挑一个 —— 多目标脚本每轮都漏掉大部分。
      */
     /**
      * 解析点击位置。
@@ -591,6 +736,7 @@ class ZExecutor(
      *
      * @param timeoutMs 总超时，0 = 只试一次
      * @param intervalMs 每轮间隔
+     * @return 选中的命中点（至少一个）；null = 找不到 / 下标全越界（已记跳过原因）
      */
     private fun locate(
         pos: Z.PosData,
@@ -599,9 +745,9 @@ class ZExecutor(
         skipped: MutableList<Result.Skip>,
         timeoutMs: Int = 0,
         intervalMs: Int = 200
-    ): ZPosResolver.Hit? {
+    ): List<ZPosResolver.Hit>? {
         if (pos.type == Z.PosType.LOCATION) {
-            return ZPosResolver.resolveLocation(pos, screen)
+            return listOf(ZPosResolver.resolveLocation(pos, screen))
         }
 
         val rect = ZPosResolver.searchRect(pos, screen)
@@ -654,16 +800,41 @@ class ZExecutor(
             return null
         }
 
-        val which = ZPosResolver.pickIndex(pos.indexNum, hits.size)
-        val hit = hits.getOrNull(which) ?: hits.first()
+        /*
+         * 选哪一个 / 哪几个。
+         *
+         * ★ indexNum 缺省是 **mostMatched（相似度最高）**，不是"排序第一个"
+         *   （FIELDS.md:146）。以前直接取 `hits[0]` —— 而命中顺序是按位置从上到下的，
+         *   于是"画面里有两个同样的图标，点分数更高的那个"变成了"点最上面那个"。
+         *   分数全 0（matcher 还没传 score）时 `maxByOrNull` 取第一个，等价旧行为。
+         */
+        val chosen: List<ZPosResolver.Hit> = if (pos.indexNum.isNullOrBlank()) {
+            listOfNotNull(hits.maxByOrNull { it.score })
+        } else {
+            ZPosResolver.pickIndices(pos.indexNum, hits.size).mapNotNull { hits.getOrNull(it) }
+        }
+        if (chosen.isEmpty()) {
+            /*
+             * 下标全部越界：这是**脚本配置问题**，不是"识别不到"。
+             * 所以不设 abortReason —— 让上层只跳过这一条，不要因此结束整个任务。
+             */
+            val msg = "indexNum「${pos.indexNum}」指定的下标都超出了命中数 ${hits.size}"
+            skipped.add(Result.Skip(index, label, msg))
+            log("[动作 $index] $label — $msg")
+            return null
+        }
 
         // 命中后的偏移
         val ox = pos.xOffset?.toPx(screen.width, screen.density) ?: 0f
         val oy = pos.yOffset?.toPx(screen.height, screen.density) ?: 0f
-        return ZPosResolver.Hit(
-            x = (hit.x + ox).toInt().coerceIn(0, screen.width - 1),
-            y = (hit.y + oy).toInt().coerceIn(0, screen.height - 1)
-        )
+        return chosen.map { hit ->
+            ZPosResolver.Hit(
+                x = (hit.x + ox).toInt().coerceIn(0, screen.width - 1),
+                y = (hit.y + oy).toInt().coerceIn(0, screen.height - 1),
+                // 分数带下去：多点动作里要按它挑，日志里也要能看到"为什么选了这个"
+                score = hit.score
+            )
+        }
     }
 
     /**
@@ -673,7 +844,7 @@ class ZExecutor(
      * 用户看不出"这一条正在跑"还是"卡住了"。
      */
     /**
-     * 解析 `jumpToPosition` 的写法，返回目标下标；解析不出来返回 null。
+     * 解析 `jumpToPosition` 的写法，返回 [JumpResult]（Found / NotFound / Unsupported）。
      *
      * ## 为什么要支持这么多种
      *
@@ -687,26 +858,70 @@ class ZExecutor(
      * 原来只做 jumpTable 精确匹配，于是真实脚本里的 `":a"` 和 `"2"` 全都查不到，
      * 而查不到又会把 pc 推到末尾 —— 整条脚本跑一条就"完成"了。
      */
-    private fun resolveJump(raw: String, current: Int, size: Int): Int? {
+    /**
+     * 跳转的三种结果。
+     *
+     * ★ 为什么不能用 `Int?`：`null` 同时表示"目标不存在"和"这种写法我们没实现"，
+     *   上层只能一律当"不存在"终止脚本 —— 于是用户拿着 `&1` 去改 jumpId，
+     *   改一辈子也改不对（我们根本不支持子列表跳转）。
+     */
+    private sealed interface JumpResult {
+        /** 解析成功，[index] 是目标动作下标（0 基）。 */
+        data class Found(val index: Int) : JumpResult
+
+        /** 写法合法但没有目标（jumpId 不存在 / 序号越界）。 */
+        data class NotFound(val message: String) : JumpResult
+
+        /** 是协议里的写法，我们还没实现（`&1` 子动作列表）。 */
+        data class Unsupported(val message: String) : JumpResult
+    }
+
+    private fun resolveJump(raw: String, current: Int, size: Int): JumpResult {
         val t = raw.trim()
-        if (t.isEmpty()) return null
+        if (t.isEmpty()) return JumpResult.NotFound("跳转目标是空的")
 
         // ":A" —— 按 jumpId 找
         if (t.startsWith(":")) {
-            return jumpTableOf[t.substring(1)]
+            val id = t.substring(1)
+            val idx = jumpTableOf[id]
+                ?: return JumpResult.NotFound("跳转目标「$t」不存在（没有动作的 jumpId 是「$id」）")
+            return JumpResult.Found(idx)
         }
+
+        // "&1" / "&-2" —— 子动作列表内的跳转（SPEC.md:455 / :509）
+        // ★ 必须和"不存在"分开报：这是我们自己的缺口，不是脚本写错了。
+        if (t.startsWith("&")) {
+            return JumpResult.Unsupported(
+                "子动作列表跳转「$t」尚未实现（需要先支持「运行多个动作」）"
+            )
+        }
+
         // "+2" / "-1" —— 相对当前
         if (t.length > 1 && (t[0] == '+' || t[0] == '-')) {
-            val delta = t.toIntOrNull() ?: return null
+            val delta = t.toIntOrNull()
+                ?: return JumpResult.NotFound("跳转目标「$t」不是合法的相对位置")
             val target = current + delta
-            return target.takeIf { it in 0 until size }
+            if (target !in 0 until size) {
+                return JumpResult.NotFound("相对跳转「$t」超出动作范围（共 $size 条）")
+            }
+            return JumpResult.Found(target)
         }
-        // "&1" —— 子列表跳转，协议里有，我们没实现，明确不猜
-        if (t.startsWith("&")) return null
+
         // "2" —— 1 基序号
-        val idx = t.toIntOrNull() ?: return jumpTableOf[t]
+        val idx = t.toIntOrNull()
+        if (idx == null) {
+            // 不是数字：再按 jumpId 试一次（手写脚本里常见裸 id）
+            val byId = jumpTableOf[t]
+                ?: return JumpResult.NotFound("跳转目标「$t」既不是序号，也不是存在的 jumpId")
+            return JumpResult.Found(byId)
+        }
         val target = idx - 1
-        return target.takeIf { it in 0 until size } ?: jumpTableOf[t]
+        if (target !in 0 until size) {
+            // 序号越界时再按 jumpId 兜一次（历史行为：有些脚本把标识写成数字）
+            jumpTableOf[t]?.let { return JumpResult.Found(it) }
+            return JumpResult.NotFound("跳转序号「$t」超出范围（共 $size 条）")
+        }
+        return JumpResult.Found(target)
     }
 
     /** 由 [run] 填好，供 [resolveJump] 用。 */
@@ -940,13 +1155,237 @@ class ZExecutor(
     }
 
     /**
-     * 交互动作的缺省等待：Maa 的 pre_delay/post_delay 默认 200ms。
+     * 没写 delay（动作级和脚本级都没有）时的兜底毫秒数。
      *
-     * 只给「真的去操作画面」的动作（有位置/起终点），控制流不算 ——
-     * 让死循环保护还能正常生效。
+     * - **「等待」动作**（controlRun:`waitDelay`）：1000ms。协议里 `delay` 是这个
+     *   动作唯一的时长来源（FIELDS.md:559），没有它"等待"就是空操作 ——
+     *   以前传 0，用户放一条"等 2 秒"完全不生效。
+     * - **有位置/起终点的交互动作**：200ms（Maa 的 pre_delay 默认值）。
+     * - **其余控制流**（跳转、等待候选、停止…）：0 —— 否则「无限循环 + 每步 200ms」
+     *   会让死循环保护形同虚设（测试里那个死循环用例会跑几小时）。
      */
-    private fun interactionDefaultMs(a: Z.Action): Int =
-        if (a.posData != null || a.startPos != null) DEFAULT_DELAY_MS else 0
+    private fun delayDefaultMs(a: Z.Action): Int = when {
+        a.type == Z.ActionType.CONTROL_WAIT -> DEFAULT_WAIT_ACTION_MS
+        a.posData != null || a.startPos != null -> DEFAULT_DELAY_MS
+        else -> 0
+    }
+
+    /**
+     * 这条动作"运行前等待"的实际取值。
+     *
+     * 优先级（FIELDS.md:113）：动作自己的 `delay` → 脚本级 `baseInfo.delay`
+     * → 由 [delayDefaultMs] 给的兜底。以前只用了兜底 200ms，
+     * 脚本级的全局节奏从来没被读过。
+     */
+    private fun preDelay(a: Z.Action): Pair<String?, Z.TimeUnit> {
+        val own = a.common.delay
+        if (!own.isNullOrBlank()) return own to a.common.delayUnit
+        val scriptDefault = scriptBaseDelay
+        if (!scriptDefault.isNullOrBlank()) return scriptDefault to scriptBaseDelayUnit
+        return null to a.common.delayUnit
+    }
+
+    /**
+     * `fastRepeatMode` 的复用缓存（FIELDS.md:118）。
+     *
+     * 首轮识别出来的坐标存在这里，后面几轮直接用 —— 连点同一个位置时，
+     * 每轮都重跑一次模板匹配是纯浪费（而且每次都要跨进程取帧）。
+     */
+    private class RepeatMemo {
+        /** 点击类的首轮命中点。 */
+        var hits: List<ZPosResolver.Hit>? = null
+
+        /** 滑动类的首轮起点命中点。 */
+        var starts: List<ZPosResolver.Hit>? = null
+
+        /** 滑动类的首轮终点命中点。 */
+        var ends: List<ZPosResolver.Hit>? = null
+    }
+
+    /**
+     * 对多个命中点依次点击。
+     *
+     * `indexNum = "1,3,4"` 的语义是"这三个都点"（FIELDS.md:151-154）。
+     * 以前随机挑一个 —— "关 3 个弹窗"每轮只关 1 个，剩下 2 个永远漏，
+     * 而脚本看起来"跑完了"。
+     */
+    private fun tapHits(hits: List<ZPosResolver.Hit>, hold: Int, c: Z.ActionCommon) {
+        hits.forEachIndexed { i, hit ->
+            if (stopped) return
+            if (i > 0) waitMultiGap(c)
+            log("   点击 (${hit.x},${hit.y}) 按住 ${hold}ms")
+            inject.tap(hit.x, hit.y, hold)
+        }
+    }
+
+    /**
+     * 多点动作里"第 2 个点之前"的间隔。
+     *
+     * 同一条动作选出的多个点，间隔按**重复间隔**走（`repeatDelayValue`，
+     * 缺省回落 `delay`，FIELDS.md:116）。一口气连发在游戏侧常被合并成一次，
+     * 于是"点 3 个"实际只生效 1 个 —— 又是一次漏点。
+     */
+    private fun waitMultiGap(c: Z.ActionCommon) {
+        val hasOwn = !c.repeatDelayValue.isNullOrBlank()
+        val v = if (hasOwn) c.repeatDelayValue else c.delay
+        val u = if (hasOwn) c.repeatDelayUnit else c.delayUnit
+        if (v.isNullOrBlank()) return
+        waitDelay(v, u, 0)
+    }
+
+    /**
+     * 会读 `__vars` 的字段。
+     *
+     * 只列真正参与执行的：这几个字段被变量化后，一旦按"没写"处理就会改变脚本行为。
+     * 其余字段（desc、limitArea…）变量化不代换也不影响执行，不要因此把动作跳掉。
+     */
+    private val WATCHED_VAR_FIELDS = listOf("delay", "duration", "repeatCount", "posData")
+
+    /** [applyLiteralVars] 的结果：[blockedField] 非 null = 这个字段是变量且求不出来。 */
+    private class VarsApplied(val action: Z.Action, val blockedField: String? = null)
+
+    /** 变量代换出来的字面量：既能当文本（delay/duration），也能当数字（repeatCount）。 */
+    private class VarLiteral(val text: String, val number: Double?)
+
+    /**
+     * `__vars` 的**字面量**代换。
+     *
+     * 自动精灵允许把任意字段改成"运行时求值"，落盘时原字段会被**删掉**
+     * （FIELDS.md:127-133）。所以我们读到的"字段不存在"有两种完全不同的含义：
+     * 用户没写 / 它是变量。以前一律按前者处理 —— `delay` 是变量就按 200ms 跑、
+     * `duration` 是变量就按 100ms，脚本节奏全错，而界面上一切正常。
+     *
+     * 这里只做**保守的字面量**（`varType` 为 `number`/`string` 且 `valueExp` 能直接解析）。
+     * 求不出来的（`js_function`、`expression`、`random`…）**明确报出来**，
+     * 由调用方跳过这条动作 —— 绝不静默用默认值。
+     */
+    private fun applyLiteralVars(action: Z.Action): VarsApplied {
+        val vars = action.common.vars
+        if (vars.isEmpty()) return VarsApplied(action)
+
+        var common = action.common
+        var changed = false
+        for (field in WATCHED_VAR_FIELDS) {
+            if (!vars.containsKey(field)) continue
+
+            // posData 是结构字段，做不了字面量代换：只有它真的缺失时才拦下
+            // （协议落盘时确实会删掉它），否则原样放行。
+            if (field == "posData") {
+                if (action.posData == null) return VarsApplied(action, field)
+                continue
+            }
+
+            val def = vars[field] ?: return VarsApplied(action, field)
+            val literal = literalOf(def) ?: return VarsApplied(action, field)
+            when (field) {
+                "delay" -> {
+                    common = common.copy(delay = literal.text)
+                    changed = true
+                }
+                "duration" -> {
+                    common = common.copy(duration = literal.text)
+                    changed = true
+                }
+                "repeatCount" -> {
+                    val n = literal.number ?: return VarsApplied(action, field)
+                    common = common.copy(repeatCount = n.toInt())
+                    changed = true
+                }
+            }
+        }
+        return if (changed) VarsApplied(action.copy(common = common)) else VarsApplied(action)
+    }
+
+    /** 从变量定义里取字面量；返回 null = 这个变量不是字面量（求不出来）。 */
+    private fun literalOf(def: org.json.JSONObject): VarLiteral? {
+        val type = def.optString("varType")
+        val exp = def.optString("valueExp").trim()
+        return when (type) {
+            "number" -> exp.toDoubleOrNull()?.let { VarLiteral(it.toString(), it) }
+            "string" -> {
+                if (exp.isEmpty()) return null
+                // 去掉最外层一对引号：`"abc"` 和 `'abc'` 都是常见写法
+                val unquoted = when {
+                    exp.length >= 2 && exp.first() == '"' && exp.last() == '"' ->
+                        exp.substring(1, exp.length - 1)
+                    exp.length >= 2 && exp.first() == '\'' && exp.last() == '\'' ->
+                        exp.substring(1, exp.length - 1)
+                    else -> exp
+                }
+                VarLiteral(unquoted, unquoted.toDoubleOrNull())
+            }
+            else -> null
+        }
+    }
+
+    /**
+     * 报了但没实现的监听槽位，每个动作只提示一次。
+     *
+     * 7 个槽位里我们只跑 afterExecSuc / afterExecFinish（见 [runCallbacks]）。
+     * 不提示的话，用户看到"动作成功了"，却没发现挂在上面的收尾动作一条都没执行。
+     */
+    private fun warnUnsupportedCallbacks(
+        action: Z.Action,
+        index: Int,
+        label: String,
+        skipped: MutableList<Result.Skip>
+    ) {
+        if (action.callbacks.isEmpty()) return
+        val unsupported = action.callbacks.keys.filter {
+            it != Z.CallbackSlot.AFTER_EXEC_SUC && it != Z.CallbackSlot.AFTER_EXEC_FINISH
+        }
+        if (unsupported.isEmpty()) return
+        // 无限循环里每轮都会走到这里，只报第一次
+        if (!warnedCallbackActions.add(index)) return
+        val names = unsupported.joinToString("、") { it.wire }
+        val msg = "监听动作未执行（本机只支持 afterExecSuc / afterExecFinish）：$names"
+        skipped.add(Result.Skip(index, label, msg))
+        log("[$index] $label — $msg")
+    }
+
+    /**
+     * 跑一个监听槽位（`scriptCallbacks`）。
+     *
+     * 只实现 afterExecSuc / afterExecFinish —— 覆盖绝大多数脚本的用法
+     * （成功后收个尾、动作结束后补一手）。槽内动作的**跳转/停止不生效**：
+     * 它们的作用域是外层脚本，让一个监听把整条脚本跳走会变成灾难。
+     */
+    private fun runCallbacks(
+        action: Z.Action,
+        slot: Z.CallbackSlot,
+        index: Int,
+        label: String
+    ) {
+        val cb = action.callbacks[slot] ?: return
+        if (stopped) return
+        if (cb.common.disabled) {
+            log("[$index] $label 监听 ${slot.wire}：动作已禁用，跳过")
+            return
+        }
+        if (!cb.type.executable) {
+            log("[$index] $label 监听 ${slot.wire}：${cb.type.wire} 在安卓上暂不支持")
+            return
+        }
+
+        val cbLabel = "监听·${slot.wire}"
+        val times = (cb.common.repeatCount ?: 1).let { if (it <= 0) 1 else it }
+        val cbSkips = ArrayList<Result.Skip>()
+        // 缓存放在循环外：槽内动作自己也可能是"连点同一个位置"的快速重复
+        val cbMemo = RepeatMemo()
+        for (n in 0 until times) {
+            if (stopped) break
+            if (n > 0) waitDelay(cb.common.repeatDelayValue, cb.common.repeatDelayUnit)
+            val r = executeOnce(cb, index, cbLabel, cbSkips, cbMemo)
+            if (r == null) break
+            if (r.jumpTo != null || r.stop) {
+                log("[$index] $cbLabel 里的跳转/停止被忽略（作用域是外层脚本）")
+                break
+            }
+        }
+        // 槽内动作的失败原因不能吞掉：这是用户唯一能看到"监听做了什么"的地方
+        cbSkips.forEach { log("[$index] $cbLabel 跳过：${it.reason}") }
+        log("[$index] $label 监听 ${slot.wire} 已执行（$times 次）")
+    }
 
     /** 解析数字或区间 `"1-3"`，取随机。解析不了返回 null。 */
     private fun randomIn(value: String?): Double? {

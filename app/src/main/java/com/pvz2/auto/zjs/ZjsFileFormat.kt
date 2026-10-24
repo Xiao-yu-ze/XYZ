@@ -64,7 +64,16 @@ object ZjsFileFormat {
         // 1) baseInfo，注入版本与统计
         lines += buildBaseInfo(script, screenWidth, screenHeight, screenDpi).toString()
 
-        // 2) 空动作要跳过（SPEC.md:711 `actionsIgnoreEmpty`）。
+        // 2) 内嵌子脚本：必须在 baseInfo 之后、动作之前（SPEC.md:709-712），
+        //    而且**逐字节原样**输出（见 Z.Script.linkedFiles 的说明）。
+        //
+        //    原坑：parse 把它们收进 ParseResult.linkedFiles，stringify 从不写回。
+        //    用户打开一次、保存一次，`执行脚本` 指向的内嵌子脚本就全没了。
+        for (line in script.linkedFiles) {
+            if (line.isNotBlank()) lines += line
+        }
+
+        // 3) 空动作要跳过（SPEC.md:711 `actionsIgnoreEmpty`）。
         //    数组里可能有 null（解析失败的那条），落盘时不能变成 "null" 一行。
         script.actions.forEach { lines += it.toJson().toString() }
 
@@ -96,7 +105,7 @@ object ZjsFileFormat {
 
         put("minVerName", SAVED_VER_NAME)
         put("minVerCode", versionCode(SAVED_VER_NAME))
-        put("count", countActions(script.actions))
+        put("count", countActions(script))
         put("savedVerName", SAVED_VER_NAME)
         put("savedVerCode", versionCode(SAVED_VER_NAME))
         if (width > 0) put("lastSaveScreenWidth", width)
@@ -104,22 +113,79 @@ object ZjsFileFormat {
         if (dpi > 0f) put("lastSaveScreenDpi", dpi)
     }
 
-    /** 版本名 → 版本号。自动精灵的规则见下方实现。 */
-    private fun versionCode(name: String): Int {
-        // 形如 "26.0.0" → 26*10000 + 0*100 + 0 = 260000
+    /**
+     * 版本名 → 版本号。
+     *
+     * 协议实测（SPEC.md:740 的真实工程文件）：
+     *
+     *     minVerName "2.26.0"  → minVerCode  2026000
+     *     savedVerName "26.0.0" → savedVerCode 26000000
+     *
+     * 即 `major*1e6 + minor*1e3 + patch*10`。
+     *
+     * ## 原坑
+     *
+     * 旧公式是 `major*10000 + minor*100 + patch` —— **差 100 倍**：
+     * "26.0.0" 算成 260000（0.26.0 量级）。名字写着要求 26.0.0、
+     * 码却说是极低版本，文件里自相矛盾。看着能打开，但版本判断全错。
+     *
+     * `internal` 而不是 `private`：单测要直接钉这个公式。
+     */
+    internal fun versionCode(name: String): Int {
         val parts = name.split('.')
         val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
         val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
         val patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
-        return major * 10_000 + minor * 100 + patch
+        return major * 1_000_000 + minor * 1_000 + patch * 10
     }
 
-    /** 递归统计动作数，含每个动作的 7 个监听槽位。 */
+    /**
+     * 递归统计动作数（SPEC.md:702 `e.getActionsCount()` 是递归的）。
+     *
+     * ## 原坑
+     *
+     * 旧实现只递归 `scriptCallbacks`，漏了两处内嵌动作：
+     *  - `baseInfo.globalCallbacks` 的 9 个全局槽位（FIELDS.md:305-317）
+     *  - `action.scriptSet`（「运行多个动作」的子动作数组，FIELDS.md:495）
+     * 数少了自动精灵可能判定文件损坏。
+     *
+     * 统一走 JSON 递归而不是逐个字段读模型：`scriptSet` 在 extra 里、
+     * `gestureActions` 在子列表里，只有 JSON 层能一次算全。
+     */
+    fun countActions(script: Z.Script): Int {
+        var n = 0
+        for (a in script.actions) n += countActionJson(a.toJson())
+        // baseInfo 里的全局监听也是动作（它们不算在 actions 里）
+        val gc = script.baseInfo.extra["globalCallbacks"]
+        if (gc is JSONObject) {
+            for (k in gc.keys()) gc.optJSONObject(k)?.let { n += countActionJson(it) }
+        }
+        return n
+    }
+
+    /** 只有动作列表时用（保留旧签名，行为与 [countActions] 的单动作部分一致）。 */
     fun countActions(actions: List<Z.Action>): Int {
         var n = 0
-        for (a in actions) {
-            n += 1
-            for (cb in a.callbacks.values) n += countActions(listOf(cb))
+        for (a in actions) n += countActionJson(a.toJson())
+        return n
+    }
+
+    /**
+     * 一个动作自身 + 它内嵌的全部动作。
+     *
+     * 三种内嵌：`scriptCallbacks`（7 槽）、`scriptSet`（运行多个动作）、
+     * `gestureActions`（手势轨迹，元素也是动作）。
+     */
+    private fun countActionJson(o: JSONObject): Int {
+        var n = 1
+        o.optJSONObject("scriptCallbacks")?.let { cbs ->
+            for (k in cbs.keys()) cbs.optJSONObject(k)?.let { n += countActionJson(it) }
+        }
+        o.optJSONArray("scriptSet")?.let { set ->
+            for (i in 0 until set.length()) set.optJSONObject(i)?.let { n += countActionJson(it) }
+        }
+        o.optJSONArray("gestureActions")?.let { gs ->
+            for (i in 0 until gs.length()) gs.optJSONObject(i)?.let { n += countActionJson(it) }
         }
         return n
     }
@@ -127,8 +193,11 @@ object ZjsFileFormat {
     /**
      * 解析 `.zjs` 文本。
      *
-     * 逐行读：第 1 行是 baseInfo，其余每行一个动作（`linkedFile` 行跳过，
-     * 因为我们还不支持内嵌子脚本 —— 但**不能丢**，见 [ParseResult.linkedFiles]）。
+     * 逐行读：第 1 行是 baseInfo，其余每行一个动作。
+     * `{"type":"linkedFile",...}` 行不解析内容，但**原文收进
+     * [Z.Script.linkedFiles]**，保存时原样写回（以前只在
+     * [ParseResult.linkedFiles] 里留了一份 JSONObject，stringify 却从不写回，
+     * 于是存一次就丢）。
      *
      * 单行解析失败**不会**让整个文件失败：跳过那一行并记进 [ParseResult.badLines]。
      * 一个坏动作不该让用户看不到其余 200 个正常节点，但也不能静默 ——
@@ -155,15 +224,18 @@ object ZjsFileFormat {
 
             val actions = ArrayList<Z.Action>()
             val linked = ArrayList<JSONObject>()
+            // 内嵌子脚本行的**原文**。保存时要逐字节写回去（见 Z.Script.linkedFiles）。
+            val linkedRaw = ArrayList<String>()
             val bad = ArrayList<Int>()
 
             for ((idx, line) in nonBlank.drop(1)) {
                 try {
                     val obj = JSONObject(line)
                     if (obj.optString("type") == LINKED_FILE) {
-                        // 内嵌子脚本：先存下来，将来做多文件时再用。
-                        // 现在不解析，但绝不能丢 —— 丢了用户的脚本就不完整。
+                        // 内嵌子脚本：现在不解析内容，但绝不能丢 ——
+                        // 丢了用户的脚本就不完整，而且 `执行脚本` 会指向不存在的文件。
                         linked.add(obj)
+                        linkedRaw.add(line)
                         continue
                     }
                     val action = Z.Action.parse(obj)
@@ -177,6 +249,7 @@ object ZjsFileFormat {
                 script = Z.Script(
                     baseInfo = baseInfo,
                     actions = actions,
+                    linkedFiles = linkedRaw,
                     // baseInfo 行里我们不认识的键，提到脚本级 extra。
                     // 写回时它们会并回第 1 行 —— 这样往返不丢字段。
                     extra = baseInfoLineExtra(baseInfoLine.value)

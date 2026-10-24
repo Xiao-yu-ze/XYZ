@@ -103,9 +103,35 @@ class ZjsEditorPage(
             return
         }
         val owner = s.actions.getOrNull(f.actionIndex) ?: return
-        val inner = newList.firstOrNull() ?: return
         val newCallbacks = LinkedHashMap(owner.callbacks)
-        newCallbacks[f.slot] = inner
+        /*
+         * 监听槽位里**只能有一个动作**（协议：每个槽位是一个完整动作 JSON，
+         * 不是数组，见 FIELDS.md:302）。
+         *
+         * ## 原来的两个坑
+         *
+         * `currentActions()` 在槽位里恒等于 0 或 1 条，于是：
+         *
+         *  · 在槽位里「在上方插入」→ newList 有 2 条 → 以前用
+         *    `newList.firstOrNull()` 取第一条并写回 → 新动作**覆盖**了原来那条，
+         *    用户点了"插入"却把原动作弄没了；
+         *  · 在槽位里「删除这一条」→ newList 空 → 以前 `?: return` 直接吞掉，
+         *    删除永远无效，而且**没有任何提示**。
+         *
+         * 现在按槽位语义处理：空列表 = 清掉这个槽位；多出来的一律丢弃并记日志
+         * （界面上槽位内已经不再提供"插入/复制"，这里只是兜底）。
+         */
+        if (newList.isEmpty()) {
+            newCallbacks.remove(f.slot)
+        } else {
+            if (newList.size > 1) {
+                android.util.Log.w(
+                    "ZjsEditorPage",
+                    "监听槽位 ${f.slot.wire} 只能放一个动作，丢弃多余 ${newList.size - 1} 条"
+                )
+            }
+            newCallbacks[f.slot] = newList.first()
+        }
         val newActions = s.actions.toMutableList()
         newActions[f.actionIndex] = owner.copy(callbacks = newCallbacks)
         script = s.copy(actions = newActions)
@@ -220,11 +246,17 @@ class ZjsEditorPage(
             setSingleLine(false)
             setPadding(32, 24, 32, 24)
             // 数字类字段弹数字键盘
+            //
+            // ★ 必须带 TYPE_NUMBER_FLAG_SIGNED：协议里等待/偏移这类字段支持
+            //   "1-3" 这种**区间**写法（范围内随机），而纯 TYPE_CLASS_NUMBER
+            //   的键盘上根本没有 "-" 键 —— 用户想填区间时打不出减号，
+            //   输入框里只剩 "13"，保存后变成一个固定值，随机抖动静默失效。
             inputType = if (row.kind == ZActionDescriber.Kind.NUMBER ||
                 row.kind == ZActionDescriber.Kind.PERCENT
             ) {
                 android.text.InputType.TYPE_CLASS_NUMBER or
-                    android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                    android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or
+                    android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
             } else {
                 android.text.InputType.TYPE_CLASS_TEXT
             }
@@ -286,16 +318,64 @@ class ZjsEditorPage(
      */
     private fun onRowMenu(index: Int) {
         val action = currentActions().getOrNull(index) ?: return
-        val items = arrayOf("在它上方插入", "在它下方插入", "复制这一条", "删除这一条")
+        /*
+         * 菜单项跟着"在哪一层"变。
+         *
+         * 监听槽位里只能有一个动作（协议规定），所以"插入/复制"在里面全是错的：
+         *   · 插入 → 槽位变成两条 → 只有第一条生效，用户以为改了其实是覆盖；
+         *   · 复制 → 同上，凭空多出一条永远不会被保存的动作。
+         * 槽位里只有两种有意义的操作：换成别的动作类型、清空这个监听槽位。
+         */
+        val inSlot = navStack.isNotEmpty()
+        val items = if (inSlot) {
+            arrayOf("换成别的动作", "删除这条（清空该监听）")
+        } else {
+            arrayOf("在它上方插入", "在它下方插入", "复制这一条", "删除这一条")
+        }
         androidx.appcompat.app.AlertDialog.Builder(host)
             .setTitle("第 ${index + 1} 条：${ZScriptIO.actionLabel(action)}")
             .setItems(items) { _, which ->
-                when (which) {
-                    0 -> insertActionAt(index)
-                    1 -> insertActionAt(index + 1)
-                    2 -> duplicateAction(index)
-                    3 -> onDeleteRequested(index)
+                if (inSlot) {
+                    when (which) {
+                        0 -> replaceActionAt(index)
+                        else -> onDeleteRequested(index)
+                    }
+                } else {
+                    when (which) {
+                        0 -> insertActionAt(index)
+                        1 -> insertActionAt(index + 1)
+                        2 -> duplicateAction(index)
+                        else -> onDeleteRequested(index)
+                    }
                 }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 把第 [index] 条换成另一个类型的动作（监听槽位里"替换"的入口）。
+     *
+     * 通用字段（等待 / 重复 / 条件 / 备注）跟着走 —— 用户调好的等待时间和条件
+     * 不该因为换了个动作类型就没了。
+     */
+    private fun replaceActionAt(index: Int) {
+        if (script == null) return
+        val sorted = Z.ActionType.entries.sortedBy { if (it.executable) 0 else 1 }
+        val labels = sorted.map { typeLabel(it) }.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle("换成什么动作")
+            .setItems(labels) { dlg, which ->
+                dlg.dismiss()
+                val list = currentActions().toMutableList()
+                if (index !in list.indices) return@setItems
+                val old = list[index]
+                list[index] = newAction(sorted[which]).copy(common = old.common)
+                commitActions(list)
+                adapter.submit(currentActions())
+                expandedIndex = index
+                adapter.notifyItemChanged(index)
+                toast("已换成「${sorted[which].wire}」")
             }
             .setNegativeButton("取消", null)
             .show()
@@ -331,6 +411,14 @@ class ZjsEditorPage(
                 commitActions(list)
                 adapter.submit(currentActions())
                 expandedIndex = -1
+                /*
+                 * 监听槽位里删掉唯一一条 = 这个槽位被清空了（commitActions 会
+                 * 把它从 callbacks 里移除）。此时还停在空列表里没有意义，
+                 * 用户会以为界面坏了 —— 直接退回上一层。
+                 */
+                if (navStack.isNotEmpty() && currentActions().isEmpty()) {
+                    popNav()
+                }
                 android.widget.Toast.makeText(
                     host, "已删除", android.widget.Toast.LENGTH_SHORT
                 ).show()
@@ -355,7 +443,8 @@ class ZjsEditorPage(
             row.field == "condition" -> {
                 val existing = action.common.condition
                 if (existing != null) {
-                    showConditionEditor(action, actionIndex, existing)
+                    // 顶层条件：path 为空的那一个目标
+                    showConditionEditor(topCondTarget(actionIndex))
                 } else {
                     // 还没有条件：先选类型
                     val labels = ZConditionEditor.TYPE_LABELS.map { it.second }.toTypedArray()
@@ -377,6 +466,47 @@ class ZjsEditorPage(
                         }
                         .setNegativeButton("取消", null)
                         .show()
+                }
+            }
+
+            /*
+             * ---- 位置周围条件（`posData.filterByAroundConditionSet`）
+             *
+             * 这一行作用在**位置对象**上，不是动作级条件：它用来
+             * "过滤掉周围信息不满足条件的点位"（FIELDS.md:278 的 AroundCondition，
+             * 自动精灵的界面里叫「位置周围条件」）。
+             *
+             * 以前这里没有分支 —— ZActionDescriber 出了行、界面却不认这一行，
+             * 点了完全没反应（和「条件类型」是同一类"看得见点不动"）。
+             *
+             * 挂载点是 `posData.extra["filterByAroundConditionSet"]`，
+             * 值是一个 **AroundCondition 对象**（不是数组）。复用条件弹窗编辑，
+             * 新增 / 修改 / 清空都走同一个写回目标（见 [writeAroundAt]）。
+             */
+            row.field.endsWith(".around") -> {
+                val prefix = row.field.removeSuffix(".around")
+                val pos = posOf(action, prefix)
+                if (pos == null) {
+                    // 位置对象还不存在（比如滑动还没设起点）—— 说清楚，别静默
+                    toast("这个位置还没设置，先设好位置再配周围条件")
+                } else {
+                    val target = aroundTarget(actionIndex, prefix)
+                    if (target.condition == null) {
+                        /*
+                         * 键存在但解析不出来（格式不认识）→ **不要覆盖**。
+                         * 覆盖等于把用户文件里那段原样数据直接删掉，
+                         * 而我们还看不懂它 —— 保留原文、明确告诉用户，比"顺手重建"安全。
+                         */
+                        if (pos.extra.containsKey(AROUND_KEY)) {
+                            toast("这条位置周围条件读不出来（格式不认识），已原样保留未改动")
+                            return
+                        }
+                        // 未设置：直接建一个 AroundCondition。
+                        // 它的类型只有一种（自动精灵那边 conditionTypesForSwitch
+                        // 也只给它这一个），不需要再弹一次类型选择。
+                        target.write(ZConditionEditor.create(Z.ConditionType.AROUND))
+                    }
+                    showConditionEditor(target)
                 }
             }
 
@@ -612,9 +742,22 @@ class ZjsEditorPage(
         // 坐标字段多一个取点按钮。
         // 取 X 和 Y 是一次操作同时拿到的，所以 X 行放按钮、Y 行不放 ——
         // 两个按钮会让人以为要分别取。
-        if (row.kind == ZActionDescriber.Kind.COORD && row.field.endsWith(".x")) {
-            val base = row.field.removeSuffix(".x")
-            line.addView(glyphButton("⊕", "在画面上取 $base 坐标") {
+        //
+        // ## 判据为什么不能只认 ".x"
+        //
+        // 「颜色」位置除了 `x`/`y`（取色点）还有一对 `limitPosX`/`limitPosY`
+        // （"指定位置"，FIELDS.md:213-214）。只看 `.endsWith(".x")` 的话，
+        // 这两行**没有取点入口** —— 用户只能手输 px，而那在游戏画面上根本对不准，
+        // 等于这个字段不可用。所以三个后缀都认。
+        // （按钮仍只挂在 X 那一半：一次取点同时写 X 和 Y，见 onPickPoint。）
+        val coordField = row.field
+        val isCoordAnchor = coordField.endsWith(".x") ||
+            coordField.endsWith("limitPosX") ||
+            coordField.endsWith("limitPosY")
+        if (row.kind == ZActionDescriber.Kind.COORD && isCoordAnchor &&
+            !coordField.endsWith("limitPosY")
+        ) {
+            line.addView(glyphButton("⊕", "在画面上取这一步的坐标") {
                 onClick()
             })
         }
@@ -660,18 +803,175 @@ class ZjsEditorPage(
     private fun dp(v: Int): Int = (v * host.resources.displayMetrics.density).toInt()
 
     /**
+     * 条件的写回目标。
+     *
+     * ## 为什么需要这一层
+     *
+     * 条件编辑界面要服务**三个地方**：
+     *  - 顶层动作的条件（`action.common.condition`）；
+     *  - 「多个条件」里的子条件（`extra["conditions"]` 数组的一项）；
+     *  - 「位置周围条件」（`posData.filterByAroundConditionSet`，只作用于某个位置）。
+     *
+     * 三者的界面必须完全一样（取点、框选、截模板、预览全都要能用），
+     * 否则用户会以为它们是三套东西。原来这些函数把 `(action, actionIndex)`
+     * 写死在签名里、只能写回顶层，于是子条件和周围条件**只能看到、改不了**。
+     *
+     * [actionIndex] + [posPrefix] + [path] 唯一确定一个条件：
+     *  - `posPrefix == null` → 根是动作的条件；
+     *  - `posPrefix == "起点"/"终点"/"位置"` → 根是该位置对象的 `filterByAroundConditionSet`；
+     *  - `path` 是子条件下标链（空 = 根节点本身）。
+     *
+     * 用"路径"而不是快照闭包，是因为连续改多个字段时快照会过期 ——
+     * 从模型现读现写永远不会拿旧数据重建、把上一次的改动吞掉。
+     */
+    private inner class CondTarget(
+        val actionIndex: Int,
+        val path: List<Int>,
+        /** null = 动作的条件；否则是哪个位置对象的周围条件（"起点"/"终点"/"位置"）。 */
+        val posPrefix: String? = null
+    ) {
+        /** 当前这条条件。写不进去（下标越界/已被删）时返回 null。 */
+        val condition: Z.Condition? get() = readConditionAt(actionIndex, posPrefix, path)
+
+        /** 写回；[next] 为 null 表示删除这一层。 */
+        fun write(next: Z.Condition?) = writeConditionAt(actionIndex, posPrefix, path, next)
+
+        /** 给子条件造一个目标（周围条件的子条件也跟着父走）。 */
+        fun child(index: Int): CondTarget = CondTarget(actionIndex, path + index, posPrefix)
+
+        /** 是不是子条件（决定"删除"按钮的文案）。 */
+        val isChild: Boolean get() = path.isNotEmpty()
+
+        /** 是不是「位置周围条件」（它的 type 只能固定为 AroundCondition）。 */
+        val isAround: Boolean get() = posPrefix != null
+    }
+
+    /** 顶层动作的条件。 */
+    private fun topCondTarget(actionIndex: Int): CondTarget = CondTarget(actionIndex, emptyList())
+
+    /** 某个位置对象的「周围条件」。 */
+    private fun aroundTarget(actionIndex: Int, posPrefix: String): CondTarget =
+        CondTarget(actionIndex, emptyList(), posPrefix)
+
+    /** 按前缀取动作里的位置对象。 */
+    private fun posOf(action: Z.Action, prefix: String?): Z.PosData? = when (prefix) {
+        "起点" -> action.startPos
+        "终点" -> action.endPos
+        else -> action.posData
+    }
+
+    /**
+     * 读某个位置的「周围条件」。
+     *
+     * 协议：`posData.filterByAroundConditionSet` 是一个 **AroundCondition** 对象
+     * （不是条件数组）；自动精灵读它时会先校验 type：
+     *
+     * ```js
+     * // m14040
+     * const e = tr(this.json.filterByAroundConditionSet);
+     * return e?.type === C.CP.AroundCondition ? e : null
+     * ```
+     *
+     * 也就是说 type 不对/缺失时它会**当作没设置**（而且 `tr()` 遇到未知 type 直接抛）。
+     * 所以这里补一个 type 再解析 —— 顺手把这种坏数据修正掉，而不是原样带回去。
+     */
+    private fun readAround(pos: Z.PosData): Z.Condition? {
+        val obj = pos.extra[AROUND_KEY] as? org.json.JSONObject ?: return null
+        val typed = if (obj.optString("type").isNotEmpty()) obj
+        else org.json.JSONObject(obj.toString()).put("type", Z.ConditionType.AROUND.wire)
+        return Z.Condition.parse(typed)
+    }
+
+    /** 按路径取值：根 → 第 path 层。 */
+    private fun readConditionAt(actionIndex: Int, posPrefix: String?, path: List<Int>): Z.Condition? {
+        val action = currentActions().getOrNull(actionIndex) ?: return null
+        var c: Z.Condition? = if (posPrefix == null) {
+            action.common.condition
+        } else {
+            posOf(action, posPrefix)?.let { readAround(it) }
+        }
+        for (i in path) {
+            c = c?.let { ZConditionEditor.children(it).getOrNull(i) } ?: return null
+        }
+        return c
+    }
+
+    /**
+     * 按路径写值。`path` 为空 = 改根节点；否则自底向上把每一层包回去。
+     *
+     * 自底向上是因为子条件是值对象：改第 3 个子条件，得先造出新的子条件，
+     * 再造出"装它的那个条件"，一直包回根。
+     */
+    private fun writeConditionAt(
+        actionIndex: Int,
+        posPrefix: String?,
+        path: List<Int>,
+        next: Z.Condition?
+    ) {
+        if (path.isEmpty()) {
+            if (posPrefix == null) {
+                val action = currentActions().getOrNull(actionIndex) ?: return
+                applyCondition(action, actionIndex, next)
+            } else {
+                writeAroundAt(actionIndex, posPrefix, next)
+            }
+            return
+        }
+        var rebuilt: Z.Condition? = next
+        for (depth in path.indices.reversed()) {
+            val parent = readConditionAt(actionIndex, posPrefix, path.subList(0, depth)) ?: return
+            val kids = ZConditionEditor.children(parent).toMutableList()
+            val idx = path[depth]
+            if (idx !in kids.indices) return
+            if (rebuilt == null) kids.removeAt(idx) else kids[idx] = rebuilt
+            rebuilt = ZConditionEditor.withChildren(parent, kids)
+        }
+        if (rebuilt == null) return
+        if (posPrefix == null) {
+            currentActions().getOrNull(actionIndex)?.let { applyCondition(it, actionIndex, rebuilt) }
+        } else {
+            writeAroundAt(actionIndex, posPrefix, rebuilt)
+        }
+    }
+
+    /**
+     * 把「周围条件」写回位置对象。`next == null` = 清空（把键删掉）。
+     *
+     * 自动精灵的 setter 也是"传 undefined 就删键"
+     * （`set filterByAroundConditionSet(e){ this.json.filterByAroundConditionSet = e?.json || void 0 }`），
+     * 所以清空时删键才是对的，写一个空对象会让它以为设置了但内容为空。
+     */
+    private fun writeAroundAt(actionIndex: Int, posPrefix: String, next: Z.Condition?) {
+        val action = currentActions().getOrNull(actionIndex) ?: return
+        val pos = posOf(action, posPrefix) ?: return
+        val extra = LinkedHashMap(pos.extra)
+        if (next == null) extra.remove(AROUND_KEY) else extra[AROUND_KEY] = next.toJson()
+        val newPos = pos.copy(extra = extra)
+        val updated = when (posPrefix) {
+            "起点" -> action.copy(startPos = newPos)
+            "终点" -> action.copy(endPos = newPos)
+            else -> action.copy(posData = newPos)
+        }
+        val list = currentActions().toMutableList()
+        list[actionIndex] = updated
+        commitActions(list)
+        adapter.submit(currentActions())
+        expandedIndex = actionIndex
+        adapter.notifyItemChanged(actionIndex)
+    }
+
+    /**
      * 编辑一个已存在的条件。
      *
      * 弹一个列表，把条件摊平成行 —— 和动作的字段行同一套结构，
      * 所以下拉、数字键盘这些行为完全一致，不用另写一套。
      */
-    private fun showConditionEditor(
-        action: Z.Action,
-        actionIndex: Int,
-        condition: Z.Condition
-    ) {
+    private fun showConditionEditor(t: CondTarget) {
         // 先关掉上一个，否则每次改字段都会在旧的上面再叠一个
         conditionDialog?.dismiss()
+        // 从模型现读（不用打开弹窗那一刻的快照）：连续改多个字段时，
+        // 第二次必须基于第一次的结果改，否则会把第一次的改动覆盖掉。
+        val condition = t.condition ?: return
 
         val rows = ZConditionEditor.describe(condition)
         val box = LinearLayout(host).apply {
@@ -684,11 +984,11 @@ class ZjsEditorPage(
                 buildRowView(
                     row = row,
                     imageData = conditionImageData(condition, row.field),
-                    onClick = { editConditionRow(action, actionIndex, condition, row) },
+                    onClick = { editConditionRow(t, row) },
                     onToggle = { checked ->
-                        commitConditionField(action, actionIndex, condition, row, if (checked) "是" else "否")
+                        commitConditionField(t, row, if (checked) "是" else "否")
                     },
-                    onPercent = { p -> commitConditionField(action, actionIndex, condition, row, "$p") }
+                    onPercent = { p -> commitConditionField(t, row, "$p") }
                 )
             )
         }
@@ -702,16 +1002,25 @@ class ZjsEditorPage(
         }
 
         conditionDialog = androidx.appcompat.app.AlertDialog.Builder(host)
-            .setTitle("条件")
+            .setTitle(
+                when {
+                    t.isAround -> "位置周围条件"
+                    t.isChild -> "子条件"
+                    else -> "条件"
+                }
+            )
             .setView(scroll)
-            .setNeutralButton("删除条件") { _, _ ->
-                val updated = action.copy(common = action.common.copy(condition = null))
-                val list = currentActions().toMutableList()
-                list[actionIndex] = updated
-                commitActions(list)
-                adapter.submit(currentActions())
-                expandedIndex = actionIndex
-                adapter.notifyItemChanged(actionIndex)
+            // 删除也走同一个写回目标：顶层 → condition=null，子条件 → 从数组里移除，
+            // 周围条件 → 把 posData 上的 filterByAroundConditionSet 键删掉。
+            // 原来这段写死了"把 action.common.condition 置空"，所以后两者删不掉。
+            .setNeutralButton(
+                when {
+                    t.isAround -> "清空周围条件"
+                    t.isChild -> "删除这个子条件"
+                    else -> "删除条件"
+                }
+            ) { _, _ ->
+                t.write(null)
             }
             .setNegativeButton("关闭", null)
             .show()
@@ -719,16 +1028,22 @@ class ZjsEditorPage(
 
     /** 条件某个字段的值改掉，然后重开条件弹窗（行内容要跟着变）。 */
     private fun commitConditionField(
-        action: Z.Action,
-        actionIndex: Int,
-        condition: Z.Condition,
+        t: CondTarget,
         row: ZActionDescriber.Row,
         value: String
     ) {
-        ZConditionEditor.apply(condition, row.field, value)?.let {
-            applyCondition(action, actionIndex, it)
-            showConditionEditor(action, actionIndex, it)
+        val condition = t.condition ?: return
+        val next = ZConditionEditor.apply(condition, row.field, value)
+        if (next == null) {
+            // 和动作侧（commitField）对齐：值不合法要**说出来**。
+            // 以前这里是 `?.let{}`，失败就什么都不发生 —— 用户以为改成功了，
+            // 实际文件里一个字都没变，回头运行才发现阈值/文字还是旧的。
+            toast("「${row.label}」的值不合法，未保存")
+            return
         }
+        t.write(next)
+        // 改完回到列表：条件字段多，用户通常是连着改好几项
+        showConditionEditor(t)
     }
 
     /** 条件里某个字段对应的模板图。动作的模板在 posData，AI 的三张图在 extra。 */
@@ -742,28 +1057,60 @@ class ZjsEditorPage(
         }
 
     /** 改条件里的一个字段，然后回到条件编辑列表。 */
-    private fun editConditionRow(
-        action: Z.Action,
-        actionIndex: Int,
-        condition: Z.Condition,
-        row: ZActionDescriber.Row
-    ) {
+    private fun editConditionRow(t: CondTarget, row: ZActionDescriber.Row) {
+        val condition = t.condition ?: return
 
-        // 换类型：位置对象和专属参数都得跟着换
-        if (row.label == "条件类型") {
+        /*
+         * 换类型。
+         *
+         * ## 以前这里是死代码
+         *
+         * 判据是 `row.label == "条件类型"`，但那一行原来是 READONLY + field 为空，
+         * 界面上根本不挂点击（见 ZConditionEditor.describe 的注释），所以永远进不来。
+         * 现在按 field 认（`cond.type`），并且 ZConditionEditor 把它摊成了 ENUM。
+         */
+        if (row.field == "cond.type") {
+            /*
+             * 「位置周围条件」的类型被协议钉死，不给换。
+             *
+             * 自动精灵读 `filterByAroundConditionSet` 时会先校验
+             * `e?.type === "AroundCondition"`，不是就**当作没设置**（m14040）。
+             * 让用户在这里改成"出现图片"，文件里会留下一个 type=image 的对象，
+             * 自动精灵静默忽略它 —— 用户以为配了过滤，其实什么都没生效。
+             */
+            if (t.isAround) {
+                toast("位置周围条件的类型固定是「位置周围条件」，不能改成别的")
+                return
+            }
             val labels = ZConditionEditor.TYPE_LABELS.map { it.second }.toTypedArray()
             androidx.appcompat.app.AlertDialog.Builder(host)
                 .setTitle("条件类型")
                 .setItems(labels) { dlg, which ->
                     dlg.dismiss()
                     val type = ZConditionEditor.TYPE_LABELS[which].first
+                    if (type == condition.type) return@setItems
+                    /*
+                     * 换类型会重建位置对象：模板 / 文字 / 颜色 / 相似度跟类型绑定，
+                     * 搬过去只会写到一个新类型取不到的键上（协议里键名是
+                     * image / text / colorData / node，见 Condition.toJson），
+                     * 条件会静默恒 false。
+                     * 范围（limitArea）会保留 —— 见 ZConditionEditor.changeType。
+                     * 提示放在改动**之前**，用户能看见自己丢了什么。
+                     */
+                    toast("换成「${labels[which]}」会丢掉原来的模板/文字/颜色")
                     val next = ZConditionEditor.changeType(condition, type)
-                    applyCondition(action, actionIndex, next)
+                    t.write(next)
                     // 换完立刻重新打开，用户能接着填新类型的字段
-                    showConditionEditor(action, actionIndex, next)
+                    showConditionEditor(t)
                 }
                 .setNegativeButton("取消", null)
                 .show()
+            return
+        }
+
+        // 「多个条件」的子条件列表：增 / 改 / 删
+        if (row.field == "cond.children") {
+            showChildConditions(t)
             return
         }
 
@@ -796,10 +1143,14 @@ class ZjsEditorPage(
         }
 
         val commit: (String) -> Unit = { value ->
-            ZConditionEditor.apply(condition, row.field, value)?.let {
-                applyCondition(action, actionIndex, it)
+            val next = ZConditionEditor.apply(condition, row.field, value)
+            if (next == null) {
+                // 静默失败会让用户以为改成功了（原来这里是 `?.let{}` 没有 else）
+                toast("「${row.label}」的值不合法，未保存")
+            } else {
+                t.write(next)
                 // 改完回到列表：条件字段多，用户通常是连着改好几项
-                showConditionEditor(action, actionIndex, it)
+                showConditionEditor(t)
             }
         }
 
@@ -811,10 +1162,10 @@ class ZjsEditorPage(
 
         // 位置类：都在冻结画面上取，和动作的取点完全一样
         when (row.kind) {
-            ZActionDescriber.Kind.COORD -> { pickConditionPoint(action, actionIndex, condition); return }
-            ZActionDescriber.Kind.AREA -> { pickConditionRect(action, actionIndex, condition); return }
-            ZActionDescriber.Kind.IMAGE -> { pickConditionTemplate(action, actionIndex, condition, row.field); return }
-            ZActionDescriber.Kind.PERCENT -> { conditionPercentDialog(action, actionIndex, condition, row); return }
+            ZActionDescriber.Kind.COORD -> { pickConditionPoint(t); return }
+            ZActionDescriber.Kind.AREA -> { pickConditionRect(t); return }
+            ZActionDescriber.Kind.IMAGE -> { pickConditionTemplate(t, row.field); return }
+            ZActionDescriber.Kind.PERCENT -> { conditionPercentDialog(t, row); return }
             else -> Unit
         }
 
@@ -835,8 +1186,11 @@ class ZjsEditorPage(
             setText(row.value)
             setSingleLine(false)
             setPadding(32, 24, 32, 24)
+            // 同 onEditRequested：数字字段必须带 SIGNED，否则区间写法
+            // （"1-3" 这种"范围内随机"）的减号在数字键盘上打不出来。
             inputType = if (row.kind == ZActionDescriber.Kind.NUMBER || row.kind == ZActionDescriber.Kind.PERCENT) {
-                android.text.InputType.TYPE_CLASS_NUMBER
+                android.text.InputType.TYPE_CLASS_NUMBER or
+                    android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
             } else {
                 android.text.InputType.TYPE_CLASS_TEXT
             }
@@ -849,10 +1203,66 @@ class ZjsEditorPage(
             .show()
     }
 
+    /**
+     * 「多个条件」的子条件列表。
+     *
+     * ## 为什么是一个单独的弹窗，而不是走 navStack
+     *
+     * [navStack] + RecyclerView 那套只能显示 `Z.Action`（监听槽位里的动作），
+     * 而子条件是 `Z.Condition`。硬塞进同一个 RecyclerView 要改适配器的
+     * item 类型，牵连太多。这里用**同一套行渲染**（ZConditionEditor.describe +
+     * buildRowView）做成一个列表弹窗：能看有几个、能进去改、能删、能加。
+     */
+    private fun showChildConditions(t: CondTarget) {
+        val condition = t.condition ?: return
+        val kids = ZConditionEditor.children(condition)
+        val items = ArrayList<String>()
+        items.add("＋ 添加子条件")
+        kids.forEachIndexed { i, k ->
+            val label = ZConditionEditor.typeLabel(k.type)
+            items.add("第 ${i + 1} 个：$label${if (k.disabled) "（已禁用）" else ""}")
+        }
+        if (kids.isNotEmpty()) items.add("清空全部子条件")
+
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle("子条件（${kids.size} 个）")
+            .setItems(items.toTypedArray()) { dlg, which ->
+                dlg.dismiss()
+                when {
+                    which == 0 -> addChildCondition(t)
+                    which == items.size - 1 && kids.isNotEmpty() ->
+                        t.write(ZConditionEditor.withChildren(condition, emptyList()))
+                    else -> showConditionEditor(t.child(which - 1))
+                }
+            }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+    /** 给「多个条件」加一个子条件：先选类型，再进它的编辑器。 */
+    private fun addChildCondition(t: CondTarget) {
+        val condition = t.condition ?: return
+        val labels = ZConditionEditor.TYPE_LABELS.map { it.second }.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(host)
+            .setTitle("添加什么子条件")
+            .setItems(labels) { dlg, which ->
+                dlg.dismiss()
+                val type = ZConditionEditor.TYPE_LABELS[which].first
+                val kids = ZConditionEditor.children(condition).toMutableList()
+                kids.add(ZConditionEditor.create(type))
+                t.write(ZConditionEditor.withChildren(condition, kids))
+                // 直接进新加的那一条 —— 用户加完就是要填它
+                showConditionEditor(t.child(kids.size - 1))
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     // ------------------------------------------------------------ 条件里的取点 / 框选 / 截模板
 
     /** 条件里的坐标：准星在冻结画面上取。 */
-    private fun pickConditionPoint(action: Z.Action, actionIndex: Int, condition: Z.Condition) {
+    private fun pickConditionPoint(t: CondTarget) {
+        val condition = t.condition ?: return
         val pos = condition.posData
         val ix = pos?.x?.raw?.toIntOrNull()
         val iy = pos?.y?.raw?.toIntOrNull()
@@ -875,13 +1285,14 @@ class ZjsEditorPage(
             var next = condition
             ZConditionEditor.apply(next, "cond.x", "%.2f%%".format(100.0 * r.x / r.screenWidth))?.let { next = it }
             ZConditionEditor.apply(next, "cond.y", "%.2f%%".format(100.0 * r.y / r.screenHeight))?.let { next = it }
-            applyCondition(action, actionIndex, next)
-            showConditionEditor(action, actionIndex, next)
+            t.write(next)
+            showConditionEditor(t)
         }
     }
 
     /** 条件里的搜索范围：四角可拖的框。 */
-    private fun pickConditionRect(action: Z.Action, actionIndex: Int, condition: Z.Condition) {
+    private fun pickConditionRect(t: CondTarget) {
+        val condition = t.condition ?: return
         host.lifecycleScope.launch {
             val deferred = host.lifecycleScope.async {
                 com.pvz2.auto.core.PreviewPicker.result.firstOrNull {
@@ -913,19 +1324,15 @@ class ZjsEditorPage(
             if (r.w <= 0 || r.h <= 0) return@launch
             val area = areaText(r)
             ZConditionEditor.apply(condition, "cond.limitArea", area)?.let {
-                applyCondition(action, actionIndex, it)
-                showConditionEditor(action, actionIndex, it)
+                t.write(it)
+                showConditionEditor(t)
             }
         }
     }
 
     /** 条件里的模板：截下来，并把这块同时设成搜索范围。 */
-    private fun pickConditionTemplate(
-        action: Z.Action,
-        actionIndex: Int,
-        condition: Z.Condition,
-        field: String
-    ) {
+    private fun pickConditionTemplate(t: CondTarget, field: String) {
+        val condition = t.condition ?: return
         host.lifecycleScope.launch {
             val deferred = host.lifecycleScope.async {
                 com.pvz2.auto.core.PreviewPicker.result.firstOrNull {
@@ -960,18 +1367,14 @@ class ZjsEditorPage(
             if (field == "cond.image") {
                 ZConditionEditor.apply(next, "cond.limitArea", areaText(r))?.let { next = it }
             }
-            applyCondition(action, actionIndex, next)
-            showConditionEditor(action, actionIndex, next)
+            t.write(next)
+            showConditionEditor(t)
         }
     }
 
     /** 百分比用滑块，和动作字段一致。 */
-    private fun conditionPercentDialog(
-        action: Z.Action,
-        actionIndex: Int,
-        condition: Z.Condition,
-        row: ZActionDescriber.Row
-    ) {
+    private fun conditionPercentDialog(t: CondTarget, row: ZActionDescriber.Row) {
+        val condition = t.condition ?: return
         val cur = row.value.removeSuffix("%").toIntOrNull() ?: 50
         val box = android.widget.LinearLayout(host).apply {
             orientation = android.widget.LinearLayout.VERTICAL
@@ -996,8 +1399,8 @@ class ZjsEditorPage(
             .setView(box)
             .setPositiveButton("确定") { _, _ ->
                 ZConditionEditor.apply(condition, row.field, "${bar.progress}")?.let {
-                    applyCondition(action, actionIndex, it)
-                    showConditionEditor(action, actionIndex, it)
+                    t.write(it)
+                    showConditionEditor(t)
                 }
             }
             .setNegativeButton("取消", null)
@@ -1015,7 +1418,13 @@ class ZjsEditorPage(
         android.widget.Toast.makeText(host, msg, android.widget.Toast.LENGTH_SHORT).show()
     }
 
-    private fun applyCondition(action: Z.Action, actionIndex: Int, condition: Z.Condition) {
+    /**
+     * 把条件写回动作。
+     *
+     * @param condition null = 删掉这个动作的条件（顶层条件可以没有）。
+     *   子条件的删除不走这里 —— 那条路径由 [writeConditionAt] 从数组里移除。
+     */
+    private fun applyCondition(action: Z.Action, actionIndex: Int, condition: Z.Condition?) {
         val updated = action.copy(common = action.common.copy(condition = condition))
         val list = currentActions().toMutableList()
         list[actionIndex] = updated
@@ -1136,10 +1545,7 @@ class ZjsEditorPage(
 
         // 可执行的排前面，同组内保持协议顺序
         val sorted = Z.ActionType.entries.sortedBy { if (it.executable) 0 else 1 }
-        val labels = sorted.map {
-            val base = it.controlRunType?.let { c -> "${it.wire}·$c" } ?: it.wire
-            if (it.executable) base else "$base（暂不支持）"
-        }.toTypedArray()
+        val labels = sorted.map { typeLabel(it) }.toTypedArray()
 
         androidx.appcompat.app.AlertDialog.Builder(host)
             .setTitle("添加什么动作")
@@ -1152,9 +1558,19 @@ class ZjsEditorPage(
             .show()
     }
 
-    private fun addAction(type: Z.ActionType, insertAt: Int = -1) {
-        val cur = script ?: return
+    /** 动作类型在列表里的显示名：能跑的直接写，暂不支持的标出来。 */
+    private fun typeLabel(type: Z.ActionType): String {
+        val base = type.controlRunType?.let { c -> "${type.wire}·$c" } ?: type.wire
+        return if (type.executable) base else "$base（暂不支持）"
+    }
 
+    /**
+     * 按类型造一条新动作（位置类带默认坐标）。
+     *
+     * 抽出来是因为"添加"和"监听槽位里的替换"要造同一种东西 ——
+     * 两处各写一份的话，改了一处忘了另一处，行为就会不一致。
+     */
+    private fun newAction(type: Z.ActionType): Z.Action {
         // 位置类动作要带一个默认位置，否则展开后什么都没有、校验也报错。
         // 坐标给画面正中 —— 用户接下来会去取点，起点在哪里不重要，
         // 重要的是别是空值。
@@ -1166,13 +1582,18 @@ class ZjsEditorPage(
             x = com.pvz2.auto.zjs.ZValue.parse("$cx"),
             y = com.pvz2.auto.zjs.ZValue.parse("$cy")
         )
-
-        val newAction = Z.Action(
+        return Z.Action(
             type = type,
             posData = if (ZFieldEditor.expectedPosType(type) != null) pos else null,
             startPos = if (type == Z.ActionType.SWIPE) pos else null,
             endPos = if (type == Z.ActionType.SWIPE) pos else null
         )
+    }
+
+    private fun addAction(type: Z.ActionType, insertAt: Int = -1) {
+        val cur = script ?: return
+
+        val fresh = newAction(type)
 
         // 加在当前展开的那一条后面。全收起时加到末尾 ——
         // 用户刚看完某条就想在它后面加一条，比滚到底部合理。
@@ -1183,7 +1604,7 @@ class ZjsEditorPage(
             else -> currentActions().size
         }
         val list = currentActions().toMutableList()
-        list.add(at, newAction)
+        list.add(at, fresh)
         commitActions(list)
         adapter.submit(currentActions())
         expandedIndex = at
@@ -1320,6 +1741,15 @@ class ZjsEditorPage(
     private fun showScript(name: String, script: Z.Script) {
         this.script = script
         this.fileName = name
+        /*
+         * 换脚本这一次才重置视图状态（全收起 + 运行态清空）。
+         *
+         * 这两件事原来写在 adapter.submit() 里，于是**每次编辑**都会触发，
+         * 把正在跑的进度显示清掉、把用户展开的动作合上。现在挪到这里：
+         * 只有真的换了一份脚本，才需要"从零开始看"。
+         */
+        expandedIndex = -1
+        adapter.resetRunState()
         val issues = ZScriptIO.validate(script)
         val size = script.actions.size
         tvSummary.text = buildString {
@@ -1349,13 +1779,34 @@ class ZjsEditorPage(
         private var runState: com.pvz2.auto.core.ScriptRunState.State =
             com.pvz2.auto.core.ScriptRunState.State()
 
+        /**
+         * 只换数据，**不动视图状态**。
+         *
+         * ## 原来每次编辑都会清空运行进度
+         *
+         * 以前这里顺手做三件事：收起展开项、把 runState 重置成未运行、整表刷新。
+         * 而**所有**编辑路径（改字段、拨开关、换类型、加动作、删动作…）最后都要调
+         * submit() —— 于是脚本正在跑的时候，用户只要点一下任意字段：
+         * 「跑到第几条 / 已经在等多久 / 进度条」全部回到空白，看起来像脚本停了；
+         * 而且 expandedIndex 被清掉，用户正在改的那个动作自己合上了。
+         *
+         * 现在：submit 只管 items。展开项由各调用点自己维护（它们本来就设了
+         * expandedIndex）。运行态只在**真的换了脚本**时重置 —— 见 [resetRunState]，
+         * 由 [showScript] 调用。
+         */
         fun submit(actions: List<Z.Action>?) {
             items = actions.orEmpty()
-            expandedIndex = -1
-            // 换了一组动作就退回未运行态。不重置的话，编辑另一个脚本时
-            // 第 5 条会莫名亮着 —— 那是上一个脚本的进度。
-            runState = com.pvz2.auto.core.ScriptRunState.State()
             notifyDataSetChanged()
+        }
+
+        /**
+         * 运行态回到"未运行"。
+         *
+         * 只在切换脚本时调：不重置的话，打开另一个脚本时第 5 条会莫名亮着，
+         * 那是上一个脚本的进度。编辑同一个脚本时**不能**调（见 [submit]）。
+         */
+        fun resetRunState() {
+            runState = com.pvz2.auto.core.ScriptRunState.State()
         }
 
         /** 收到新状态：只重画"上一条 + 这一条"，别整表刷新。 */
@@ -1518,7 +1969,10 @@ class ZjsEditorPage(
                         when (row.kind) {
                             ZActionDescriber.Kind.ENTER -> onEnter(row, actionIndex)
                             ZActionDescriber.Kind.COORD ->
-                                onPickPoint(row.field.removeSuffix(".x"), actionIndex)
+                                // 传**完整字段**而不是剥掉 ".x" 的前缀：
+                                // 坐标字段不止 ".x" 一种（还有 limitPosX/limitPosY），
+                                // 由 onPickPoint 自己判该写哪两个键。
+                                onPickPoint(row.field, actionIndex)
                             ZActionDescriber.Kind.AREA -> onPickRect(row.field, actionIndex)
                             ZActionDescriber.Kind.IMAGE -> onPickTemplate(row.field, actionIndex)
                             else -> onEditRequested(row, actionIndex)
@@ -2049,9 +2503,29 @@ class ZjsEditorPage(
         }
     }
 
-    private fun onPickPoint(prefix: String, actionIndex: Int) {
+    /**
+     * 在预览画面上取点，一次同时写回 X 和 Y。
+     *
+     * @param field 被点的那一行字段，形如 `位置.x` / `起点.x` / `位置.limitPosX`
+     */
+    private fun onPickPoint(field: String, actionIndex: Int) {
         val cur = script ?: return
         val action = currentActions().getOrNull(actionIndex) ?: return
+
+        /*
+         * 「指定位置」是另一对键：`limitPosX` / `limitPosY`
+         * （颜色位置里的"指定位置"，设置后会忽略 limitArea，FIELDS.md:213-214）。
+         *
+         * 它和 `x`/`y`（取色点）是**两套独立坐标**，不能混写。原来这里只认
+         * `.x` 后缀、写回时又硬拼 `"$prefix.x"`，于是 limitPos 那两行
+         * 就算挂了取点按钮，取到的值也只会写到 x/y 上 —— 用户看到的是
+         * "点了取点没反应"（其实改的是另一对字段）。
+         */
+        val limitPos = field.endsWith("limitPosX") || field.endsWith("limitPosY")
+        // 带点的前缀：`位置.` / `起点.` / `终点.`（limitPos 的键名挂在它后面）
+        val prefix = if (limitPos) field.substringBeforeLast("limitPos") else field.removeSuffix(".x")
+        val xField = if (limitPos) "${prefix}limitPosX" else "$prefix.x"
+        val yField = if (limitPos) "${prefix}limitPosY" else "$prefix.y"
 
         // 初始值：当前位置，没有就交给准星走默认（画面正中）
         val pos = when (prefix) {
@@ -2059,8 +2533,10 @@ class ZjsEditorPage(
             "终点" -> action.endPos
             else -> action.posData
         }
-        val initX = pos?.x?.raw?.toIntOrNull()
-        val initY = pos?.y?.raw?.toIntOrNull()
+        val rawX = if (limitPos) pos?.extra?.get("limitPosX")?.toString() else pos?.x?.raw
+        val rawY = if (limitPos) pos?.extra?.get("limitPosY")?.toString() else pos?.y?.raw
+        val initX = rawX?.toIntOrNull()
+        val initY = rawY?.toIntOrNull()
         val initial = if (initX != null && initY != null) {
             com.pvz2.auto.core.PreviewPicker.Point(initX, initY)
         } else null
@@ -2087,8 +2563,8 @@ class ZjsEditorPage(
             val px = "%.2f%%".format(100.0 * r.x / r.screenWidth)
             val py = "%.2f%%".format(100.0 * r.y / r.screenHeight)
 
-            var updated = ZFieldEditor.apply(action, "$prefix.x", px) ?: action
-            updated = ZFieldEditor.apply(updated, "$prefix.y", py) ?: updated
+            var updated = ZFieldEditor.apply(action, xField, px) ?: action
+            updated = ZFieldEditor.apply(updated, yField, py) ?: updated
 
             val list = currentActions().toMutableList()
             list[actionIndex] = updated
@@ -2097,6 +2573,16 @@ class ZjsEditorPage(
             expandedIndex = actionIndex
             adapter.notifyItemChanged(actionIndex)
         }
+    }
+
+    private companion object {
+        /**
+         * 「位置周围条件」挂在位置对象上的键名。
+         *
+         * FIELDS.md:278 / m14040：`posData.filterByAroundConditionSet`，
+         * 值是 AroundCondition 对象（不是数组），作用于该位置而不是整个动作。
+         */
+        const val AROUND_KEY = "filterByAroundConditionSet"
     }
 
 }

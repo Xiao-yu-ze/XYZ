@@ -46,7 +46,8 @@ class ZActionDescriberTest {
     @Test
     fun `控制执行要显示 controlRunType，否则五种动作看起来一样`() {
         val r = rows("""{"type":"控制执行","controlRunType":"jumpTo","delayUnit":1}""")
-        assertEquals("控制执行", r.first().value)
+        // 类型行现在是可点的下拉，六个控制执行靠 ·controlRunType 区分
+        assertEquals("控制执行·jumpTo", r.first().value)
         assertEquals("jumpTo", r.first { it.label == "控制方式" }.value)
     }
 
@@ -74,13 +75,20 @@ class ZActionDescriberTest {
     }
 
     @Test
-    fun `等待的值和单位在同一行`() {
-        // 分开两行的话，"2" 单独看不知道是 2 秒还是 2 毫秒 —— 必须一起读。
-        val sec = row("""{"type":"点击","delay":"2","delayUnit":1}""", "等待")!!
-        assertEquals("2 s", sec.value)
+    fun `等待的值和单位分成两行，值里不能再混单位`() {
+        /*
+         * 以前把单位拼进值（"2 s"）又原样写回 delay，
+         * 执行器解析 "3 s" 失败 → 静默掉回默认 200ms：
+         * 界面上改了 2 秒，实际几乎不停顿。
+         * 现在值就是纯数字，单位单独一行、单独写回。
+         */
+        val sec = rows("""{"type":"点击","delay":"2","delayUnit":1}""")
+        assertEquals("2", sec.first { it.label == "等待" }.value)
+        assertEquals("s", sec.first { it.label == "等待单位" }.value)
 
-        val ms = row("""{"type":"点击","delay":"200","delayUnit":0}""", "等待")!!
-        assertEquals("200 ms", ms.value)
+        val ms = rows("""{"type":"点击","delay":"200","delayUnit":0}""")
+        assertEquals("200", ms.first { it.label == "等待" }.value)
+        assertEquals("ms", ms.first { it.label == "等待单位" }.value)
     }
 
     @Test

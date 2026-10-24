@@ -213,7 +213,8 @@ class ZFieldEditorTest {
         val a = action("""{"type":"点击图片","delayUnit":0,
             "posData":{"type":"image","imageData":{"data":"AA"}}}""")
         assertEquals(100, ZFieldEditor.apply(a, "位置.minSimilarPercent", "150")!!.posData!!.minSimilarPercent)
-        assertEquals(0, ZFieldEditor.apply(a, "位置.minSimilarPercent", "-5")!!.posData!!.minSimilarPercent)
+        // 协议范围是 50~100，低于 50 等于"全屏最像的就算命中"，夹到 50
+        assertEquals(50, ZFieldEditor.apply(a, "位置.minSimilarPercent", "-5")!!.posData!!.minSimilarPercent)
     }
 
     @Test

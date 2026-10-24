@@ -56,7 +56,7 @@ object ZScriptIO {
                 Log.w(TAG, "$path 有 ${result.badLines.size} 行解析失败：${result.badLines}")
             }
             if (result.linkedFiles.isNotEmpty()) {
-                Log.i(TAG, "$path 含 ${result.linkedFiles.size} 个内嵌子脚本（暂不解析，已保留）")
+                Log.i(TAG, "$path 含 ${result.linkedFiles.size} 个内嵌子脚本（不解析内容，原文随模型保留，保存时原样写回）")
             }
             Log.i(TAG, "已读取 $path：${script.actions.size} 个动作，${result.badLines.size} 行失败")
             Loaded(script = script, path = path)
@@ -165,6 +165,15 @@ object ZScriptIO {
                 }
             }
 
+            // ---- 未知的控制执行类型
+            //
+            // 解析时它被兜底成「等待」（否则整条动作会被丢掉），但原文留在
+            // Z.Action.rawControlRunType 里、回写时原样写回。本机执行不了，
+            // 必须在问题列表里说出来 —— 否则界面上看它就是一条"等待"。
+            action.rawControlRunType?.let {
+                issues.add("$where 未知的控制执行类型「$it」（已原样保留，本机不会执行）")
+            }
+
             // ---- 控制执行：跳转目标 / 目标动作必填
             // FIELDS.md:541-546 —— 缺了运行时一定报错
             if (action.type == Z.ActionType.CONTROL_JUMP) {
@@ -199,6 +208,8 @@ object ZScriptIO {
     fun actionLabel(action: Z.Action): String {
         action.common.desc?.takeIf { it.isNotBlank() }?.let { return it }
         val t = action.type
-        return t.controlRunType?.let { "${t.wire}·$it" } ?: t.wire
+        // 未知 controlRunType 要显示原始字符串：显示枚举里的 "waitDelay"
+        // 会让用户以为脚本里写的是"等待"，而文件里其实是别的东西。
+        return (action.rawControlRunType ?: t.controlRunType)?.let { "${t.wire}·$it" } ?: t.wire
     }
 }
