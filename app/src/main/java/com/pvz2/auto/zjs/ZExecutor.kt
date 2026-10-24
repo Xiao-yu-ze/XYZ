@@ -1795,23 +1795,28 @@ class ZExecutor(
         }
 
         val cbLabel = "监听·${slot.wire}"
-        val times = (cb.common.repeatCount ?: 1).let { if (it <= 0) 1 else it }
         val cbSkips = ArrayList<Result.Skip>()
-        // 缓存放在循环外：槽内动作自己也可能是"连点同一个位置"的快速重复
-        val cbMemo = RepeatMemo()
-        for (n in 0 until times) {
-            if (stopped) break
-            if (n > 0) waitDelay(cb.common.repeatDelayValue, cb.common.repeatDelayUnit)
-            val r = executeOnce(cb, index, cbLabel, cbSkips, cbMemo)
-            if (r == null) break
-            if (r.jumpTo != null || r.stop || r.breakShell) {
-                log("[$index] $cbLabel 里的跳转/停止/结束子列表被忽略（作用域是外层脚本）")
-                break
-            }
+        /*
+         * ★ 监听里的动作也是**完整动作**。
+         *
+         *   走 executeWithRepeat（而不是 executeOnce）：
+         *   disabled / condition / 前置等待 / repeatCount / fastRepeatMode
+         *   才会和普通动作一致生效。「运行多个动作」的子动作是同一个道理。
+         *
+         *   条件失败（abortOnRecognitionFail = false）只跳过这一条 ——
+         *   一个监听没命中不该把整条脚本干掉。
+         */
+        val r = executeWithRepeat(
+            cb, index, cbLabel, cbSkips, abortOnRecognitionFail = false
+        )
+        if (r.jumpTo != null || r.stop || r.breakShell) {
+            log("[$index] $cbLabel 里的跳转/停止/结束子列表被忽略（作用域是外层脚本）")
         }
-        // 槽内动作的失败原因不能吞掉：这是用户唯一能看到"监听做了什么"的地方
+        // 监听失败不能污染外层：否则下一条「缺位置」之类的失败会带着它的名义终止整条任务
+        abortReason = null
+        // 槽内动作的失败原因不能吞掉：这是用户唯一能看到「监听做了什么」的地方
         cbSkips.forEach { log("[$index] $cbLabel 跳过：${it.reason}") }
-        log("[$index] $label 监听 ${slot.wire} 已执行（$times 次）")
+        log("[$index] $label 监听 ${slot.wire} 已执行")
     }
 
     /** 解析数字或区间 `"1-3"`，取随机。解析不了返回 null。 */
