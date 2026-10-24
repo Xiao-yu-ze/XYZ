@@ -678,7 +678,7 @@ object ZActionDescriber {
             }.getOrNull()
         }
         oth += Row(
-            "${p}周围条件（本机不生效）",
+            "${p}周围条件",
             aroundSummary ?: if (aroundRaw == null) "（未设置）" else "（格式无法解析）",
             Kind.ENTER, field = "$prefix.around"
         )

@@ -230,6 +230,12 @@ class ZExecutor(
             if (scriptRepeat != 0 && loop >= scriptRepeat) break
             loop++
 
+            // 每次「整体重复」开始时重置「限制运行次数」的计数：
+            // 协议 resetTime=afterRepeat 表示每轮从头算；afterFinish / onLoad
+            // 在本机等价于「一次 run 内有效」，由 run() 开头的 clear 覆盖。
+            limitUsed.clear()
+            intervalLast.clear()
+
             var pc = 0
             while (pc < actions.size && !stopped) {
                 if (++steps > maxSteps) {
@@ -1722,7 +1728,18 @@ class ZExecutor(
                 val gapMs = (randomIn(v) ?: 0.0).toLong() * unitToMs(unit)
                 val now = System.currentTimeMillis()
                 val last = intervalLast[index]
-                val ok = gapMs <= 0L || last == null || now - last >= gapMs
+                val ignoreInit = boolExtra(cond, "ignoreInitPass")
+                /*
+                 * ignoreInitPass = 忽略第一次（刚启动那一次也算"没到间隔"）。
+                 *  - true ：第一次直接通过（脚本刚起来不该被间隔卡住）
+                 *  - false：第一次要等满间隔，基准用**脚本开始时刻**
+                 * 字段原来读了没分支，等于两档一样 —— 现在分开了。
+                 */
+                val ok = when {
+                    gapMs <= 0L -> true
+                    last != null -> now - last >= gapMs
+                    else -> ignoreInit || now - runStartedAt >= gapMs
+                }
                 if (ok) intervalLast[index] = now
                 log(
                     "   条件 时间间隔 ${gapMs}ms：" +
@@ -2098,6 +2115,14 @@ class ZExecutor(
     }
 
     // ---------------------------------------------------- extra 读值小工具
+
+    /** 条件的 extra 里读布尔（时间间隔的 ignoreInitPass 用）。 */
+    private fun boolExtra(cond: Z.Condition, key: String): Boolean = when (val v = cond.extra[key]) {
+        is Boolean -> v
+        is Number -> v.toInt() != 0
+        is String -> v.trim().let { it == "true" || it == "1" || it == "是" }
+        else -> false
+    }
 
     /** 从 `extra` 读布尔（协议里可选字段可能缺失、也可能是字符串）。 */
     private fun boolExtra(action: Z.Action, key: String): Boolean = when (val v = action.extra[key]) {
