@@ -38,6 +38,39 @@
             android:text="@string/zjs_add_action" />
     </LinearLayout>
 
+    <!-- 下潜导航（监听 / 运行多个动作）。
+         进去以后必须能回来 —— 原来只有 popNav() 这个函数，界面上**没有任何入口**
+         调用它，进了监听槽位就出不来，只能去第 2 页重开脚本。 -->
+    <LinearLayout
+        android:id="@+id/llZjsNav"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnZjsUp"
+            style="@style/AppButton.Outline"
+            android:layout_width="wrap_content"
+            android:minWidth="0dp"
+            android:layout_height="wrap_content"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:text="@string/zjs_back" />
+
+        <TextView
+            android:id="@+id/tvZjsPath"
+            style="@style/Text.Hint"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:ellipsize="start"
+            android:maxLines="1" />
+    </LinearLayout>
+
     <!-- 当前脚本名 + 动作数 + 校验提示。
          原来的「脚本动作（自动精灵格式）」大标题去掉了 —— 这一页只干这一件事，
          标题只是占地方；这行摘要反而有信息。 -->

@@ -167,6 +167,7 @@
     <string name="zjs_save_name_hint">脚本名字</string>
     <string name="zjs_save_name_empty">名字不能为空</string>
     <string name="zjs_save_dir">保存到</string>
+    <string name="zjs_back">← 返回</string>
     <string name="library_new">新建</string>
     <string name="library_import">导入</string>
     <string name="library_export">导出</string>

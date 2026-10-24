@@ -80,6 +80,30 @@ class ZjsEditorPage(
      */
     private val navStack = ArrayList<Frame>()
 
+    private val llNav: android.view.View by lazy { root.findViewById(R.id.llZjsNav) }
+    private val tvNavPath: android.widget.TextView by lazy { root.findViewById(R.id.tvZjsPath) }
+
+    /**
+     * 刷新「下潜导航条」：在里面就显示返回键和路径。
+     *
+     * 没有它的时候，进了监听槽位只能在脑子里记住自己在哪、也退不回上一层 ——
+     * 因为 `popNav()` 一直没有调用者。路径写成
+     * `脚本 › 第 3 条「点击图片」 › 运行成功后` 这种，用户一眼知道在哪一层。
+     */
+    private fun updateNav() {
+        if (navStack.isEmpty()) {
+            llNav.visibility = android.view.View.GONE
+            return
+        }
+        llNav.visibility = android.view.View.VISIBLE
+        val top = navStack.last()
+        // 用压栈时记下的下标还原"哪一条动作的哪个槽位"
+        val owner = actionAtIndex(top.path)
+        val ownerLabel = owner?.let { "${it.type.wire}" } ?: "第 ${(top.path.lastOrNull() ?: 0) + 1} 条"
+        val where = if (top.scriptSetChild) "子动作列表" else top.slot.label
+        tvNavPath.text = "脚本 › 第 ${(top.path.firstOrNull() ?: 0) + 1} 条「$ownerLabel」 › $where"
+    }
+
     /**
      * 栈帧：正在编辑"哪条动作链"上的哪个监听槽位。
      *
@@ -101,7 +125,18 @@ class ZjsEditorPage(
      * 所以解析必须结合整个栈（[actionAtIndex]），单独一个 path 不够。
      * 这和条件侧的 `CondTarget` 是同一套思路。
      */
-    private data class Frame(val path: List<Int>, val slot: Z.CallbackSlot)
+    private data class Frame(
+        val path: List<Int>,
+        val slot: Z.CallbackSlot,
+        /**
+         * true = 这一帧下潜的是「运行多个动作」的 `scriptSet`，不是监听槽位。
+         *
+         * 两者的共同点是"某一层列表"，差别只在通道：
+         * 监听槽位是 `owner.callbacks[slot]`（单条），子动作是 `owner.scriptSet`（一串）。
+         * 读和写都必须按同一个标志走，否则就会出现"读到 A、写回 B"那种错写。
+         */
+        val scriptSetChild: Boolean = false
+    )
 
     /**
      * 按路径取动作。
@@ -117,8 +152,12 @@ class ZjsEditorPage(
         // 前 path.lastIndex 段是"逐层下潜"：取下标 → 用该层帧的槽位进下一层
         for (i in 0 until path.lastIndex) {
             val owner = list.getOrNull(path[i]) ?: return null
-            val slot = navStack.getOrNull(i)?.slot ?: return null
-            list = owner.callbacks[slot]?.let { listOf(it) } ?: return null
+            val f = navStack.getOrNull(i) ?: return null
+            list = if (f.scriptSetChild) {
+                owner.scriptSet
+            } else {
+                owner.callbacks[f.slot]?.let { listOf(it) } ?: return null
+            }
         }
         // 最后一段就是目标动作所在的那一层
         return list.getOrNull(path.last())
@@ -144,11 +183,17 @@ class ZjsEditorPage(
             out[idx] = next
             return out
         }
-        val slot = navStack.getOrNull(depth)?.slot ?: return null
-        val inner = cur.callbacks[slot] ?: return null
+        val f = navStack.getOrNull(depth) ?: return null
+        if (f.scriptSetChild) {
+            // 子动作列表：整串替换（下标由 path 下一段指定）
+            val newSubs = writeActionAt(cur.scriptSet, path, next, depth + 1) ?: return null
+            out[idx] = cur.copy(scriptSet = newSubs)
+            return out
+        }
+        val inner = cur.callbacks[f.slot] ?: return null
         val innerNew = writeActionAt(listOf(inner), path, next, depth + 1)?.firstOrNull() ?: return null
         val cb = LinkedHashMap(cur.callbacks)
-        cb[slot] = innerNew
+        cb[f.slot] = innerNew
         out[idx] = cur.copy(callbacks = cb)
         return out
     }
@@ -173,6 +218,7 @@ class ZjsEditorPage(
         dropStaleNav()
         val f = navStack.lastOrNull() ?: return s.actions
         val owner = actionAtIndex(f.path) ?: return emptyList()
+        if (f.scriptSetChild) return owner.scriptSet
         return owner.callbacks[f.slot]?.let { listOf(it) } ?: emptyList()
     }
 
@@ -190,6 +236,12 @@ class ZjsEditorPage(
             return
         }
         val owner = actionAtIndex(f.path) ?: return
+        if (f.scriptSetChild) {
+            // 子动作是**一串**（不是槽位那一条），整串替换即可
+            val newRoot = writeActionAt(s.actions, f.path, owner.copy(scriptSet = newList))
+            if (newRoot != null) script = s.copy(actions = newRoot)
+            return
+        }
         val newCallbacks = LinkedHashMap(owner.callbacks)
         /*
          * 监听槽位里**只能有一个动作**（协议：每个槽位是一个完整动作 JSON，
@@ -232,17 +284,55 @@ class ZjsEditorPage(
         // 新帧的路径 = 上一层的路径 + 本条动作在当前列表里的下标
         val path = (navStack.lastOrNull()?.path ?: emptyList()) + actionIndex
         if (!owner.callbacks.containsKey(slot)) {
-            val placeholder = Z.Action(type = Z.ActionType.CLICK)
-            val newCb = LinkedHashMap(owner.callbacks)
-            newCb[slot] = placeholder
-            // 用路径写回占位动作：depth ≥ 2 时写 "list[actionIndex]" 会改错动作
-            val newRoot = writeActionAt(s.actions, path, owner.copy(callbacks = newCb)) ?: return
-            script = s.copy(actions = newRoot)
-            ZjsEditState.dirty = true
+            /*
+             * 空槽位：让用户**自己选动作类型**，别硬塞一个「点击」。
+             *
+             * 原来固定塞 `Z.Action(type = CLICK)`：进去看到的是一个没位置、
+             * 没模板的点击，和普通条目的样子完全不同 —— 用户会以为监听里的
+             * 节点是另一种东西。其实同一套组件，只是被塞了个空壳。
+             */
+            val sorted = Z.ActionType.entries.filter { it.executable && it != Z.ActionType.RUN_MULTI }
+            val labels = sorted.map { typeLabel(it) }.toTypedArray()
+            androidx.appcompat.app.AlertDialog.Builder(host)
+                .setTitle("「${slot.label}」里要放什么动作")
+                .setItems(labels) { dlg, which ->
+                    dlg.dismiss()
+                    val picked = Z.Action(type = sorted[which])
+                    val newCb = LinkedHashMap(owner.callbacks)
+                    newCb[slot] = picked
+                    // 用路径写回占位动作：depth ≥ 2 时写 "list[actionIndex]" 会改错动作
+                    val newRoot = writeActionAt(s.actions, path, owner.copy(callbacks = newCb)) ?: return@setItems
+                    script = s.copy(actions = newRoot)
+                    ZjsEditState.dirty = true
+                    navStack.add(Frame(path, slot))
+                    expandedIndex = -1
+                    adapter.submit(currentActions())
+                    updateNav()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+            return
         }
         navStack.add(Frame(path, slot))
         expandedIndex = -1
         adapter.submit(currentActions())
+        updateNav()
+    }
+
+    /**
+     * 进入「运行多个动作」的子动作列表。
+     *
+     * 和监听槽位共用同一套下潜机制（[Frame.scriptSetChild] 只换通道），
+     * 所以里面的每一条都是**普通动作**：字段、类型、模板、条件全都能改，
+     * 不是另做一个简化编辑器。
+     */
+    private fun enterScriptSet(actionIndex: Int) {
+        val owner = currentActions().getOrNull(actionIndex) ?: return
+        val path = (navStack.lastOrNull()?.path ?: emptyList()) + actionIndex
+        navStack.add(Frame(path, Z.CallbackSlot.AFTER_EXEC_SUC, scriptSetChild = true))
+        expandedIndex = -1
+        adapter.submit(currentActions())
+        updateNav()
     }
 
     /** 返回上一层。 */
@@ -251,6 +341,7 @@ class ZjsEditorPage(
         navStack.removeAt(navStack.size - 1)
         expandedIndex = -1
         adapter.submit(currentActions())
+        updateNav()
         return true
     }
 
@@ -1644,6 +1735,8 @@ class ZjsEditorPage(
             .setOnClickListener { promptSave() }
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsAddAction)
             .setOnClickListener { promptAddAction() }
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsUp)
+            .setOnClickListener { popNav() }
 
         /*
          * 订阅运行状态：翻到这一页就能看到"跑到哪一条、跑了几次"。
@@ -1724,7 +1817,8 @@ class ZjsEditorPage(
                     val s = ZjsEditState.script ?: return@collect
                     navStack.clear()
                     expandedIndex = -1
-                    showScript(ZjsEditState.fileName, s)
+                    updateNav()
+        showScript(ZjsEditState.fileName, s)
                 }
             }
         }

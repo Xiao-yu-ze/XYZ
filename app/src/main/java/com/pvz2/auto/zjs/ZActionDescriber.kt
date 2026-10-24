@@ -240,6 +240,21 @@ object ZActionDescriber {
         // ★ 必须给 field，否则 UI 不会挂点击。只给 Kind.ENTER 是不够的：
         //   makeRow 的判断是 `kind != READONLY && field.isNotEmpty()`，
         //   field 空着就永远点不动。
+        /*
+         * 「运行多个动作」的子动作列表：必须能点进去增删。
+         * 之前只显示一行「子动作 共 N 个」的只读文字 —— 于是这个动作
+         * 在界面上等于不可用（用户根本没法往里加东西）。
+         */
+        if (action.type == Z.ActionType.RUN_MULTI) {
+            val n = action.scriptSet.size + action.scriptSetRaw.size
+            rows += Row(
+                "子动作",
+                if (n == 0) "（还没有子动作，点击添加）" else "共 $n 个，点击管理",
+                Kind.ENTER,
+                field = "scriptSet"
+            )
+        }
+
         if (action.type == Z.ActionType.MULTI_SWIPE) {
             // ★ 三种情况分开说，不能只认我们自己的 fingers。
             //
