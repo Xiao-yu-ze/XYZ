@@ -222,6 +222,17 @@ object ZFieldEditor {
         )
         // searchMode / imageScaleType / ocrMode：枚举字符串
         // limitPosX / limitPosY：协议里是 Value（% / dp / px），原样存
+        // imageFilter：匹配器真读它（grey/bw/reverse，ZRealMatcher:895-930），界面原来没入口。
+        // 选「（无）」= 清掉键，与协议"缺省即不过滤"一致；filter 是同义键，只留一份。
+        "imageFilter" -> pos.copy(
+            extra = pos.extra.toMutableMap().apply {
+                if (value.isBlank() || value == "（无）") remove("imageFilter")
+                else {
+                    put("imageFilter", value)
+                    remove("filter")
+                }
+            }
+        )
         "searchMode", "imageScaleType", "ocrMode", "limitPosX", "limitPosY" ->
             pos.copy(
                 extra = pos.extra.toMutableMap().apply {
