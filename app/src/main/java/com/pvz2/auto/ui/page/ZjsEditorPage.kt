@@ -1896,17 +1896,50 @@ class ZjsEditorPage(
 
         // 可执行的排前面，同组内保持协议顺序
         val sorted = ZFieldEditor.addableActionTypes()
-        val labels = sorted.map { typeLabel(it) }.toTypedArray()
 
-        androidx.appcompat.app.AlertDialog.Builder(host)
+        /*
+         * 用自定义行而不是 setItems —— 每行要能带一个「?」。
+         *
+         * setItems 只能给纯文本，用户看到一个动作名根本猜不出它干什么
+         * （"点击节点"和"点击图片"差在哪、哪些本机跑不了）。
+         */
+        val rows = sorted.map { typeLabel(it) }.toTypedArray()
+        val dlg = androidx.appcompat.app.AlertDialog.Builder(host)
             .setTitle("添加什么动作")
-            .setItems(labels) { dlg, which ->
-                dlg.dismiss()
-                // ★ 必须把插入位置传下去，否则「在上方插入」实际还是追加到末尾
-                addAction(sorted[which], insertAt)
-            }
             .setNegativeButton("取消", null)
-            .show()
+            .create()
+        val list = android.widget.ListView(host)
+        list.adapter = object : android.widget.BaseAdapter() {
+            override fun getCount() = sorted.size
+            override fun getItem(position: Int) = sorted[position]
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup?): View {
+                val t = sorted[position]
+                val line = android.widget.LinearLayout(host).apply {
+                    orientation = android.widget.LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(dp(16), dp(6), dp(8), dp(6))
+                    minimumHeight = dp(44)
+                }
+                line.addView(TextView(host).apply {
+                    text = rows[position]
+                    textSize = 14f
+                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                        0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+                    )
+                })
+                ZFieldHelp.ofAction(rows[position])?.let { help ->
+                    line.addView(helpGlyph(rows[position], help))
+                }
+                line.setOnClickListener {
+                    dlg.dismiss()
+                    addAction(t, insertAt)
+                }
+                return line
+            }
+        }
+        dlg.setView(list)
+        dlg.show()
     }
 
     /** 动作类型在列表里的显示名：能跑的直接写，暂不支持的标出来。 */

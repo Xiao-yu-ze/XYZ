@@ -1385,6 +1385,22 @@ class ZExecutor(
                         )
                     }
                     if (timeout > 0 && System.currentTimeMillis() - startedAt >= timeout) {
+                        /*
+                         * 超时去哪 —— 对应 Maa 的 `on_error`。
+                         *
+                         * Maa：next 扫到 timeout = 这个节点失败，走 on_error（空 = 任务失败）。
+                         * 我们：`onTimeoutJump`（本机新增字段）写了 jumpId 就跳过去；
+                         *      没写则维持老行为 —— 记一条跳过、继续往下。
+                         *
+                         * 为什么不用「监听 afterExecFail」来做：监听槽位里的动作
+                         * **不传递跳转/停止**（协议如此），而 on_error 本质是控制流。
+                         */
+                        val to = (action.extra["onTimeoutJump"] as? String)?.trim().orEmpty()
+                        if (to.isNotEmpty()) {
+                            log("[等待候选] 等了 ${timeout}ms 没命中 → 超时跳转 $to（Maa on_error）")
+                            skipped.add(Result.Skip(index, label, "超时（${timeout}ms）转 on_error：$to"))
+                            return Outcome(jumpTo = to)
+                        }
                         log("[等待候选] 等了 ${timeout}ms，${round} 轮都没命中，继续往下")
                         skipped.add(Result.Skip(index, label, "等了 ${timeout}ms 没有候选出现"))
                         return null

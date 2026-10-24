@@ -248,7 +248,12 @@ def common(node, after_locate=False):
         rc = int(node["repeat"])
         c["repeatCount"] = rc
         if rc > 1:
-            c["repeatDelayValue"] = str(REPEAT_GAP_MS)
+            # ★ Maa 的 repeat 是「**识别一次**、动作重复 N 次」（不是每轮重认）。
+            #   我们对应的正是 fastRepeatMode：首轮算出坐标，后面几轮直接重放。
+            #   不开这个，点击文字/颜色会每轮重跑一次 OCR —— 比原来慢 N 倍。
+            c["fastRepeatMode"] = True
+            if REPEAT_GAP_MS > 0:
+                c["repeatDelayValue"] = str(REPEAT_GAP_MS)
     return c
 
 
@@ -459,24 +464,14 @@ def build(files, pts):
         waiter["waitIntervalMs"] = interval
         out.append(waiter)
 
-        # ★ Maa 里 next 扫到超时 = 这个节点失败，走 on_error（默认空 = 任务失败）。
-        #   绝不能"继续执行文件里的下一条"—— 那会跑飞到无关节点上。
+        # ★ Maa：next 扫到超时 = 这个节点失败 → 走 on_error；on_error 空 = 任务失败。
+        #   绝不能"继续执行文件里的下一条"（会跑飞到无关节点）。
         on_error = next_names({"next": node.get("on_error")}) if node.get("on_error") else []
-        if on_error:
-            resolved = [resolve_ref(x) for x in on_error]
-            resolved = [x for x in resolved if x]
-            cands_err = [{"jumpTo": r} for r in resolved]
-            out.append({
-                "type": "等待候选",
-                "candidates": cands_err,
-                "waitTimeoutMs": timeout,
-                "waitIntervalMs": interval,
-                "desc": "%s 的 on_error" % name,
-            })
-            out.append({
-                "type": "控制执行", "controlRunType": "stop",
-                "desc": "on_error 也没命中 → 结束（Maa 语义：任务失败）",
-            })
+        resolved = [resolve_ref(x) for x in on_error]
+        resolved = [x for x in resolved if x]
+        if resolved:
+            waiter["onTimeoutJump"] = resolved[0]
+            waiter["desc"] = (waiter.get("desc", "") + "（超时→%s）" % resolved[0]).strip()
         else:
             out.append({
                 "type": "控制执行", "controlRunType": "stop",
