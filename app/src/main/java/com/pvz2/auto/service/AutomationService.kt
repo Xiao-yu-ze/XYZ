@@ -786,8 +786,18 @@ class AutomationService : Service() {
         }
         executor.scriptLoader = { name ->
             runCatching {
+                /*
+                 * 名字容错：脚本里写 "子.zjs" 还是 "子" 都要能对上。
+                 *
+                 * 列表里的 name 是**不带扩展名**的显示名，而动作里用户填的往往是
+                 * 文件名（带 .zjs）—— 严格相等于是永远找不到，表现是「执行脚本」
+                 * 静默跳过（真机自检踩到）。
+                 */
+                val want = name.trim().removeSuffix(".zjs")
                 com.pvz2.auto.zjs.ZjsRunner.listSaved(this)
-                    .firstOrNull { it.name == name }
+                    .firstOrNull {
+                        it.name.trim().removeSuffix(".zjs").equals(want, ignoreCase = true)
+                    }
                     ?.let { com.pvz2.auto.zjs.ZjsRunner.loadSaved(it.file) }
             }.getOrNull()
         }

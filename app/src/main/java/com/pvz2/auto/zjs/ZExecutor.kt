@@ -66,6 +66,15 @@ class ZExecutor(
      * 走回调而不是直接依赖 ZjsRunner：执行器不认识 Android 的 Context，
      * 也就能在没有文件系统的单测里跑。和 appLauncher/toaster 是同一个套路。
      */
+    /**
+     * 这是**子脚本**执行器（由「执行脚本」创建）。
+     *
+     * 子脚本自己收尾时不能去关父脚本的日志文件 —— 真机踩到：
+     * 子脚本跑完调用 `ZjsLog.endRun()` 把 writer 置空，
+     * 父脚本后面所有日志**静默丢失**，看起来像"父脚本没继续"。
+     */
+    var isSubScript: Boolean = false
+
     var scriptLoader: ((String) -> Z.Script?)? = null
 
     /**
@@ -457,7 +466,18 @@ class ZExecutor(
 
                 // 执行（含重复）
                 abortReason = null
+                val skippedBefore = skipped.size
                 val outcome = executeWithRepeat(action, pc, label, skipped)
+                /*
+                 * ★ 跳过原因必须进日志。
+                 *
+                 *   动作里那些"配置有问题"的分支（缺 keyCode、缺 filePath、找不到子脚本…）
+                 *   只往 skipped 里塞一条就 return，界面上只剩"完成 0ms"，
+                 *   用户完全不知道发生了什么 —— 实测「执行脚本」就是这样静默跳过的。
+                 */
+                if (skipped.size > skippedBefore) {
+                    skipped.drop(skippedBefore).forEach { sk -> log("[跳过] ${sk.reason}") }
+                }
                 // 「动作运行状态」条件要查别的动作跑成功没有 —— 这里记一笔。
                 // stop/jump 也算成功（它们确实按意图执行了）。
                 actionOutcome[pc] = outcome.abort == null && !outcome.condSkipped
@@ -594,7 +614,8 @@ class ZExecutor(
         val summary = "执行 $executed 条，跳过 ${skipped.size} 条" +
             (failReason?.let { "，停止原因：$it" } ?: "")
         log("===== 结束：$summary =====")
-        runCatching { com.pvz2.auto.core.ZjsLog.endRun(summary) }
+        // 子脚本只写自己的汇总行，日志文件归父脚本关
+        if (!isSubScript) runCatching { com.pvz2.auto.core.ZjsLog.endRun(summary) }
     }
 
     // ------------------------------------------------------------ 单个动作
@@ -1110,6 +1131,7 @@ class ZExecutor(
                 subShellDepth++
                 val subResult = try {
                     ZExecutor(inject, screen, matcher, log).also { e ->
+                        e.isSubScript = true
                         e.scriptLoader = loader
                         e.jsStorage = jsStorage
                         e.jsClipboard = jsClipboard
@@ -2074,8 +2096,22 @@ class ZExecutor(
         lastSearchMs = 0
     }
 
+    /*
+     * 范围写法不认识时说一声。
+     *
+     * 合法写法只有 `"左 上 右 下"`（空格分隔）和 left/top/right/bottom 四个键。
+     * 写成 {"x":0,"y":0,"w":1280,"h":300} 或逗号分隔时解析失败 → 静默回落全屏，
+     * 用户以为加了范围其实整屏都在搜（真机自检踩到过）。
+     */
+    private fun warnBadArea(pos: Z.PosData) {
+        if (pos.limitArea == null && pos.extra.containsKey("limitArea")) {
+            log("[警告] 范围写法无法解析（应为 \"左 上 右 下\" 或 left/top/right/bottom），已按全屏处理")
+        }
+    }
+
     private fun searchPos(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit> {
         val t0 = System.nanoTime()
+        warnBadArea(pos)
         val r = searchPosRaw(pos, rect)
         lastSearchMs = (System.nanoTime() - t0) / 1_000_000
         recognizeMs += lastSearchMs
