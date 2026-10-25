@@ -1438,9 +1438,11 @@ class ZExecutor(
                                 }}」第 $round 轮（已 ${waited}s）"
                             )
                         }
+                                val seen2 = matcher.lastDetail() ?: matcher.lastReason()
                         log(
                             "[等待候选] ${label}：已等 ${waited}s，第 $round 轮，" +
                                 "${action.candidates.size} 个候选都没出现" +
+                                (seen2?.let { " | 最近一次识别：$it" } ?: "") +
                                 (if (timeout > 0) "（上限 ${timeout}ms）" else "（不设上限）")
                         )
                     }
@@ -1788,7 +1790,11 @@ class ZExecutor(
                 // 一直等的时候也要让人看得见在等什么、等了多久
                 if (forever && round % 10 == 0) {
                     val secs = round * step / 1000
-                    log("[动作 $index] $label 还在等（第 $round 轮，已 ${secs}s，不设上限）")
+                    val seen = matcher.lastDetail() ?: matcher.lastReason()
+                    log(
+                        "[动作 $index] $label 还在等（第 $round 轮，已 ${secs}s，不设上限）" +
+                            (seen?.let { " | $it" } ?: "")
+                    )
                     com.pvz2.auto.core.ScriptRunState.update {
                         it.copy(message = "正在等「$label」第 $round 轮（已 ${secs}s）")
                     }

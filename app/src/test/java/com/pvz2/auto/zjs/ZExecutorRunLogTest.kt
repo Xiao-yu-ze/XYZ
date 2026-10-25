@@ -70,6 +70,41 @@ class ZExecutorRunLogTest {
         assertTrue("细节里缺少命中数：$line", line.contains("命中 1 个"))
     }
 
+    /**
+     * 一直等（timeout:-1）时，每 10 轮那条日志必须带上**这一轮看到了什么**。
+     *
+     * 只写"还在等"没有诊断价值：用户分不清画面没变、OCR 认成了别的字、
+     * 还是相似度差一点。Maa 的日志能一眼看出问题，靠的就是这个。
+     */
+    @Test
+    fun `一直等的重试行带识别细节`() {
+        val logs = ArrayList<String>()
+        val m = object : ZExecutor.Matcher {
+            override fun findImage(pos: Z.PosData, rect: IntArray) = emptyList<ZPosResolver.Hit>()
+            override fun findText(pos: Z.PosData, rect: IntArray) = emptyList<ZPosResolver.Hit>()
+            override fun findColor(pos: Z.PosData, rect: IntArray) = emptyList<ZPosResolver.Hit>()
+            override fun findNode(pos: Z.PosData, rect: IntArray) = emptyList<ZPosResolver.Hit>()
+            override fun lastReason() = "画面里没有文字"
+            override fun lastDetail() = "文字 最佳41% 范围(0,0,1280,720) 要求90% 认出=«开始»"
+        }
+        val ex = ZExecutor(Rec(), ZPosResolver.Screen(1280, 720, 1.5f), m) { logs.add(it) }
+        val t = Thread {
+            ex.run(
+                script(
+                    """{"type":"点击文字","posData":{"type":"text","text":"开始战斗","similarPercent":90},"waitTimeoutMs":-1,"waitIntervalMs":100}"""
+                )
+            )
+        }
+        t.start()
+        // 10 轮 × 100ms 之后才会有第一行"还在等"（留足 JVM 调度余量）
+        Thread.sleep(2500)
+        ex.stop()
+        t.join(2000)
+        val line = logs.firstOrNull { it.contains("还在等") }
+        assertTrue("没有重试日志：$logs", line != null)
+        assertTrue("重试行没带识别细节：$line", line!!.contains("| 文字 最佳41%"))
+    }
+
     @Test
     fun `每次运行会写一个日志文件`() {
         val dir = File(System.getProperty("java.io.tmpdir"), "zjslog-${System.nanoTime()}")
