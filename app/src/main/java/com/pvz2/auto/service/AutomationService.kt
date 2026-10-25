@@ -625,29 +625,6 @@ class AutomationService : Service() {
          * 全部走 Shizuku 侧执行（`am start` / `input keyevent`），
          * 这样启动的应用会落在**虚拟屏**上，而不是把手机屏幕切走。
          */
-        adapter.onLaunchApp = { pkg: String ->
-            runCatching {
-                val svc = shizukuClient.peek() ?: error("Shizuku 服务不在")
-                val displayId = VirtualDisplaySession.sharedState.value.displayId
-                // --display 让应用直接起在虚拟屏上
-                svc.exec("am start --display $displayId -n $pkg/.MainActivity")
-                true
-            }.getOrElse {
-                Log.w(TAG, "[zjs] 打开应用失败（$pkg）：${it.message}")
-                false
-            }
-        }
-        adapter.onOpenLink = { url: String ->
-            runCatching {
-                val svc = shizukuClient.peek() ?: error("Shizuku 服务不在")
-                val displayId = VirtualDisplaySession.sharedState.value.displayId
-                svc.exec("am start --display $displayId -a android.intent.action.VIEW -d '$url'")
-                true
-            }.getOrElse {
-                Log.w(TAG, "[zjs] 打开链接失败（$url）：${it.message}")
-                false
-            }
-        }
         adapter.onToast = { msg: String ->
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()

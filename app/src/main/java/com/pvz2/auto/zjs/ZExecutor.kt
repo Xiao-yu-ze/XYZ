@@ -155,19 +155,7 @@ class ZExecutor(
             paths.forEach { (a, b) -> swipe(a.x, a.y, b.x, b.y, durationMs) }
         }
 
-        /**
-         * 「打开应用」的通道（协议 10.13）。返回 `(包名) -> 是否成功`。
-         *
-         * 默认 null = **本机没接这条通道**。执行器据此报"本机无法打开应用"，
-         * 而不是让这条动作落进"还没实现"——那两种情况的排期完全不同，
-         * 但对用户来说都表现为"脚本没打开游戏"，所以必须区分。
-         */
-        fun appLauncher(): ((String) -> Boolean)? = null
-
-        /** 「打开链接」的通道（协议 10.14）。语义同 [appLauncher]。 */
-        fun linkOpener(): ((String) -> Boolean)? = null
-
-        /** 「系统提示」的轻提示通道（协议 10.23 的 toast 部分）。语义同 [appLauncher]。 */
+        /** 「系统提示」的轻提示通道（协议 10.23 的 toast 部分）。 */
         fun toaster(): ((String) -> Unit)? = null
     }
 
@@ -1582,64 +1570,7 @@ class ZExecutor(
              */
             Z.ActionType.RUN_MULTI -> runMulti(action, index, label, skipped)
 
-            // ---- 打开应用（协议 10.13）
-            Z.ActionType.OPEN_APP -> {
-                val pkg = action.extra["appPackageName"]?.toString()?.trim().orEmpty()
-                if (pkg.isEmpty()) {
-                    skipped.add(Result.Skip(index, label, "缺 appPackageName"))
-                    return null
-                }
-                if (boolExtra(action, "onlyClose")) {
-                    // 协议里 onlyClose=true 是"只关闭、不打开"。没有关闭通道时，
-                    // 退化成"打开"会把用户想关的应用再拉起来 —— 宁可明确拒绝。
-                    skipped.add(Result.Skip(index, label, "onlyClose（仅关闭应用）尚未实现"))
-                    return null
-                }
-                val launcher = inject.appLauncher() ?: run {
-                    skipped.add(Result.Skip(index, label, "本机无法打开应用（没有启动通道）"))
-                    return null
-                }
-                if (boolExtra(action, "closeBeforeOpen")) {
-                    log("   closeBeforeOpen 未实现：直接启动（已有任务可能被提到前台而不是新建）")
-                }
-                val ok = try {
-                    launcher(pkg)
-                } catch (e: Throwable) {
-                    log("   启动 $pkg 异常：${e.message}")
-                    false
-                }
-                if (!ok) {
-                    skipped.add(Result.Skip(index, label, "启动 $pkg 失败"))
-                    return null
-                }
-                log("   已请求打开 $pkg")
-                Outcome()
-            }
 
-            // ---- 打开链接（协议 10.14）
-            Z.ActionType.OPEN_LINK -> {
-                val link = action.extra["link"]?.toString()?.trim().orEmpty()
-                if (link.isEmpty()) {
-                    skipped.add(Result.Skip(index, label, "缺 link"))
-                    return null
-                }
-                val opener = inject.linkOpener() ?: run {
-                    skipped.add(Result.Skip(index, label, "本机无法打开链接（没有打开通道）"))
-                    return null
-                }
-                val ok = try {
-                    opener(link)
-                } catch (e: Throwable) {
-                    log("   打开链接异常：${e.message}")
-                    false
-                }
-                if (!ok) {
-                    skipped.add(Result.Skip(index, label, "打开链接失败：$link"))
-                    return null
-                }
-                log("   已请求打开链接 $link")
-                Outcome()
-            }
 
             // ---- 系统提示（协议 10.23）
             Z.ActionType.PROMPT -> {

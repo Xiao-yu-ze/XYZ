@@ -409,8 +409,6 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
         INPUT_TEXT("输入内容", executable = true),
         /* 识别屏幕：本地 OCR 读出整屏文字；clipboard 模式本机未接通道。 */
     RECOGNIZE_SCREEN("识别屏幕", executable = true),
-        OPEN_APP("打开应用", executable = true),
-        OPEN_LINK("打开链接", executable = true),
         /* 执行脚本：filePath 指向另一个脚本文件，由 AutomationService 接的加载通道读出来跑。 */
     RUN_SCRIPT("执行脚本", executable = true),
         /*
@@ -1078,6 +1076,11 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
                     ?: o.optJSONObject("text")
                     ?: o.optJSONObject("colorData")
                     ?: o.optJSONObject("node")
+                    /*
+                     * 兼容 `posData`：动作里的位置就叫 posData，手写脚本时很容易照着写进条件。
+                     * 以前这种写法被塞进 extra，条件报「识别类条件没有配位置」—— 明明写了却不认。
+                     */
+                    ?: o.optJSONObject("posData")
                 return Condition(
                     type = type,
                     runWhenFalse = o.optBoolean("runWhenFalse", false),

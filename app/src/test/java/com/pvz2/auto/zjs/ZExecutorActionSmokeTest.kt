@@ -240,18 +240,6 @@ class ZExecutorActionSmokeTest {
 
     // ---------------------------------------------------------------- 应用 / 链接
 
-    @Test
-    fun `打开应用——通道没接时明确报错`() {
-        val (r, _) = run("""{"type":"打开应用","appPackageName":"com.x"}""")
-        assertTrue("${r.skipped}", r.skipped.any { it.reason.contains("应用") })
-    }
-
-    @Test
-    fun `打开链接——通道没接时明确报错`() {
-        val (r, _) = run("""{"type":"打开链接","link":"https://x"}""")
-        assertTrue("${r.skipped}", r.skipped.any { it.reason.contains("链接") })
-    }
-
     // ---------------------------------------------------------------- 控制执行
 
     @Test

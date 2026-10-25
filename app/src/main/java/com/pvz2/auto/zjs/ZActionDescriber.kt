@@ -1157,36 +1157,6 @@ return PosGroup(rec, par, oth)
                 field = "ContinueParentExecute"
             )
 
-            // 打开应用（10.13）
-            Z.ActionType.OPEN_APP -> {
-                rows += Row(
-                    "包名/路径",
-                    anyStr(e, "appPackageName").orEmpty(),
-                    Kind.TEXT,
-                    field = "appPackageName"
-                )
-                rows += Row(
-                    "先关再开",
-                    if (anyBool(e, "closeBeforeOpen")) "是" else "否",
-                    Kind.SWITCH,
-                    field = "closeBeforeOpen"
-                )
-                rows += Row(
-                    "仅关闭",
-                    if (anyBool(e, "onlyClose")) "是" else "否",
-                    Kind.SWITCH,
-                    field = "onlyClose"
-                )
-            }
-
-            // 打开链接（10.14）
-            Z.ActionType.OPEN_LINK -> rows += Row(
-                "链接",
-                anyStr(e, "link").orEmpty(),
-                Kind.TEXT,
-                field = "link"
-            )
-
             // 系统提示（10.23）
             Z.ActionType.PROMPT -> {
                 rows += Row(
