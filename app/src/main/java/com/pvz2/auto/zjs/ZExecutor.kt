@@ -289,6 +289,14 @@ class ZExecutor(
     private val MAX_COND_DEPTH = 8
 
     /** 周围条件挂在位置对象上的键名（协议：posData.filterByAroundConditionSet）。 */
+    /**
+     * 这些 `varType` 的 `valueExp` 是一段 JS 表达式，能直接求值。
+     *
+     * `js_function` / 取文本 / 取属性 之类不是表达式，故意不在名单里 ——
+     * 名单外的类型仍然走"明确跳过"的路径，不猜。
+     */
+    private val JS_VAR_TYPES = setOf("expression", "random")
+
     private val AROUND_KEY = "filterByAroundConditionSet"
 
     /** 周围条件里允许出现的子条件类型（自动精灵 getSupportItemConditionTypes()）。 */
@@ -417,7 +425,8 @@ class ZExecutor(
                 val varsApplied = applyLiteralVars(rawAction)
                 if (varsApplied.blockedField != null) {
                     val field = varsApplied.blockedField
-                    val why = "__vars：字段「$field」由变量定义，本机只能代换字面量，无法求值"
+                    val why = "__vars：字段「$field」由变量定义，但取值求不出来" +
+                    "（支持 number / string 字面量和 expression / random 表达式）"
                     skipped.add(Result.Skip(pc, label, why))
                     log("[跳过] $why")
                     pc++
@@ -3164,7 +3173,9 @@ class ZExecutor(
             }
 
             val def = vars[field] ?: return VarsApplied(action, field)
-            val literal = literalOf(def) ?: return VarsApplied(action, field)
+            val literal = literalOf(def)
+                ?: evalVarExpression(def.optString("valueExp").trim(), def.optString("varType"))
+                ?: return VarsApplied(action, field)
             when (field) {
                 "delay" -> {
                     common = common.copy(delay = literal.text)
@@ -3205,6 +3216,47 @@ class ZExecutor(
             else -> null
         }
     }
+
+    /**
+     * 用 JS 引擎求一个变量表达式（`varType` = `expression` / `random`）。
+     *
+     * ## 为什么只给这两个类型开口子
+     *
+     * 自动精灵的 `VarValue` 里 `expression` 和 `random` 的 `valueExp` 就是一段
+     * **JS 表达式**（`100+50`、`Math.floor(Math.random()*200+100)`），
+     * 我们手上已经有 Rhino，直接求值最省事也不会猜错语义。
+     *
+     * `js_function` / `text_extract` 之类不是表达式（是函数体或取文本规则），
+     * 硬套 `String((...))` 只会得到一段函数源码 —— 那时仍然返回 null，
+     * 由调用方明确跳过并报出来，绝不把源码当值用。
+     */
+    private fun evalVarExpression(exp: String, varType: String): VarLiteral? {
+        if (varType !in JS_VAR_TYPES) return null
+        if (exp.isBlank()) return null
+        /*
+         * 变量表用副本：求值不该改动脚本的运行时变量，
+         * 但表达式里读 `${名字}` 之外的东西（比如另一个变量）仍然要能读到。
+         */
+        val tmp = HashMap(scriptVars)
+        val out = JsEngine.run(
+            "String(($exp))",
+            JsEngine.Env(
+                vars = tmp,
+                log = { line -> log(line) },
+                shouldStop = { stopped }
+            )
+        )
+        if (!out.ok) {
+            log("   变量表达式「$exp」求值失败：${out.error}")
+            return null
+        }
+        val text = out.value?.trim().orEmpty()
+        if (text.isEmpty() || text == "undefined" || text == "null" || text.startsWith("function")) {
+            return null
+        }
+        return VarLiteral(text, text.toDoubleOrNull())
+    }
+
 
     /**
      * 报了但没实现的监听槽位，每个动作只提示一次。
