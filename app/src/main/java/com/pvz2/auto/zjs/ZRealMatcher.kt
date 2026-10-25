@@ -48,6 +48,41 @@ class ZRealMatcher(
         private set
 
     /**
+     * 上一次识别的细节（给运行日志）：找什么、范围、命中数、最佳分、耗时。
+     *
+     * 这一项不参与判定 —— 它的价值在于"没认出来时能看出为什么"：
+     * 是拿不到帧、范围划错、还是阈值太高。没有它，日志里只有"没找到"。
+     */
+    private var detailText: String? = null
+
+    override fun lastDetail(): String? = detailText
+
+    /**
+     * 存失败现场（对应 Maa 的 debug/on_error）。
+     *
+     * 用当前帧直接写 PNG；写不出来就返回 null（不影响脚本继续跑）。
+     */
+    override fun saveFrame(dir: String, baseName: String): String? {
+        return try {
+            val m = nextFrame() ?: return null
+            val d = java.io.File(dir).apply { mkdirs() }
+            val safe = baseName.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(60)
+            val ts = java.text.SimpleDateFormat("yyyyMMdd-HHmmss.SSS", java.util.Locale.US)
+                .format(java.util.Date())
+            val f = java.io.File(d, ts + "_" + safe + ".png")
+            val ok = org.opencv.imgcodecs.Imgcodecs.imwrite(f.absolutePath, m)
+            if (ok) f.absolutePath else null
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /** 记一条细节（各 find 里调用）。 */
+    private fun note(text: String) {
+        detailText = text
+    }
+
+    /**
      * 上一帧还没回收的 Mat。
      *
      * ## 为什么要有这个
@@ -274,6 +309,7 @@ class ZRealMatcher(
 
             val chosen = bestHit ?: bestAny
             lastScore = (chosen?.best ?: 0.0).coerceIn(0.0, 1.0)
+        note("图片 最佳${"%.0f".format(lastScore * 100)}% 范围(${rect.joinToString(",")})")
 
             if (chosen == null || chosen.hits.isEmpty()) {
                 // reason 优先：它比"没找到"具体得多（模板比 ROI 大 / 全被逐像素复核剔除…）
@@ -480,6 +516,7 @@ class ZRealMatcher(
                 score = if (best == null) 0.0 else textSimilarity(want, best.text)
             }
             lastScore = score
+            note("文字 最佳${"%.0f".format(score * 100)}% 范围(${rect.joinToString(",")}) 要求${pos.similarPercent ?: 90}% 认出=«${best?.text ?: "无"}»")
 
             if (best == null || score < threshold) {
                 val seen = lines.take(4).joinToString("、") { it.text }
@@ -612,6 +649,7 @@ class ZRealMatcher(
             val total = (mask.rows() * mask.cols()).coerceAtLeast(1)
             val ratio = nonzero.toDouble() / total
             lastScore = ratio
+            note("颜色 占比${"%.1f".format(ratio * 100)}% 范围(${roi.joinToString(",")}) 容差${pos.similarPercent ?: 100}%")
             // Maa 语义：至少一个像素（count = 1）
             val ok = nonzero > 0
             if (!ok) {

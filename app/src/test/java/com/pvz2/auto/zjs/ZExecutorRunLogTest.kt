@@ -1,0 +1,106 @@
+package com.pvz2.auto.zjs
+
+import com.pvz2.auto.core.ZjsLog
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+/**
+ * 运行日志（对应 Maa 的 `logs/` + `debug/on_error/`）。
+ *
+ * 用户的原话是"执行脚本时会有脚本日志，记录执行节点的详细数据，像 maa 这样"。
+ * Maa 那套的粒度是：每个节点记**识别到什么、花了多久、接下来做了什么**，
+ * 失败时再存一张当时的画面。这里守住三件事：
+ *
+ *  1. 每个节点的识别细节（范围/阈值/命中数/最佳分）真的进日志；
+ *  2. 每次运行有自己的日志文件；
+ *  3. 出现跳过/失败时，会去要一张现场截图。
+ */
+class ZExecutorRunLogTest {
+
+    private class Rec : ZExecutor.Injector {
+        val calls = ArrayList<String>()
+        override fun tap(x: Int, y: Int, holdMs: Int) { calls.add("tap($x,$y)") }
+        override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int) {}
+        override fun key(keyCode: Int, holdMs: Int) {}
+        override fun inputText(text: String) {}
+    }
+
+    /** 假匹配器：记下要过几次截图，并给出一句细节。 */
+    private class DetailMatcher : ZExecutor.Matcher {
+        var shots = 0
+        override fun findImage(pos: Z.PosData, rect: IntArray) = emptyList<ZPosResolver.Hit>()
+        override fun findText(pos: Z.PosData, rect: IntArray) =
+            listOf(ZPosResolver.Hit(100, 200, 0.93))
+        override fun findColor(pos: Z.PosData, rect: IntArray) =
+            listOf(ZPosResolver.Hit(10, 20, 0.5))
+        override fun findNode(pos: Z.PosData, rect: IntArray) = emptyList<ZPosResolver.Hit>()
+        override fun lastReason() = null
+        override fun lastDetail() = "文字 最佳93% 范围(0,0,1280,720) 要求90%"
+        override fun saveFrame(dir: String, baseName: String): String {
+            shots++
+            return "$dir/$baseName.png"
+        }
+    }
+
+    private fun script(vararg lines: String): Z.Script {
+        val base = """{"repeatCount":1,"delay":"0","delayUnit":0,"pauseOnFail":true,""" +
+            """"screenWidth":1280,"screenHeight":720,"description":"测试"}"""
+        return ZjsFileFormat.parse((listOf(base) + lines).joinToString("\r\n") + "\r\n")
+            .script ?: error("解析失败")
+    }
+
+    @Test
+    fun `识别细节会进日志`() {
+        val logs = ArrayList<String>()
+        val ex = ZExecutor(Rec(), ZPosResolver.Screen(1280, 720, 1.5f), DetailMatcher()) {
+            logs.add(it)
+        }
+        ex.run(
+            script(
+                """{"type":"点击文字","posData":{"type":"text","text":"开始战斗","similarPercent":90}}""",
+                """{"type":"控制执行","controlRunType":"stop"}"""
+            )
+        )
+        val line = logs.firstOrNull { it.contains("识别：") }
+        assertTrue("日志里没有识别细节这一行：$logs", line != null)
+        assertTrue("细节里缺少匹配器给的字段：$line", line!!.contains("最佳93%"))
+        assertTrue("细节里缺少首点：$line", line.contains("首点(100,200)"))
+        assertTrue("细节里缺少命中数：$line", line.contains("命中 1 个"))
+    }
+
+    @Test
+    fun `每次运行会写一个日志文件`() {
+        val dir = File(System.getProperty("java.io.tmpdir"), "zjslog-${System.nanoTime()}")
+        dir.mkdirs()
+        ZjsLog.baseDir = dir
+        ZjsLog.beginRun("单元测试.zjs")
+        ZjsLog.add("第一行")
+        ZjsLog.add("第二行")
+        val f = ZjsLog.lastRunFile()
+        ZjsLog.endRun("测试结束")
+        assertTrue("没有生成日志文件", f != null && f.isFile)
+        val text = f!!.readText()
+        assertTrue("文件里缺少脚本名：$text", text.contains("单元测试.zjs"))
+        assertTrue("文件里缺少正文：$text", text.contains("第一行") && text.contains("第二行"))
+        assertTrue("文件里缺少结束行：$text", text.contains("测试结束"))
+        // 文件名带上时间与脚本名，便于用户挑
+        assertTrue("文件名不像 run-时间_脚本：${f.name}", f.name.startsWith("run-"))
+    }
+
+    @Test
+    fun `有跳过时会要一张现场截图`() {
+        val m = DetailMatcher()
+        val logs = ArrayList<String>()
+        val ex = ZExecutor(Rec(), ZPosResolver.Screen(1280, 720, 1.5f), m) { logs.add(it) }
+        // 跳到一个不存在的 jumpId → 记成"跳过"并停下，正好触发失败现场截图
+        ex.run(
+            script(
+                """{"type":"控制执行","controlRunType":"jumpTo","jumpToPosition":"没有这个标识"}"""
+            )
+        )
+        assertEquals("应当去要一张失败现场图（日志：$logs）", 1, m.shots)
+        assertTrue("日志里应当写出截图路径：$logs", logs.any { it.contains("现场截图") })
+    }
+}

@@ -34,10 +34,79 @@ object ZjsLog {
             ring.addLast(stamped)
             while (ring.size > CAPACITY) ring.removeFirst()
         }
+        // 同时落盘：文件才是"能发给别人"的东西（写失败不影响运行）
+        runCatching {
+            runWriter?.apply {
+                write("[")
+                write(fullFmt.format(Date()))
+                write("] ")
+                write(line)
+                newLine()
+                flush()
+            }
+        }
     }
 
     /** 取快照（按时间顺序）。 */
     fun snapshot(): List<String> = synchronized(ring) { ring.toList() }
+
+    // ------------------------------------------------------------ 落盘
+    //
+    // 环形缓冲只在内存里，进程一死就没了。用户要"把这次运行发给我"时
+    // 需要一份文件 —— 参照 Maa：一次运行一个文件，失败帧单独存。
+
+    private val fullFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+    private var runFile: java.io.File? = null
+    private var runWriter: java.io.BufferedWriter? = null
+
+    /** 日志根目录（Service 启动时把外部 files 目录设进来）。 */
+    @Volatile
+    var baseDir: java.io.File = java.io.File("/data/local/tmp")
+
+    /** `<baseDir>/zjs_logs`。 */
+    fun runsDir(): java.io.File = java.io.File(baseDir, "zjs_logs").apply { mkdirs() }
+
+    /** 失败截图目录，对应 Maa 的 `debug/on_error`。 */
+    fun shotDir(): java.io.File = java.io.File(runsDir(), "on_error").apply { mkdirs() }
+
+    /** 当前/最近一次运行的日志文件。 */
+    fun lastRunFile(): java.io.File? = runFile
+
+    /** 开始一次运行：建文件并接上写入。 */
+    fun beginRun(scriptName: String) {
+        endRun()
+        val ts = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val safe = scriptName.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(40)
+        val f = java.io.File(runsDir(), "run-$ts" + (if (safe.isBlank()) "" else "_$safe") + ".log")
+        runCatching {
+            runWriter = f.bufferedWriter(Charsets.UTF_8)
+            runFile = f
+            runWriter?.apply {
+                write("# PVZ2 自动化 脚本运行日志")
+                newLine()
+                write("# 脚本: $scriptName")
+                newLine()
+                write("# 开始: ${fullFmt.format(Date())}")
+                newLine()
+                flush()
+            }
+        }
+    }
+
+    /** 结束这次运行。 */
+    fun endRun(summary: String? = null) {
+        runCatching {
+            runWriter?.apply {
+                if (summary != null) {
+                    write("# 结束: $summary")
+                    newLine()
+                }
+                flush()
+                close()
+            }
+        }
+        runWriter = null
+    }
 
     fun clear() = synchronized(ring) { ring.clear() }
 }

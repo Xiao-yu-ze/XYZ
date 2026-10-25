@@ -177,6 +177,18 @@ class ZExecutor(
         fun findNode(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit>
 
         /**
+         * 上一次识别的**细节**，只写进运行日志：范围/阈值/命中数/最佳分/耗时。
+         * 不参与判定。默认 null = 这个匹配器不提供。
+         */
+        fun lastDetail(): String? = null
+
+        /**
+         * 把当前画面存成 PNG（失败现场，对应 Maa 的 debug/on_error）。
+         * @return 存下来的路径；不支持返回 null。
+         */
+        fun saveFrame(dir: String, baseName: String): String? = null
+
+        /**
          * 把 [rect] 里**所有**文字识别出来（「识别屏幕」动作用）。
          *
          * 和 [findText] 的区别：那里是「找一句指定的话、返回位置」，
@@ -477,7 +489,8 @@ class ZExecutor(
                         is JumpResult.Unsupported -> {
                             skipped.add(Result.Skip(pc, label, resolved.message))
                             log("[跳转] ${resolved.message}，停在这一条")
-                            return Result(executed, skipped, resolved.message)
+                            finishRunLog(executed, skipped, resolved.message)
+            return Result(executed, skipped, resolved.message)
                         }
 
                         is JumpResult.NotFound -> {
@@ -491,11 +504,13 @@ class ZExecutor(
                              */
                             skipped.add(Result.Skip(pc, label, resolved.message))
                             log("[跳转] ${resolved.message}，停在这一条")
-                            return Result(executed, skipped, resolved.message)
+                            finishRunLog(executed, skipped, resolved.message)
+            return Result(executed, skipped, resolved.message)
                         }
                     }
                 }
                 if (outcome.stop) {
+                    finishRunLog(executed, skipped, null)
                     return Result(executed, skipped, null)
                 }
                 executed++
@@ -503,7 +518,33 @@ class ZExecutor(
             }
         }
 
+        finishRunLog(executed, skipped, null)
         return Result(executed, skipped, null)
+    }
+
+    /**
+     * 收尾：失败现场存图 + 一行汇总。
+     *
+     * Maa 的做法是每次 on_error 都把当时那一帧存成
+     * `debug/on_error/时间_任务_节点.png`；我们至少要有一张 ——
+     * 用户说"它卡住了"的时候，图比文字有用得多。
+     */
+    private fun finishRunLog(executed: Int, skipped: List<Result.Skip>, failReason: String?) {
+        runCatching {
+            val firstSkip = skipped.firstOrNull()
+            if (firstSkip != null || failReason != null) {
+                val tag = (failReason ?: firstSkip?.let { "#${it.index + 1} ${it.label}" } ?: "失败")
+                    .take(40)
+                matcher.saveFrame(
+                    com.pvz2.auto.core.ZjsLog.shotDir().absolutePath,
+                    tag
+                )?.let { log("   现场截图：$it") }
+            }
+            val summary = "执行 $executed 条，跳过 ${skipped.size} 条" +
+                (failReason?.let { "，停止原因：$it" } ?: "")
+            log("===== 结束：$summary =====")
+            com.pvz2.auto.core.ZjsLog.endRun(summary)
+        }
     }
 
     // ------------------------------------------------------------ 单个动作
@@ -810,6 +851,16 @@ class ZExecutor(
                 if (c.fastRepeatMode) memo.hits = hits
 
                 // indexNum 可能选出**多个**点（"1,3,4" = 这几个都点），所以是列表
+                /*
+                 * 识别细节进运行日志（Maa 的日志也是这个粒度）：
+                 * 找的是什么、范围多大、命中几个、最佳分、首点在哪、花了多久。
+                 * 没有这几项，用户只看到"没找到"，分不清是没画面、范围不对还是阈值太高。
+                 */
+                log(
+                    "   识别：" + describePos(pos) + " → 命中 ${hits.size} 个" +
+                        (matcher.lastDetail()?.let { " | $it" } ?: "") +
+                        " | " + (hits.firstOrNull()?.let { "首点(${it.x},${it.y})" } ?: "无")
+                )
                 tapHits(hits, hold, action, index, label, skipped, afterLocateMs)
                 Outcome()
             }
@@ -2866,6 +2917,23 @@ class ZExecutor(
     private val scriptVars = HashMap<String, String>()
 
     /** 把 extra 里的"动作 JSON"解析成 Z.Action（弹窗取消动作用）。 */
+    /** 位置对象的可读摘要（给日志用）。 */
+    private fun describePos(pos: Z.PosData): String {
+        val where = when {
+            pos.limitArea != null -> "范围=(${pos.limitArea})"
+            pos.x != null || pos.y != null -> "坐标=(${pos.x?.raw ?: "?"},${pos.y?.raw ?: "?"})"
+            else -> "范围=全屏"
+        }
+        return when (pos.type) {
+            Z.PosType.LOCATION -> "坐标(${pos.x?.raw ?: "?"},${pos.y?.raw ?: "?"})"
+            Z.PosType.TEXT -> "文字\"${pos.text ?: ""}\" 相似度${pos.similarPercent ?: 90}% $where"
+            Z.PosType.COLOR -> "颜色${pos.color ?: ""} 相似度${pos.similarPercent ?: 100}% $where"
+            Z.PosType.IMAGE -> "模板 ${where}"
+            Z.PosType.NODE -> "节点\"${pos.text ?: ""}\" $where"
+            else -> "${pos.type.wire} $where"
+        }
+    }
+
     private fun parseActionJson(raw: Any?): Z.Action? {
         if (raw == null) return null
         return runCatching {

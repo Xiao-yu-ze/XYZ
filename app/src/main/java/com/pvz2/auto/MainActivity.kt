@@ -1119,6 +1119,11 @@ class MainActivity : AppCompatActivity() {
                          * 而"卡在第几条、哪个字段、实测到什么"全在这里。
                          */
                         run {
+                            com.pvz2.auto.core.ZjsLog.lastRunFile()?.let { f ->
+                                appendLine("运行日志文件: " + f.absolutePath + "（" + f.length() + " 字节）")
+                                appendLine("失败截图目录: " + com.pvz2.auto.core.ZjsLog.shotDir().absolutePath)
+                                appendLine()
+                            }
                             val script = com.pvz2.auto.core.ZjsLog.snapshot()
                             appendLine("===== 脚本执行日志（${script.size} 行）=====")
                             if (script.isEmpty()) {

@@ -549,14 +549,26 @@ class AutomationService : Service() {
         //   日志里也查不到原因 —— 这是最难排查的一类失败。宁可多几行日志。
         Log.i(TAG, "[zjs] runZjs 开始 path=$path")
 
+        /*
+         * 运行日志从这里就开，不等脚本解析完 ——
+         * "读不出来""虚拟屏没跑"这类失败同样是用户要报的现场，
+         * 只在成功路径上建文件，最需要日志的那几次恰恰没有。
+         */
+        com.pvz2.auto.core.ZjsLog.baseDir = getExternalFilesDir(null) ?: filesDir
+        com.pvz2.auto.core.ZjsLog.beginRun(java.io.File(path).name)
+        com.pvz2.auto.core.ZjsLog.add("运行请求：$path")
+
         val loaded = withContext(Dispatchers.IO) { ZScriptIO.load(path) }
         if (loaded.error != null) {
             Log.e(TAG, "[zjs] 读脚本失败：${loaded.error}")
+            com.pvz2.auto.core.ZjsLog.add("读不出脚本：${loaded.error}")
+            com.pvz2.auto.core.ZjsLog.endRun("未开始：读不出脚本")
             ScriptRunState.finish("读不出脚本：${loaded.error}")
             return
         }
         val script = loaded.script!!
         Log.i(TAG, "[zjs] 读到 ${script.actions.size} 个动作")
+
         if (script.actions.isEmpty()) {
             ScriptRunState.finish("脚本里没有动作")
             return
@@ -577,6 +589,8 @@ class AutomationService : Service() {
                 TAG,
                 "[zjs] 拒绝运行：虚拟屏没在跑 displayId=${pre.displayId} running=${pre.running}"
             )
+            com.pvz2.auto.core.ZjsLog.add("拒绝运行：虚拟屏没在运行（displayId=${pre.displayId}）")
+            com.pvz2.auto.core.ZjsLog.endRun("未开始：虚拟屏没在运行")
             ScriptRunState.finish("虚拟屏没在运行：先回第 1 页点「在虚拟屏启动游戏」")
             return
         }
