@@ -41,7 +41,6 @@ object ZConditionEditor {
         Z.ConditionType.IMAGE to "出现图片",
         Z.ConditionType.TEXT to "出现文字",
         Z.ConditionType.COLOR to "出现颜色",
-        Z.ConditionType.NODE to "出现节点",
         Z.ConditionType.AI_CLOUD to "AI 云识别（本机不支持）",
         Z.ConditionType.LIMIT_RUN_TIMES to "限制运行次数",
         Z.ConditionType.SCRIPT_RUN_STATE to "动作运行状态",
@@ -110,7 +109,6 @@ private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
         Z.ConditionType.IMAGE -> Z.Condition(type = type, posData = Z.PosData(type = Z.PosType.IMAGE))
         Z.ConditionType.TEXT -> Z.Condition(type = type, posData = Z.PosData(type = Z.PosType.TEXT))
         Z.ConditionType.COLOR -> Z.Condition(type = type, posData = Z.PosData(type = Z.PosType.COLOR))
-        Z.ConditionType.NODE -> Z.Condition(type = type, posData = Z.PosData(type = Z.PosType.NODE))
 
         Z.ConditionType.RANDOM -> Z.Condition(
             type = type, extra = mutableMapOf("percent" to 50)

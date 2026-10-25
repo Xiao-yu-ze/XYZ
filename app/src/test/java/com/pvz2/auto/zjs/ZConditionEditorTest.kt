@@ -21,7 +21,7 @@ class ZConditionEditorTest {
          * 它只用于 posData.filterByAroundConditionSet。
          * 但 create() 必须还能造出来 —— 旧脚本里存着这个类型。
          */
-        assertEquals(12, ZConditionEditor.TYPE_LABELS.size)
+        assertEquals(11, ZConditionEditor.TYPE_LABELS.size)
         assertEquals(
             Z.ConditionType.AROUND,
             ZConditionEditor.create(Z.ConditionType.AROUND).type

@@ -100,16 +100,6 @@ class ZExecutorActionSmokeTest {
     }
 
     @Test
-    fun `点击节点——必须给出明确原因，不能空跑`() {
-        val (r, rec) = run("""{"type":"点击节点","posData":{"type":"node","text":"开始"}}""")
-        assertEquals(0, rec.calls.size)
-        assertTrue(
-            "必须留下跳过原因（真实匹配器会写明无障碍/虚拟屏）：${r.skipped}",
-            r.skipped.isNotEmpty()
-        )
-    }
-
-    @Test
     fun `极速点击——把 hold 传成 0（注入层据此跳过等待）`() {
         val (r, rec) = run(
             """{"type":"点击","highSpeedTap":true,"posData":{"type":"location","x":"10","y":"20"}}"""

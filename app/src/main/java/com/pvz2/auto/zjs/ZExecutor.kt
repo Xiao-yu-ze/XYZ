@@ -302,7 +302,7 @@ class ZExecutor(
     /** 周围条件里允许出现的子条件类型（自动精灵 getSupportItemConditionTypes()）。 */
     private val AROUND_SUB_TYPES = setOf(
         Z.ConditionType.IMAGE, Z.ConditionType.TEXT,
-        Z.ConditionType.COLOR, Z.ConditionType.NODE
+        Z.ConditionType.COLOR
     )
 
     private val MAX_SUB_SHELL_DEPTH = 8
@@ -908,8 +908,7 @@ class ZExecutor(
         return when (action.type) {
             // ---- 点击系列
             Z.ActionType.CLICK, Z.ActionType.CLICK_IMAGE,
-            Z.ActionType.CLICK_TEXT, Z.ActionType.CLICK_COLOR,
-            Z.ActionType.CLICK_NODE -> {
+            Z.ActionType.CLICK_TEXT, Z.ActionType.CLICK_COLOR -> {
                 val pos = action.posData
                 if (pos == null) {
                     skipped.add(Result.Skip(index, label, "缺位置"))
@@ -2197,7 +2196,7 @@ class ZExecutor(
         }
         val raw = when (cond.type) {
             Z.ConditionType.IMAGE, Z.ConditionType.TEXT,
-            Z.ConditionType.COLOR, Z.ConditionType.NODE -> {
+            Z.ConditionType.COLOR -> {
                 /*
                  * ★ 没配位置 → 判不出来，**不取反**。
                  *   和下面 else 分支同一个道理：false 再被 runWhenFalse 翻成 true，
@@ -2400,7 +2399,7 @@ class ZExecutor(
         Z.ConditionType.JS_EXPRESSION ->
             if (cond.extra["expression"]?.toString().isNullOrBlank()) "JS 表达式为空" else null
         Z.ConditionType.IMAGE, Z.ConditionType.TEXT,
-        Z.ConditionType.COLOR, Z.ConditionType.NODE ->
+        Z.ConditionType.COLOR ->
             if (cond.posData == null) "识别类条件没有配位置" else null
         else -> null
     }

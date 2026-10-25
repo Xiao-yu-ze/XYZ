@@ -364,7 +364,6 @@ object ZActionDescriber {
                     Z.ConditionType.IMAGE -> "出现图片"
                     Z.ConditionType.TEXT -> "出现文字"
                     Z.ConditionType.COLOR -> "出现颜色"
-                    Z.ConditionType.NODE -> "出现节点"
                     else -> ct.wire
                 }
                 rows += Row(
@@ -824,7 +823,7 @@ return PosGroup(rec, par, oth)
      */
     private val CLICK_FAMILY = setOf(
         Z.ActionType.CLICK, Z.ActionType.CLICK_IMAGE, Z.ActionType.CLICK_TEXT,
-        Z.ActionType.CLICK_COLOR, Z.ActionType.CLICK_NODE
+        Z.ActionType.CLICK_COLOR
     )
 
     /**

@@ -380,7 +380,6 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
         CLICK_IMAGE("点击图片", executable = true),
         CLICK_TEXT("点击文字", executable = true),
         CLICK_COLOR("点击颜色", executable = true),
-        CLICK_NODE("点击节点", executable = true),
         SWIPE("滑动", executable = true),
         /*
      * 单指手势现在能跑了：轨迹点在 `gestureActions` 里，是一串普通动作，
@@ -978,7 +977,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
     // ------------------------------------------------------------ 条件
 
     enum class ConditionType(val wire: String) {
-        IMAGE("image"), TEXT("textFount"), COLOR("colorFound"), NODE("nodeFound"),
+        IMAGE("image"), TEXT("textFount"), COLOR("colorFound"),
         AI_CLOUD("aiCloud"), LIMIT_RUN_TIMES("limitRunTimes"), SCRIPT_RUN_STATE("scriptRunState"),
         RANDOM("random"), TIME_AFTER("timeAfter"), TIME_INTERVAL("timeInterval"),
         JS_EXPRESSION("jsExpression"), CONDITION_SET("conditionSet"), AROUND("AroundCondition");
@@ -1035,7 +1034,6 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
                     ConditionType.IMAGE -> "image"
                     ConditionType.TEXT -> "text"
                     ConditionType.COLOR -> "colorData"
-                    ConditionType.NODE -> "node"
                     // 其余条件类型不内嵌位置对象（FIELDS.md:270-278
                     // 都是别的形状：aiCloud 有 image1/2/3，conditionSet 有 conditions 数组……）
                     else -> null
@@ -1065,7 +1063,6 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
                     ConditionType.IMAGE -> "image"
                     ConditionType.TEXT -> "text"
                     ConditionType.COLOR -> "colorData"
-                    ConditionType.NODE -> "node"
                     else -> null
                 }
                 val posObj = primary?.let { o.optJSONObject(it) }

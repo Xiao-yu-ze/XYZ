@@ -129,7 +129,6 @@ class ZFieldEditorTest {
         assertEquals(Z.PosType.IMAGE, ZFieldEditor.expectedPosType(Z.ActionType.CLICK_IMAGE))
         assertEquals(Z.PosType.TEXT, ZFieldEditor.expectedPosType(Z.ActionType.CLICK_TEXT))
         assertEquals(Z.PosType.COLOR, ZFieldEditor.expectedPosType(Z.ActionType.CLICK_COLOR))
-        assertEquals(Z.PosType.NODE, ZFieldEditor.expectedPosType(Z.ActionType.CLICK_NODE))
         // 没有位置的动作
         assertNull(ZFieldEditor.expectedPosType(Z.ActionType.KEY))
         assertNull(ZFieldEditor.expectedPosType(Z.ActionType.PROMPT))

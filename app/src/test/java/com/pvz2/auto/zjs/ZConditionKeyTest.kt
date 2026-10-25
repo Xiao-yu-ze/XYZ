@@ -44,17 +44,6 @@ class ZConditionKeyTest {
     }
 
     @Test
-    fun `nodeFound 的键名是 node 不是 text`() {
-        val c = cond(
-            """{"type":"nodeFound",
-               "node":{"type":"node","text":"开始"}}"""
-        )
-        val json = c.toJson()
-        assertTrue("必须是 node：$json", json.has("node"))
-        assertTrue("不能写成 text：$json", !json.has("text"))
-    }
-
-    @Test
     fun `textFount 的键名是 text`() {
         val c = cond("""{"type":"textFount","text":{"type":"text","text":"开始"}}""")
         val json = c.toJson()
@@ -66,32 +55,6 @@ class ZConditionKeyTest {
     fun `image 的键名是 image`() {
         val c = cond("""{"type":"image","image":{"type":"image","imageData":{"data":"AA"}}}""")
         assertTrue(c.toJson().has("image"))
-    }
-
-    @Test
-    fun `四种类型往返后键名都不变`() {
-        val cases = mapOf(
-            "image" to "image",
-            "textFount" to "text",
-            "colorFound" to "colorData",
-            "nodeFound" to "node"
-        )
-        for ((type, key) in cases) {
-            val pos = """{"type":"${if (key == "image") "image" else if (key == "text") "text" else if (key == "colorData") "color" else "node"}"}"""
-            val src = """{"type":"$type","$key":$pos}"""
-            val back = cond(src).toJson()
-            assertTrue("[$type] 往返后应仍有 [$key]：$back", back.has(key))
-        }
-    }
-
-    @Test
-    fun `解析时四种键名都认得`() {
-        // 解析侧要宽容：老文件可能用别的键名，读得要能读进来
-        val byColor = cond("""{"type":"colorFound","colorData":{"type":"color","color":"00FF00"}}""")
-        assertEquals("00FF00", byColor.posData!!.color)
-
-        val byNode = cond("""{"type":"nodeFound","node":{"type":"node","text":"X"}}""")
-        assertEquals("X", byNode.posData!!.text)
     }
 
     @Test

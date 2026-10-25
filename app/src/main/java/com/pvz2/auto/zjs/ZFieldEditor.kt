@@ -303,7 +303,6 @@ object ZFieldEditor {
         Z.ConditionType.IMAGE -> Z.PosType.IMAGE
         Z.ConditionType.TEXT -> Z.PosType.TEXT
         Z.ConditionType.COLOR -> Z.PosType.COLOR
-        Z.ConditionType.NODE -> Z.PosType.NODE
         else -> Z.PosType.LOCATION
     }
 
@@ -444,7 +443,6 @@ object ZFieldEditor {
         Z.ActionType.CLICK_IMAGE -> Z.PosType.IMAGE
         Z.ActionType.CLICK_TEXT -> Z.PosType.TEXT
         Z.ActionType.CLICK_COLOR -> Z.PosType.COLOR
-        Z.ActionType.CLICK_NODE -> Z.PosType.NODE
         Z.ActionType.SWIPE -> Z.PosType.LOCATION
         else -> null
     }
@@ -720,7 +718,6 @@ object ZFieldEditor {
                     "出现颜色" -> Z.ConditionType.COLOR
                     "出现文字" -> Z.ConditionType.TEXT
                     "出现图片" -> Z.ConditionType.IMAGE
-                    "出现节点" -> Z.ConditionType.NODE
                     else -> null
                 }
                 if (t == null) withCond(null) else {

@@ -17,8 +17,7 @@ object ZConditionDescriber {
             Z.ConditionType.IMAGE -> "图片匹配" + posHint(c)
             Z.ConditionType.TEXT -> "文字匹配" + posHint(c)
             Z.ConditionType.COLOR -> "颜色匹配" + posHint(c)
-            Z.ConditionType.NODE -> "节点存在" + posHint(c)
-            Z.ConditionType.AI_CLOUD -> "AI 识别" + posHint(c)
+                Z.ConditionType.AI_CLOUD -> "AI 识别" + posHint(c)
             Z.ConditionType.LIMIT_RUN_TIMES -> "运行次数限制"
             Z.ConditionType.SCRIPT_RUN_STATE -> "脚本运行状态"
             Z.ConditionType.RANDOM -> "随机 " + percentOf(c) + "%"
