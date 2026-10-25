@@ -287,6 +287,15 @@ object ZFieldEditor {
         return intArrayOf((v shr 16) and 0xFF, (v shr 8) and 0xFF, v and 0xFF)
     }
 
+    /** 条件类型 → 它该用的位置类型。 */
+    private fun posTypeOf(t: Z.ConditionType): Z.PosType = when (t) {
+        Z.ConditionType.IMAGE -> Z.PosType.IMAGE
+        Z.ConditionType.TEXT -> Z.PosType.TEXT
+        Z.ConditionType.COLOR -> Z.PosType.COLOR
+        Z.ConditionType.NODE -> Z.PosType.NODE
+        else -> Z.PosType.LOCATION
+    }
+
     private fun parsePercent(raw: String): Int? {
         val t = raw.trim().removeSuffix("%").trim()
         if (t.isEmpty()) return null
@@ -636,6 +645,10 @@ object ZFieldEditor {
             } ?: a
         }
 
+        // 「等待候选」：候选编辑 / 超时行为（实现见下面两个 helper）
+        field.startsWith("cand.") -> applyCandidate(action, field, value)
+        field == "onTimeoutMode" -> applyTimeoutMode(action, value)
+
         field in EXTRA_STRINGS ->
             action.copy(extra = extraWith(action.extra, field, value.ifBlank { null }))
 
@@ -655,6 +668,82 @@ object ZFieldEditor {
      *   所以只要写的键和某个已有键"仅大小写不同"，就以这次写入为准，把变体删掉。
      *   （只删变体，不动其它键 —— 用户的不认识字段必须原样保留。）
      */
+    /** 「等待候选」的候选编辑：cand.<i>.cond / .color / .text / .jumpTo / .del，以及 cand.add。 */
+    private fun applyCandidate(action: Z.Action, field: String, value: String): Z.Action? {
+        val rest = field.removePrefix("cand.")
+        if (rest == "add") {
+            return action.copy(candidates = action.candidates + Z.Action.Candidate())
+        }
+        val dot = rest.indexOf('.')
+        if (dot <= 0) return null
+        val i = rest.substring(0, dot).toIntOrNull() ?: return null
+        val what = rest.substring(dot + 1)
+        val list = action.candidates.toMutableList()
+        val old = list.getOrNull(i) ?: return null
+
+        fun withCond(c: Z.Condition?): Z.Action {
+            list[i] = old.copy(condition = c)
+            return action.copy(candidates = list)
+        }
+
+        return when (what) {
+            "del" -> {
+                if (value.trim() != "删除") return action
+                list.removeAt(i)
+                action.copy(candidates = list)
+            }
+            "jumpTo" -> {
+                list[i] = old.copy(jumpTo = value.trim().ifBlank { null })
+                action.copy(candidates = list)
+            }
+            "cond" -> {
+                val t = when (value.trim()) {
+                    "出现颜色" -> Z.ConditionType.COLOR
+                    "出现文字" -> Z.ConditionType.TEXT
+                    "出现图片" -> Z.ConditionType.IMAGE
+                    "出现节点" -> Z.ConditionType.NODE
+                    else -> null
+                }
+                if (t == null) withCond(null) else {
+                    // 换类型时保留已有位置对象（颜色/文字都靠它），没有就按类型新建
+                    val pos = old.condition?.posData ?: Z.PosData(type = posTypeOf(t))
+                    withCond(Z.Condition(type = t, posData = pos))
+                }
+            }
+            "color" -> {
+                val c = old.condition ?: return null
+                val pd = c.posData ?: Z.PosData(type = Z.PosType.COLOR)
+                withCond(c.copy(posData = pd.copy(color = value.trim().ifBlank { null })))
+            }
+            "text" -> {
+                val c = old.condition ?: return null
+                val pd = c.posData ?: Z.PosData(type = Z.PosType.TEXT)
+                withCond(c.copy(posData = pd.copy(text = value.trim().ifBlank { null })))
+            }
+            else -> null
+        }
+    }
+
+    /** 等待候选「超时后」：一个枚举同时管 onTimeoutStop 与 onTimeoutJump。 */
+    private fun applyTimeoutMode(action: Z.Action, value: String): Z.Action {
+        val extra = action.extra.toMutableMap()
+        when (value.trim()) {
+            "停止任务" -> {
+                extra["onTimeoutStop"] = true
+                extra.remove("onTimeoutJump")
+            }
+            "跳到标识" -> {
+                extra.remove("onTimeoutStop")
+                if ((extra["onTimeoutJump"] as? String).isNullOrBlank()) extra["onTimeoutJump"] = ""
+            }
+            else -> {
+                extra.remove("onTimeoutStop")
+                extra.remove("onTimeoutJump")
+            }
+        }
+        return action.copy(extra = extra)
+    }
+
     private fun extraWith(
         src: Map<String, Any?>,
         key: String,

@@ -134,7 +134,15 @@ object ZFieldHelp {
         "dialogShowOnce" to "只问一次：第一次运行问过之后，后续运行不再弹窗、按确定处理。",
 
         // ---------------- 等待候选（自研）
-        "waitTimeoutMs" to "「等待候选」的总超时（毫秒）。0 或缺省 = 一直等下去。",
+        "cand.add" to "加一个候选：它和其他候选一样按顺序参与比较。加完再设它的条件和跳转目标。",
+        "cand.cond" to "这个候选要等什么。选「（无条件）」= 一定命中，等于上面那条走完就直接跳走。",
+        "cand.color" to "候选的颜色（#rrggbb）。这是「看到这个颜色就算命中」，不是点击这个颜色。",
+        "cand.text" to "候选要 OCR 出来的文字。认出这段文字就算命中。",
+        "cand.jumpTo" to "命中后跳到哪个动作的跳转标识。留空 = 留在原地继续往下走。",
+        "cand.del" to "把这个候选删掉。选「删除」立即生效。",
+        "onTimeoutMode" to "所有候选都等到超时之后怎么办：往下走（继续执行下一条）/ 停止任务（整条脚本结束，对应 Maa 的失败）/ 跳到标识（跳到指定动作，对应 Maa 的 on_error）。",
+        "onTimeoutJump" to "超时后跳到哪个动作的跳转标识。只有「超时后 = 跳到标识」时才用。",
+        "waitTimeoutMs" to "「等待候选」的总超时（毫秒）。0 或缺省 = 一直等下去。超时之后的行为由「超时后」决定。",
         "waitIntervalMs" to "「等待候选」每轮之间的检查间隔（毫秒），缺省 200。",
 
         // ---------------- AI（本机不支持，字段保留）
@@ -192,6 +200,10 @@ object ZFieldHelp {
         }
         // aiImage1/2/3 → 共用一条说明
         if (k.startsWith("aiImage")) k = "aiImage1"
+        // 候选字段带下标（cand.0.cond / cand.1.color…）→ 去掉下标查通用说明
+        if (Regex("^cand\\.[0-9]+\\.").containsMatchIn(k)) {
+            k = "cand." + k.substringAfterLast('.')
+        }
         return map[k]
     }
 

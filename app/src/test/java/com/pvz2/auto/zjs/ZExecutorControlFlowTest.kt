@@ -40,6 +40,26 @@ class ZExecutorControlFlowTest {
     private fun executor(logs: MutableList<String>, inject: Rec = Rec()) =
         ZExecutor(inject, ZPosResolver.Screen(1280, 720, 1.5f), NoMatch) { logs.add(it) }
 
+    /**
+     * 脚本级 repeatCount = -1 表示**无限循环**（手写脚本里就是这么写的）。
+     *
+     * 原来只判了 0，于是 -1 落进 `loop >= -1` 直接 break：一圈都不跑，
+     * 日志里只有"读到 N 个动作"，用户看到的就是"点运行没反应"。
+     */
+    @Test
+    fun `脚本 repeatCount 为 -1 时至少跑一轮`() {
+        val rec = Rec()
+        val ex = executor(ArrayList(), rec)
+        // 覆写 baseInfo 的 repeatCount 为 -1（无限）
+        val txt = """{"repeatCount":-1,"delay":"0","delayUnit":0,"pauseOnFail":true,""" +
+            """"screenWidth":1280,"screenHeight":720,"description":"测试"}""" + "\r\n" +
+            """{"type":"点击","posData":{"type":"location","x":"5","y":"5"}}""" + "\r\n" +
+            """{"type":"控制执行","controlRunType":"stop"}""" + "\r\n"
+        val script = ZjsFileFormat.parse(txt).script ?: error("解析失败")
+        ex.run(script)
+        assertTrue("应当真的执行了一轮（点击一次）：${rec.calls}", rec.calls.isNotEmpty())
+    }
+
     @Test
     fun `子列表的 &N 跳转能往回跳，限制运行次数到点就停`() {
         val logs = ArrayList<String>()

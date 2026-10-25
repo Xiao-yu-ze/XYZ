@@ -230,10 +230,21 @@ class LibraryPage(
                     // 界面上什么都不变 —— 表现就是「点运行没反应」。
                     val vd = com.pvz2.auto.service.VirtualDisplaySession.sharedState.value
                     if (!vd.running || vd.displayId <= 0) {
-                        android.widget.Toast.makeText(
-                            host, "虚拟屏没在运行：先回第 1 页点「在虚拟屏启动游戏」",
-                            android.widget.Toast.LENGTH_LONG
-                        ).show()
+                        /*
+                         * 用对话框而不是 toast：toast 一闪就没了，用户只说得出"点运行没反应"。
+                         * 这里把原因写清楚，并给一个直接跳过去的按钮。
+                         */
+                        androidx.appcompat.app.AlertDialog.Builder(host)
+                            .setTitle("虚拟屏没在运行")
+                            .setMessage(
+                                "脚本要靠虚拟屏识别画面、注入点击。\n\n" +
+                                    "请在「虚拟屏」页点「在虚拟屏启动游戏」，等状态变成「运行中」再点运行。"
+                            )
+                            .setPositiveButton("去启动") { _, _ ->
+                                (host as? MainActivity)?.gotoPage(0)
+                            }
+                            .setNegativeButton("知道了", null)
+                            .show()
                         return@setOnClickListener
                     }
                     // 运行前先保存内存里的编辑：用户可能刚在第 3 页改过

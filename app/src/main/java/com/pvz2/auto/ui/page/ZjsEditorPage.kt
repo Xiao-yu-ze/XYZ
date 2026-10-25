@@ -797,6 +797,19 @@ class ZjsEditorPage(
             // ---- 运行多个动作的子动作列表（点「子动作」那行进这里）
         row.field == "scriptSet" -> enterScriptSet(actionIndex)
 
+        // ---- 等待候选：加一个候选（其余候选字段是普通 TEXT/ENUM，走写回）
+        row.field == "cand.add" -> {
+            val a = currentActions().getOrNull(actionIndex)
+            if (a != null) {
+                ZFieldEditor.apply(a, "cand.add", "add")?.let { next ->
+                    val list = currentActions().toMutableList()
+                    list[actionIndex] = next
+                    commitActions(list)
+                    adapter.notifyItemChanged(actionIndex)
+                }
+            }
+        }
+
         // ---- 监听
             row.field == "callbacks" -> {
                 val slots = Z.CallbackSlot.entries

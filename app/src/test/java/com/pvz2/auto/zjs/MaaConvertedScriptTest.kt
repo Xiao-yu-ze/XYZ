@@ -94,6 +94,22 @@ class MaaConvertedScriptTest {
         assertTrue("应当保留 roi 作为搜索范围", pd.limitArea != null)
     }
 
+    /**
+     * 每个带 delay 的节点都必须显式写 delayUnit。
+     *
+     * 我们模型的缺省单位是**秒**（ZModel.TimeUnit），缺了它就变成"200 秒"，
+     * 一个动作等几分钟 —— 用户实测踩到过。
+     */
+    @Test
+    fun `每个延迟都显式带毫秒单位`() {
+        val s = many()
+        val wrong = s.actions.filter { a ->
+            val d = a.common.delay
+            d != null && d != "0" && a.common.delayUnit != Z.TimeUnit.MILLISECONDS
+        }
+        assertTrue("这些节点没按毫秒走：${wrong.map { it.common.delay }}", wrong.isEmpty())
+    }
+
     @Test
     fun `分段脚本也能解析`() {
         for (i in 1..3) {

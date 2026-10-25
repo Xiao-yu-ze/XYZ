@@ -58,6 +58,11 @@ BASE = {
     "screenWidth": 1280, "screenHeight": 720,
 }
 
+# ★ 动作上的 delay 必须**显式**带 delayUnit。
+#   我们模型的缺省是 1 = 秒（ZModel.TimeUnit），不写就等于 "200 秒"。
+#   用户手写脚本里每个动作都带着这个字段，就是因为它不能省。
+MS = 0
+
 # maa 5.14.2 pipeline.py 的 JPipelineData 默认值（不是猜的）
 DEFAULT_RATE_LIMIT = 1000
 DEFAULT_TIMEOUT = 20000
@@ -347,9 +352,11 @@ class Conv:
             d["fastRepeatMode"] = True
             if REPEAT_GAP_MS > 0:
                 d["repeatDelayValue"] = str(REPEAT_GAP_MS)
+                d["repeatDelayUnit"] = MS
 
         # pre_delay：识别之后、动作之前
         pre = int_field(node, "pre_delay", DEFAULT_DELAY)
+        d["delayUnit"] = MS
         if pre > 0:
             if "posData" in d and d["type"] in ("点击文字", "点击颜色", "点击图片"):
                 d["delayAfterLocate"] = str(pre)
@@ -471,8 +478,9 @@ class Conv:
             if post <= 0:
                 continue
             nxt = out[i + 1]
-            cur = int(nxt.get("delay") or 0)
+            cur = int(float(nxt.get("delay") or 0))
             nxt["delay"] = str(cur + post)
+            nxt["delayUnit"] = MS
 
         return out
 

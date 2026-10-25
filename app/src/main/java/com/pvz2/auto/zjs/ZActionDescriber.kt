@@ -343,19 +343,58 @@ object ZActionDescriber {
         // 在动作列表里逐条配更顺手。这里只把「等谁、等多久」摊开，
         // 让用户一眼看到这条到底在等什么，而不是一个空壳。
         if (action.type == Z.ActionType.WAIT_CANDIDATES) {
-            rows += Row("候选", "共 ${action.candidates.size} 个，按顺序试", Kind.READONLY)
+            /*
+             * 候选原来全是 READONLY：看得见、改不了，也没有「?」。
+             * 现在每个候选的条件类型/颜色/文字/跳转目标都能改，
+             * 还能加/删；超时去哪也能改。
+             */
+            rows += Row("候选数", "${action.candidates.size} 个，按顺序试", Kind.READONLY)
             action.candidates.forEachIndexed { i, c ->
-                val what = when (c.condition?.type) {
-                    null -> "无条件（一定命中）"
+                val n = i + 1
+                val ct = c.condition?.type
+                val condLabel = when (ct) {
+                    null -> "（无条件，一定命中）"
                     Z.ConditionType.IMAGE -> "出现图片"
                     Z.ConditionType.TEXT -> "出现文字"
                     Z.ConditionType.COLOR -> "出现颜色"
                     Z.ConditionType.NODE -> "出现节点"
-                    else -> c.condition?.type?.wire ?: "?"
+                    else -> ct.wire
                 }
-                val target = c.jumpTo ?: "（往下走）"
-                rows += Row("候选 ${i + 1}", "$what → $target", Kind.READONLY)
+                rows += Row(
+                    "候选 $n", "$condLabel → ${c.jumpTo ?: "（往下走）"}", Kind.READONLY
+                )
+                val condOpts = listOf("（无条件）", "出现颜色", "出现文字", "出现图片", "出现节点")
+                rows += Row(
+                    "候选 $n 条件", condLabel.removePrefix("（").removeSuffix("）"),
+                    Kind.ENUM, condOpts, field = "cand.$i.cond"
+                )
+                if (ct == Z.ConditionType.COLOR) {
+                    rows += Row(
+                        "候选 $n 颜色",
+                        c.condition?.posData?.color.orEmpty(),
+                        Kind.TEXT, field = "cand.$i.color"
+                    )
+                }
+                if (ct == Z.ConditionType.TEXT) {
+                    rows += Row(
+                        "候选 $n 文字",
+                        c.condition?.posData?.text.orEmpty(),
+                        Kind.TEXT, field = "cand.$i.text"
+                    )
+                }
+                rows += Row(
+                    "候选 $n 跳转", c.jumpTo.orEmpty(),
+                    Kind.TEXT, field = "cand.$i.jumpTo"
+                )
+                rows += Row(
+                    "候选 $n 删除", "保留",
+                    Kind.ENUM, listOf("保留", "删除"), field = "cand.$i.del"
+                )
             }
+            rows += Row(
+                "添加候选", "点这里加一个（无条件、跳出本节点）",
+                Kind.ENTER, field = "cand.add"
+            )
             rows += Row(
                 "总超时(ms)",
                 (action.waitTimeoutMs ?: 0).let { if (it <= 0) "一直等" else it.toString() },
@@ -366,6 +405,23 @@ object ZActionDescriber {
                 (action.waitIntervalMs ?: 200).toString(),
                 Kind.NUMBER, field = "waitIntervalMs"
             )
+            // 超时去哪 —— 对应 Maa 的 on_error
+            val mode = when {
+                (action.extra["onTimeoutJump"] as? String).orEmpty().isNotEmpty() -> "跳到标识"
+                anyBool(action.extra, "onTimeoutStop") -> "停止任务"
+                else -> "往下走"
+            }
+            rows += Row(
+                "超时后", mode, Kind.ENUM,
+                listOf("往下走", "停止任务", "跳到标识"), field = "onTimeoutMode"
+            )
+            if (mode == "跳到标识") {
+                rows += Row(
+                    "超时跳转",
+                    (action.extra["onTimeoutJump"] as? String).orEmpty(),
+                    Kind.TEXT, field = "onTimeoutJump"
+                )
+            }
         }
 
         // ---- 14 个通用字段，**缺省也显示**

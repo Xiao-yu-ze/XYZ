@@ -52,6 +52,32 @@ class FieldHelpCoverageTest {
         assertTrue("这些字段没有说明：\n  " + bad.joinToString("\n  "), bad.isEmpty())
     }
 
+    /** 等待候选的候选字段是动态生成的（cand.N.*），空动作覆盖不到，单独铺一份。 */
+    @Test
+    fun `等待候选的候选字段都有说明`() {
+        val a = Z.Action(
+            type = Z.ActionType.WAIT_CANDIDATES,
+            candidates = listOf(
+                Z.Action.Candidate(
+                    condition = Z.Condition(
+                        type = Z.ConditionType.COLOR,
+                        posData = Z.PosData(type = Z.PosType.COLOR, color = "#112233")
+                    ),
+                    jumpTo = "x"
+                ),
+                Z.Action.Candidate(
+                    condition = Z.Condition(
+                        type = Z.ConditionType.TEXT,
+                        posData = Z.PosData(type = Z.PosType.TEXT, text = "开始")
+                    ),
+                    jumpTo = "y"
+                )
+            )
+        )
+        val bad = missing(ZActionDescriber.describe(a), "等待候选")
+        assertTrue("这些候选字段没有说明：\n  " + bad.joinToString("\n  "), bad.isEmpty())
+    }
+
     @Test
     fun `条件的每个可编辑字段都有说明`() {
         val bad = ArrayList<String>()

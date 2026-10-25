@@ -331,15 +331,24 @@ class ZExecutor(
         // resolveJump 要用这张表（同一个对象，后面不会再被替换）
         jumpTableOf = jumpTable
 
+        /*
+         * 脚本级重复次数。
+         *
+         * ★ 0 是"无限"（协议），**负数也是无限** —— 手写脚本里用 -1 表示一直循环
+         *   （常规四脚僵王无尽 心塔 1.3.zjs 的 baseInfo 就是 repeatCount: -1）。
+         *   原来只判了 0，于是 -1 落进 `loop(0) >= -1` 直接 break：
+         *   脚本"点运行没反应"，日志里也只有"读到 5 个动作"。
+         */
         val scriptRepeat = script.baseInfo.repeatCount ?: 1
+        val scriptInfinite = scriptRepeat <= 0
         // 脚本级默认等待：动作没写 delay 时按它走（见 scriptBaseDelay 的注释）
         scriptBaseDelay = script.baseInfo.delay?.takeIf { it.isNotBlank() }
         scriptBaseDelayUnit = script.baseInfo.delayUnit
         var loop = 0
 
         while (!stopped) {
-            // 0 = 无限
-            if (scriptRepeat != 0 && loop >= scriptRepeat) break
+            // 0 与负数都是无限
+            if (!scriptInfinite && loop >= scriptRepeat) break
             loop++
 
             // 每次「整体重复」开始时重置「限制运行次数」的计数：
