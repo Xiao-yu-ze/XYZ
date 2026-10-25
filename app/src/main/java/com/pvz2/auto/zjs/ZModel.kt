@@ -462,7 +462,24 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          * 超时仍没命中 → 往下走（等价于 Maa 里 timeout 到点）
          * ```
          */
-        WAIT_CANDIDATES("等待候选", executable = true);
+        WAIT_CANDIDATES("等待候选", executable = true),
+
+    /*
+     * ---------------- 我们自己的「游戏动作」----------------
+     *
+     * 协议里没有这些类型：自动精灵那 22 种是通用图像脚本原语，
+     * 而 PVZ2 玩家脑子里想的是"把 3 号卡槽的植物种到第 2 行第 5 列"。
+     * 用坐标画布表达这件事门槛太高（要自己量 45 个格子点），
+     * 所以这里包一层：参数只有「卡槽 / 行 / 列」，执行时查 [PvzCoords]。
+     *
+     * 落盘写法是 `"type":"种植物"` + `pvzSlot` / `pvzRow` / `pvzCol`，
+     * 自动精灵读不懂这几种（它那里没有），所以导出给别人的脚本要避免用。
+     */
+    PVZ_PLANT("种植物", executable = true),
+    PVZ_FEED("喂豆", executable = true),
+    PVZ_SHOVEL("铲除", executable = true),
+    PVZ_TAP_CELL("点击格子", executable = true),
+    PVZ_ARTIFACT("使用神器", executable = true);
 
         companion object {
             /**

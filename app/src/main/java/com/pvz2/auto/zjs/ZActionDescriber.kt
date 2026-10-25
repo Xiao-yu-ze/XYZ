@@ -821,6 +821,12 @@ return PosGroup(rec, par, oth)
      * 「点击」族：FIELDS.md 10.1-10.6 是同一个实现类（m25296），字段完全一致，
      * 只有 type / posData.type 的绑定不同。所以极速点击等开关对这一族统一处理。
      */
+    /** 我们自己的五种「游戏动作」（种/喂/铲/点格子/神器）。 */
+    private val PVZ_TYPES = setOf(
+        Z.ActionType.PVZ_PLANT, Z.ActionType.PVZ_FEED, Z.ActionType.PVZ_SHOVEL,
+        Z.ActionType.PVZ_TAP_CELL, Z.ActionType.PVZ_ARTIFACT
+    )
+
     private val CLICK_FAMILY = setOf(
         Z.ActionType.CLICK, Z.ActionType.CLICK_IMAGE, Z.ActionType.CLICK_TEXT,
         Z.ActionType.CLICK_COLOR
@@ -952,6 +958,59 @@ return PosGroup(rec, par, oth)
     private fun typeRows(action: Z.Action): List<Row> {
         val e = action.extra
         val rows = ArrayList<Row>()
+
+        /*
+         * 游戏动作（我们自己的五种）。
+         *
+         * 参数刻意只有「卡槽 / 行 / 列」三项 —— 这正是玩家脑子里的说法，
+         * 像素点位由 [PvzCoords] 查表，改表不用改脚本。
+         */
+        if (action.type in PVZ_TYPES) {
+            if (action.type == Z.ActionType.PVZ_PLANT) {
+                val slot = e["pvzSlot"]?.toString().orEmpty()
+                rows += Row(
+                    "卡槽",
+                    if (slot.isBlank()) "（未选）" else "$slot 号",
+                    Kind.ENUM,
+                    (1..8).map { it.toString() },
+                    field = "pvzSlot",
+                    help = ZFieldHelp.ofAction("pvzSlot")
+                )
+            }
+            val rowNo = e["pvzRow"]?.toString().orEmpty()
+            val colNo = e["pvzCol"]?.toString().orEmpty()
+            rows += Row(
+                "行",
+                if (rowNo.isBlank()) "（未选）" else rowNo,
+                Kind.ENUM,
+                (1..PvzCoords.ROWS).map { it.toString() },
+                field = "pvzRow",
+                help = ZFieldHelp.ofAction("pvzRow")
+            )
+            rows += Row(
+                "列",
+                if (colNo.isBlank()) "（未选）" else colNo,
+                Kind.ENUM,
+                (1..PvzCoords.COLS).map { it.toString() },
+                field = "pvzCol",
+                help = ZFieldHelp.ofAction("pvzCol")
+            )
+            // 落点回显：选了行列就把实际会点到的像素也显示出来，便于核对
+            val r = rowNo.toIntOrNull()
+            val c = colNo.toIntOrNull()
+            val pt = if (r != null && c != null) PvzCoords.cell(r, c) else null
+            rows += Row(
+                "落点",
+                if (pt == null) "（选好行列后显示）" else "(${pt[0]}, ${pt[1]})"
+            )
+            rows += Row(
+                "在棋盘上选格子",
+                if (r != null && c != null) "第${r}行第${c}列 ›" else "点开选 ›",
+                Kind.ENTER,
+                field = "pvz.board",
+                help = ZFieldHelp.ofAction("pvz.board")
+            )
+        }
 
 
         /*

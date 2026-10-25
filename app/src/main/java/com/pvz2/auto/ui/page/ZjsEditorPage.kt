@@ -798,8 +798,43 @@ class ZjsEditorPage(
         row.field == "scriptSet" -> enterScriptSet(actionIndex)
 
         // ---- 等待候选：加一个候选（其余候选字段是普通 TEXT/ENUM，走写回）
-        row.field == "cand.add" -> {
-            val a = currentActions().getOrNull(actionIndex)
+        // ---- 游戏动作：在棋盘上点格子，行列一起填
+        row.field == "pvz.board" -> {
+            val a = currentActions().getOrNull(actionIndex) ?: return
+            val curRow = a.extra["pvzRow"]?.toString()?.toIntOrNull()
+            val curCol = a.extra["pvzCol"]?.toString()?.toIntOrNull()
+            PvzBoardPicker.show(host, "选格子（${a.type.wire}）", curRow, curCol) { pick ->
+                val list = currentActions().toMutableList()
+                val base = list[actionIndex]
+                list[actionIndex] = if (pick.cleared) {
+                    base.copy(
+                        extra = base.extra.toMutableMap().apply {
+                            remove("pvzRow")
+                            remove("pvzCol")
+                        }
+                    )
+                } else {
+                    base.copy(
+                        extra = base.extra.toMutableMap().apply {
+                            put("pvzRow", pick.row.toString())
+                            put("pvzCol", pick.col.toString())
+                        }
+                    )
+                }
+                commitActions(list)
+                adapter.submit(currentActions())
+                expandedIndex = actionIndex
+                if (!pick.cleared) {
+                    android.widget.Toast.makeText(
+                        host,
+                        "已选第${pick.row}行第${pick.col}列",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+
+        row.field == "cand.add" -> {            val a = currentActions().getOrNull(actionIndex)
             if (a != null) {
                 val next = ZFieldEditor.apply(a, "cand.add", "add")
                 if (next == null) {

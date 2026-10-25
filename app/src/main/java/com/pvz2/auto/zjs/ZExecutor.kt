@@ -428,7 +428,6 @@ class ZExecutor(
                     val why = "__vars：字段「$field」由变量定义，但取值求不出来" +
                     "（支持 number / string 字面量和 expression / random 表达式）"
                     skipped.add(Result.Skip(pc, label, why))
-                    log("[跳过] $why")
                     pc++
                     continue
                 }
@@ -680,7 +679,6 @@ class ZExecutor(
         if (action.common.disabled) {
             // 跳过也要写日志：否则节点明细里只有"完成 0ms"，看不出是被禁用了
             skipped.add(Result.Skip(index, label, "已禁用"))
-            log("[跳过] 第 ${index + 1} 条「$label」：动作已禁用")
             return Outcome()
         }
         run {
@@ -711,7 +709,6 @@ class ZExecutor(
                 val why = detail ?: "条件不成立"
                 val msg = "第 ${index + 1} 条「$label」条件不满足（$condName）：$why"
                 skipped.add(Result.Skip(index, label, msg))
-                log("[跳过] $msg")
                 /*
                  * ★ 先跑「运行条件失败后」监听，再看它的结果。
                  *
@@ -994,6 +991,22 @@ class ZExecutor(
                 }
                 Outcome()
             }
+
+            /* ---------------- 游戏动作（PVZ2 专用） ----------------
+             *
+             * 参数只有「卡槽 / 行 / 列」，点位查 [PvzCoords]：
+             *   种植物   = 卡槽点 → 格子点（滑 80ms）
+             *   喂豆     = 能量豆 → 格子点
+             *   铲除     = 铲子   → 格子点
+             *   使用神器 = 神器   → 格子点
+             *   点击格子 = 只点格子（原实现：没有起点就是 click）
+             *
+             * 语义抄自 MaaPVZ 的 compile.py:174-213 —— 那边五种动作的唯一
+             * 区别就是起点，终点都是格子点。
+             */
+            Z.ActionType.PVZ_PLANT, Z.ActionType.PVZ_FEED, Z.ActionType.PVZ_SHOVEL,
+            Z.ActionType.PVZ_TAP_CELL, Z.ActionType.PVZ_ARTIFACT ->
+                runPvzAction(action, index, label, skipped)
 
             // ---- 多指滑动
             Z.ActionType.MULTI_SWIPE -> {
@@ -2696,13 +2709,11 @@ class ZExecutor(
             }
             val why = "没有子动作$hint"
             skipped.add(Result.Skip(index, label, why))
-            log("[跳过] $label — $why")
             return null
         }
         if (subShellDepth >= MAX_SUB_SHELL_DEPTH) {
             val why = "子动作列表嵌套超过 $MAX_SUB_SHELL_DEPTH 层，已停止递归"
             skipped.add(Result.Skip(index, label, why))
-            log("[跳过] $label — $why")
             return null
         }
 
@@ -3214,6 +3225,96 @@ class ZExecutor(
             }
             else -> null
         }
+    }
+
+    /**
+     * 跑一个「游戏动作」（种植物 / 喂豆 / 铲除 / 点击格子 / 使用神器）。
+     *
+     * ## 为什么这些不是坐标节点
+     *
+     * 玩家想的是"3 号卡槽的植物种到 2 行 5 列"，不是两个像素点。
+     * 点位表在 [PvzCoords]，改表不用改脚本。
+     *
+     * ## 参数校验一律明说
+     *
+     * 行列越界、卡槽缺失、屏幕不是 1280×720，全部写进日志/跳过原因 ——
+     * 这些是"点了但没反应"的最常见原因，闷头点下去最难查。
+     */
+    private fun runPvzAction(
+        action: Z.Action,
+        index: Int,
+        label: String,
+        skipped: MutableList<Result.Skip>
+    ): Outcome? {
+        if (!PvzCoords.fitsBase(screen.width, screen.height)) {
+            log(
+                "   [警告] 点位表按 ${PvzCoords.BASE_WIDTH}×${PvzCoords.BASE_HEIGHT} 标定，" +
+                    "当前屏幕 ${screen.width}×${screen.height}，点下去可能偏"
+            )
+        }
+        val row = intExtra(action.extra, "pvzRow")
+        val col = intExtra(action.extra, "pvzCol")
+        if (row == null || col == null) {
+            val why = "游戏动作缺行列（pvzRow / pvzCol）"
+            skipped.add(Result.Skip(index, label, why))
+            return null
+        }
+        if (row !in 1..PvzCoords.ROWS || col !in 1..PvzCoords.COLS) {
+            val why = "行列越界：第 ${row} 行第 ${col} 列（棋盘是 " +
+                "${PvzCoords.ROWS} 行 × ${PvzCoords.COLS} 列）"
+            skipped.add(Result.Skip(index, label, why))
+            return null
+        }
+        val dst = PvzCoords.cell(row, col)
+        if (dst == null) {
+            val why = "点位表里没有 ${PvzCoords.cellLabel(row, col)}"
+            skipped.add(Result.Skip(index, label, why))
+            return null
+        }
+
+        // 起点：点击格子没有起点，其余四种各有一个固定起点
+        var start: IntArray? = null
+        var startName = ""
+        when (action.type) {
+            Z.ActionType.PVZ_PLANT -> {
+                val slotNo = intExtra(action.extra, "pvzSlot")
+                if (slotNo == null || slotNo !in 1..8) {
+                    val why = "种植物缺卡槽号（pvzSlot 应为 1..8，实际 ${action.extra["pvzSlot"]}）"
+                    skipped.add(Result.Skip(index, label, why))
+                    return null
+                }
+                start = PvzCoords.slot(slotNo)
+                startName = "卡槽$slotNo"
+            }
+            Z.ActionType.PVZ_FEED -> {
+                start = PvzCoords.ENERGY_BEAN
+                startName = "能量豆"
+            }
+            Z.ActionType.PVZ_SHOVEL -> {
+                start = PvzCoords.SHOVEL
+                startName = "铲子"
+            }
+            Z.ActionType.PVZ_ARTIFACT -> {
+                start = PvzCoords.ARTIFACT
+                startName = "神器"
+            }
+            else -> Unit // 点击格子
+        }
+
+        val at = PvzCoords.cellLabel(row, col)
+        if (start == null) {
+            log("   点击 $at (${dst[0]},${dst[1]})")
+            inject.tap(dst[0], dst[1], 0)
+        } else {
+            log(
+                "   $startName (${start[0]},${start[1]}) → $at (${dst[0]},${dst[1]}) " +
+                    "用时 ${PvzCoords.SWIPE_MS}ms"
+            )
+            inject.swipe(start[0], start[1], dst[0], dst[1], PvzCoords.SWIPE_MS)
+            // 滑动时长要真的占住时间，否则连发会被游戏合并成一次
+            waitBusy(PvzCoords.SWIPE_MS.toLong())
+        }
+        return Outcome()
     }
 
     /**

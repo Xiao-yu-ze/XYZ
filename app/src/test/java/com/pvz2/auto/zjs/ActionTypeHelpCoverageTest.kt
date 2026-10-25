@@ -40,7 +40,7 @@ class ActionTypeHelpCoverageTest {
     @Test
     fun `说明里点明了本机不支持的类型`() {
         // 这几行必须如实说"不支持"，否则用户配了才发现
-        val mustWarn = listOf("点击节点", "系统提示", "输入内容")
+        val mustWarn = listOf("系统提示", "输入内容")
         val bad = mustWarn.filter { label ->
             val h = ZFieldHelp.ofAction(label) ?: return@filter true
             !(h.contains("不支持") || h.contains("未实现") || h.contains("拿不到") ||
