@@ -62,15 +62,63 @@ object JsEngine {
         val swipe: ((Int, Int, Int, Int, Int) -> Unit)? = null,
         val clipboardGet: (() -> String?)? = null,
         val clipboardSet: ((String) -> Boolean)? = null,
-        val toast: ((String) -> Unit)? = null
+        val toast: ((String) -> Unit)? = null,
+        /**
+         * 外部「停止」检查：返回 true 就让 JS 立刻中断。
+         *
+         * 没有它的话 `while(true){}` 会把执行线程**永久**占住 ——
+         * 用户点「停止」也救不回来（Rhino 自己不会让出）。
+         */
+        val shouldStop: (() -> Boolean)? = null
     )
 
     data class Out(val ok: Boolean, val error: String? = null, val value: String? = null)
+
+    /** 单次 JS 的墙钟上限：正常脚本远用不到，纯粹防死循环。 */
+    private const val JS_TIMEOUT_MS = 30_000L
+
+    /** 每执行这么多条 Rhino 指令回调一次（检查超时/停止）。 */
+    private const val JS_OBSERVE_THRESHOLD = 10_000
+
+    /**
+     * 让 Rhino 定期回调，好中断死循环。
+     *
+     * Rhino 默认**不回调**，`while(true){}` 会一直跑；装了
+     * instructionObserverThreshold + 这个 factory 之后，回调返回 false
+     * 会以 Error 打断执行（我们捕获后报「超时/已停止」）。
+     */
+    private object GuardedContextFactory : org.mozilla.javascript.ContextFactory() {
+        override fun makeContext(): Context = Context()
+
+        override fun observeInstructionCount(cx: Context, instructionCount: Int) {
+            val deadline = deadlineNanos.get() ?: 0L
+            if (deadline > 0 && System.nanoTime() > deadline) {
+                throw Error("JS interrupted: timeout")
+            }
+            val stop = stopCheck.get()
+            if (stop != null && stop.invoke()) throw Error("JS interrupted: stopped")
+        }
+    }
+
+    private val deadlineNanos = ThreadLocal<Long>()
+    private val stopCheck = ThreadLocal<(() -> Boolean)?>()
+
+    /** 只注册一次；重复 init 会抛异常，所以吞掉。 */
+    private val jsFactoryReady: Boolean by lazy {
+        runCatching {
+            org.mozilla.javascript.ContextFactory.initGlobal(GuardedContextFactory)
+        }.isSuccess
+    }
 
     /** 跑一段 JS。 */
     fun run(code: String, env: Env): Out {
         val cx = Context.enter()
         try {
+            jsFactoryReady
+            // 装了阈值 Rhino 才会回调 observeInstructionCount
+            cx.instructionObserverThreshold = JS_OBSERVE_THRESHOLD
+            deadlineNanos.set(System.nanoTime() + JS_TIMEOUT_MS * 1_000_000L)
+            stopCheck.set(env.shouldStop)
             cx.optimizationLevel = -1
             cx.languageVersion = Context.VERSION_ES6
             val scope = cx.initSafeStandardObjects(null, false)
@@ -100,8 +148,22 @@ object JsEngine {
             if (text != null) env.vars["result"] = text
             return Out(ok = true, value = text)
         } catch (e: Throwable) {
-            return Out(ok = false, error = e.message ?: e.javaClass.simpleName)
+            /*
+             * Rhino 被打断时抛的是 Error("...interrupted...")，原文用户看不懂，
+             * 换成能操作的说法。
+             */
+            val raw = e.message ?: e.javaClass.simpleName
+            val msg = if (raw.contains("interrupt", ignoreCase = true) ||
+                raw.contains("observeInstructionCount", ignoreCase = true)
+            ) {
+                "JS 执行被中断（超过 ${JS_TIMEOUT_MS / 1000} 秒，或运行被停止）—— 检查有没有死循环"
+            } else {
+                raw
+            }
+            return Out(ok = false, error = msg)
         } finally {
+            deadlineNanos.remove()
+            stopCheck.remove()
             Context.exit()
         }
     }

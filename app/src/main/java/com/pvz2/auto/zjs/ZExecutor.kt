@@ -57,7 +57,8 @@ class ZExecutor(
         swipe = { x1, y1, x2, y2, dur -> inject.swipe(x1, y1, x2, y2, dur) },
         clipboardGet = { jsClipboard?.get?.invoke() },
         clipboardSet = { text -> jsClipboard?.set?.invoke(text) ?: false },
-        toast = jsToast
+        toast = jsToast,
+        shouldStop = { stopped }
     )
 
     /**
