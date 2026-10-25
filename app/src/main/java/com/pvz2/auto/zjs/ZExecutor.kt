@@ -488,6 +488,8 @@ class ZExecutor(
                         log("[任务结束] pauseOnFail=false，失败即结束（不再暂停）")
                     }
                     log("[任务结束] ${outcome.abort}")
+                    // 失败收尾也要走：截图 + 汇总都在里面（真失败最需要现场）
+                    finishRunLog(executed, skipped, outcome.abort)
                     return Result(executed, skipped, outcome.abort)
                 }
                 if (outcome.jumpTo != null) {
@@ -569,21 +571,27 @@ class ZExecutor(
      * 用户说"它卡住了"的时候，图比文字有用得多。
      */
     private fun finishRunLog(executed: Int, skipped: List<Result.Skip>, failReason: String?) {
+        /*
+         * 截图单独包 runCatching：它失败**不能**把下面的汇总行一起吞掉。
+         * 之前整段包在一起，于是取帧抛异常时日志里既没有截图行也没有"结束"行 ——
+         * 真失败的那次反而什么都没有（真机实测踩到）。
+         */
         runCatching {
-            val firstSkip = skipped.firstOrNull()
-            if (firstSkip != null || failReason != null) {
-                val tag = (failReason ?: firstSkip?.let { "#${it.index + 1} ${it.label}" } ?: "失败")
-                    .take(40)
-                matcher.saveFrame(
-                    com.pvz2.auto.core.ZjsLog.shotDir().absolutePath,
-                    tag
-                )?.let { log("   现场截图：$it") }
+            val realFail = skipped.firstOrNull { sk ->
+                val m = sk.reason
+                !m.contains("已禁用") && !m.contains("条件不满足") && !m.contains("条件的")
             }
-            val summary = "执行 $executed 条，跳过 ${skipped.size} 条" +
-                (failReason?.let { "，停止原因：$it" } ?: "")
-            log("===== 结束：$summary =====")
-            com.pvz2.auto.core.ZjsLog.endRun(summary)
+            if (realFail != null || failReason != null) {
+                val tag = (failReason ?: realFail?.let { "#${it.index + 1} ${it.label}" } ?: "失败").take(40)
+                matcher.saveFrame(com.pvz2.auto.core.ZjsLog.shotDir().absolutePath, tag)
+                    ?.let { log("   现场截图：$it") }
+            }
         }
+    
+        val summary = "执行 $executed 条，跳过 ${skipped.size} 条" +
+            (failReason?.let { "，停止原因：$it" } ?: "")
+        log("===== 结束：$summary =====")
+        runCatching { com.pvz2.auto.core.ZjsLog.endRun(summary) }
     }
 
     // ------------------------------------------------------------ 单个动作
@@ -648,7 +656,9 @@ class ZExecutor(
     ): Outcome {
         // ---- 前置阶段：禁用 / 条件（含重试与"先等待再检查"）/ 前置等待 ----
         if (action.common.disabled) {
+            // 跳过也要写日志：否则节点明细里只有"完成 0ms"，看不出是被禁用了
             skipped.add(Result.Skip(index, label, "已禁用"))
+            log("[跳过] 第 ${index + 1} 条「$label」：动作已禁用")
             return Outcome()
         }
         run {
@@ -726,9 +736,9 @@ class ZExecutor(
             action.extra["jumpToPosition"] != null
         val infinite = repeat <= 0 && canEscape
         if (repeat <= 0 && !canEscape) {
-            log("[$index] $label 重复次数为 0（无限）但这条没有跳转/停止，按 1 次执行以免卡死")
+            log("第 ${index + 1} 条「$label」 重复次数为 0（无限）但这条没有跳转/停止，按 1 次执行以免卡死")
         } else if (infinite) {
-            log("[$index] $label 重复次数为 0 = 无限（由跳转/停止结束）")
+            log("第 ${index + 1} 条「$label」 重复次数为 0 = 无限（由跳转/停止结束）")
         }
         val times = if (infinite) Int.MAX_VALUE else if (repeat <= 0) 1 else repeat
 
@@ -944,6 +954,13 @@ class ZExecutor(
                     val b = ends.getOrNull(i) ?: lastEnd
                     log("   滑动 (${a.x},${a.y})→(${b.x},${b.y}) 用时 ${hold}ms")
                     inject.swipe(a.x, a.y, b.x, b.y, hold)
+                    /*
+                     * 滑动的 duration 也要真的占时间。
+                     *
+                     * 注入层同样只把 duration 写进事件的 eventTime 差值、不睡 ——
+                     * 自检脚本里 duration=400 的滑动实测只有 5ms，连点/连滑全会挤在一起。
+                     */
+                    if (hold > 0) waitBusy(hold.toLong())
                 }
                 Outcome()
             }
@@ -969,7 +986,7 @@ class ZExecutor(
                         skipped.add(Result.Skip(index, label, why))
                         return null
                     }
-                    log("[$index] $label 用协议轨迹 gestureActions 逐点执行（本机不是真并发多指）")
+                    log("第 ${index + 1} 条「$label」 用协议轨迹 gestureActions 逐点执行（本机不是真并发多指）")
                     return runActionList(action, action.gestureActions, index, label, skipped)
                 }
                 val paths = ArrayList<Pair<ZPosResolver.Hit, ZPosResolver.Hit>>()
@@ -1077,7 +1094,7 @@ class ZExecutor(
                  * `continueCurrentAfterFinish` 默认 false —— 也就是子脚本跑完
                  * **不回到父脚本**，等于整条任务结束。
                  */
-                log("[$index] $label 开始执行子脚本「$name」")
+                log("第 ${index + 1} 条「$label」 开始执行子脚本「$name」")
                 subShellDepth++
                 val subResult = try {
                     ZExecutor(inject, screen, matcher, log).also { e ->
@@ -1091,15 +1108,15 @@ class ZExecutor(
                     subShellDepth--
                 }
                 subResult.skipped.forEach {
-                    log("[$index] $label 子脚本跳过：${it.label} — ${it.reason}")
+                    log("第 ${index + 1} 条「$label」 子脚本跳过：${it.label} — ${it.reason}")
                 }
                 log(
-                    "[$index] $label 子脚本「$name」结束：执行 ${subResult.executed} 条" +
+                    "第 ${index + 1} 条「$label」 子脚本「$name」结束：执行 ${subResult.executed} 条" +
                         (subResult.error?.let { "，中止：$it" } ?: "")
                 )
                 val cont = boolExtra(action, "continueCurrentAfterFinish")
                 if (!cont) {
-                    log("[$index] $label continueCurrentAfterFinish=false，父脚本到此结束")
+                    log("第 ${index + 1} 条「$label」 continueCurrentAfterFinish=false，父脚本到此结束")
                     return Outcome(stop = true)
                 }
                 if (subResult.error != null) {
@@ -1178,7 +1195,7 @@ class ZExecutor(
                     o?.optString("ocrResultType")
                 }.getOrNull() == "raw"
                 val joined = texts.joinToString(if (rawMode) "\n" else " ")
-                log("[$index] $label 识别屏幕：${texts.size} 行，共 ${joined.length} 字")
+                log("第 ${index + 1} 条「$label」 识别屏幕：${texts.size} 行，共 ${joined.length} 字")
                 val useResult = action.extra["useResultMode"]?.toString()?.trim().orEmpty()
                     .ifBlank { "clipboard" }
                 if (useResult == "input") {
@@ -1200,7 +1217,7 @@ class ZExecutor(
                         skipped.add(
                             Result.Skip(index, label, "识别屏幕：结果$bad，本机 input text 只能注入单行 ASCII")
                         )
-                        log("[$index] $label 识别到的文字：${joined.take(120)}")
+                        log("第 ${index + 1} 条「$label」 识别到的文字：${joined.take(120)}")
                         return null
                     }
                     try {
@@ -1221,7 +1238,7 @@ class ZExecutor(
                             Result.Skip(index, label, "识别屏幕：剪贴板通道未接，结果没写进去")
                         )
                     }
-                    log("[$index] $label 识别到的文字：${joined.take(120)}")
+                    log("第 ${index + 1} 条「$label」 识别到的文字：${joined.take(120)}")
                 }
                 Outcome()
             }
@@ -1229,15 +1246,15 @@ class ZExecutor(
             // ---- 暂停（10.20 m82947）：停在原地等用户点「继续」
             Z.ActionType.CONTROL_PAUSE -> {
                 com.pvz2.auto.core.ScriptRunState.requestPause()
-                log("[$index] $label 已暂停，等待「继续」")
+                log("第 ${index + 1} 条「$label」 已暂停，等待「继续」")
                 while (com.pvz2.auto.core.ScriptRunState.paused && !stopped) {
                     Thread.sleep(50)
                 }
                 if (stopped) {
-                    log("[$index] $label 暂停中被停止")
+                    log("第 ${index + 1} 条「$label」 暂停中被停止")
                     return Outcome(stop = true)
                 }
-                log("[$index] $label 继续执行")
+                log("第 ${index + 1} 条「$label」 继续执行")
                 Outcome()
             }
 
@@ -1256,11 +1273,11 @@ class ZExecutor(
                 val out = JsEngine.run(code, jsEnv())
                 if (!out.ok) {
                     skipped.add(Result.Skip(index, label, "运行JS代码出错：${out.error}"))
-                    log("[$index] $label JS 出错：${out.error}")
+                    log("第 ${index + 1} 条「$label」 JS 出错：${out.error}")
                     return null
                 }
                 log(
-                    "[$index] $label JS 执行完成" +
+                    "第 ${index + 1} 条「$label」 JS 执行完成" +
                         (out.value?.let { "，结果 $it" } ?: "")
                 )
                 Outcome()
@@ -1302,7 +1319,7 @@ class ZExecutor(
                     val alreadyShown = showOnce &&
                         jsStorage?.get?.invoke(onceKey)?.isNotEmpty() == true
                     if (alreadyShown) {
-                        log("[$index] $label 弹窗设了「仅展示一次」，这次跳过询问")
+                        log("第 ${index + 1} 条「$label」 弹窗设了「仅展示一次」，这次跳过询问")
                     } else {
                         val choice = inject.askDialog(
                             AskDialog(
@@ -1316,9 +1333,9 @@ class ZExecutor(
                         )
                         if (showOnce) jsStorage?.set?.invoke(onceKey, "1")
                         when (choice) {
-                            null -> log("[$index] $label 本机没有弹窗通道，按「确定」处理")
+                            null -> log("第 ${index + 1} 条「$label」 本机没有弹窗通道，按「确定」处理")
                             1 -> {
-                                log("[$index] $label 点了「${cancelText.ifBlank { "取消" }}」→ 执行取消动作、不赋值")
+                                log("第 ${index + 1} 条「$label」 点了「${cancelText.ifBlank { "取消" }}」→ 执行取消动作、不赋值")
                                 val cancelAction = parseActionJson(cancelActionJson)
                                 if (cancelAction == null) {
                                     skipped.add(Result.Skip(index, label, "取消动作解析失败（格式不认识）"))
@@ -1331,7 +1348,7 @@ class ZExecutor(
                                 }
                                 return Outcome()
                             }
-                            else -> log("[$index] $label 点了「${okText.ifBlank { "确定" }}」→ 按配置赋值")
+                            else -> log("第 ${index + 1} 条「$label」 点了「${okText.ifBlank { "确定" }}」→ 按配置赋值")
                         }
                     }
                 }
@@ -1378,7 +1395,7 @@ class ZExecutor(
                     okCount++
                 }
                 log(
-                    "[$index] $label 设置变量：成功 $okCount 个" +
+                    "第 ${index + 1} 条「$label」 设置变量：成功 $okCount 个" +
                         (if (bad.isEmpty()) "" else "；${bad.joinToString("、")} 求不出值（本机只支持字面量）")
                 )
                 if (bad.isNotEmpty()) {
@@ -2459,6 +2476,8 @@ class ZExecutor(
                 Z.TimeUnit.HOURS -> n * 3_600_000
             }.toLong()
         }
+        // 等待也进日志：节点用时对不上时，能一眼看出是"没等"还是"等多了"
+        if (total > 0) log("   等待 ${total}ms")
         if (total <= 0) return
         // 分片睡眠：否则 delay 填成「分钟/小时」时，点停止要等满整段才生效
         var left = total
@@ -2683,7 +2702,7 @@ class ZExecutor(
         // runMode：协议有 normal / random / multiThread，我们只有顺序执行
         val mode = action.extra["runMode"]?.toString()?.trim().orEmpty()
         if (mode.isNotEmpty() && mode != "normal") {
-            log("[$index] $label runMode=$mode 暂按 normal（顺序）执行")
+            log("第 ${index + 1} 条「$label」 runMode=$mode 暂按 normal（顺序）执行")
         }
         // limitRunCount：只跑前 N 个（0 / 缺省 = 不限）
         val limit = numExtra(action, "limitRunCount")
@@ -2712,7 +2731,7 @@ class ZExecutor(
             while (ci < kids.size) {
                 if (stopped) break
                 if (limit > 0 && counted >= limit) {
-                    log("[$index] $label 已跑够 limitRunCount=$limit 个，结束本列表")
+                    log("第 ${index + 1} 条「$label」 已跑够 limitRunCount=$limit 个，结束本列表")
                     break
                 }
                 val kid = kids[ci]
@@ -2725,7 +2744,7 @@ class ZExecutor(
             
                 // 停止：协议默认语义就是全停，子列表不能把它吞掉
                 if (outcome.stop) {
-                    log("[$index] $kidLabel 请求停止整个脚本")
+                    log("第 ${index + 1} 条「$kidLabel」 请求停止整个脚本")
                     return Outcome(stop = true)
                 }
             
@@ -2734,7 +2753,7 @@ class ZExecutor(
                 if (!onlySuc || success) counted++
             
                 if (outcome.breakShell) {
-                    log("[$index] $kidLabel 要求只结束本子列表（ContinueParentExecute）")
+                    log("第 ${index + 1} 条「$kidLabel」 要求只结束本子列表（ContinueParentExecute）")
                     break
                 }
             
@@ -2744,7 +2763,7 @@ class ZExecutor(
                      * 通常只意味着这一条没命中，后面的还该跑。
                      */
                     failed++
-                    log("[$index] $kidLabel 识别失败（子动作，不终止任务）：${outcome.abort}")
+                    log("第 ${index + 1} 条「$kidLabel」 识别失败（子动作，不终止任务）：${outcome.abort}")
                     abortReason = null
                 }
             
@@ -2761,21 +2780,21 @@ class ZExecutor(
                         if (target in kids.indices) {
                             jumps++
                             if (jumps > MAX_SUB_JUMPS) {
-                                log("[$index] $label 子列表跳转超过 $MAX_SUB_JUMPS 次，强制结束（八成是死循环）")
+                                log("第 ${index + 1} 条「$label」 子列表跳转超过 $MAX_SUB_JUMPS 次，强制结束（八成是死循环）")
                                 break
                             }
-                            log("[$index] $kidLabel 子列表跳转到第 ${target + 1} 条（$jump）")
+                            log("第 ${index + 1} 条「$kidLabel」 子列表跳转到第 ${target + 1} 条（$jump）")
                             ci = target
                             continue
                         }
-                        log("[$index] $kidLabel 子列表跳转「$jump」超出本列表范围（共 ${kids.size} 条），忽略")
+                        log("第 ${index + 1} 条「$kidLabel」 子列表跳转「$jump」超出本列表范围（共 ${kids.size} 条），忽略")
                     } else {
-                        log("[$index] $kidLabel 的跳转「$jump」指向外层脚本，被忽略（作用域是子列表）")
+                        log("第 ${index + 1} 条「$kidLabel」 的跳转「$jump」指向外层脚本，被忽略（作用域是子列表）")
                     }
                 }
             
                 if (breakCond != null && evaluate(breakCond, index, childSkips)) {
-                    log("[$index] $label 中止条件（breakCondition）命中，结束本列表")
+                    log("第 ${index + 1} 条「$label」 中止条件（breakCondition）命中，结束本列表")
                     break
                 }
                 ci++
@@ -2786,12 +2805,12 @@ class ZExecutor(
 
         // 子动作的失败明细只进日志（数量可能很大，塞进 Result 会刷屏），
         // 但**汇总一条**进结果，免得用户以为"子列表全部成功"。
-        childSkips.forEach { log("[$index] $label 子动作跳过：${it.label} — ${it.reason}") }
+        childSkips.forEach { log("第 ${index + 1} 条「$label」 子动作跳过：${it.label} — ${it.reason}") }
         if (failed > 0) {
             skipped.add(Result.Skip(index, label, "子动作里有 $failed 条识别失败（未终止任务）"))
         }
         log(
-            "[$index] $label 子动作执行 $ran 个，计入 $counted 个" +
+            "第 ${index + 1} 条「$label」 子动作执行 $ran 个，计入 $counted 个" +
                 (if (onlySuc) "（仅统计成功）" else "")
         )
         return Outcome()
@@ -3219,7 +3238,7 @@ class ZExecutor(
         val names = unsupported.joinToString("、") { it.wire }
         val msg = "监听动作未执行（本机只支持 afterExecSuc / afterExecFail / afterExecFinish）：$names"
         skipped.add(Result.Skip(index, label, msg))
-        log("[$index] $label — $msg")
+        log("第 ${index + 1} 条「$label」 — $msg")
     }
 
     /**
@@ -3238,11 +3257,11 @@ class ZExecutor(
         val cb = action.callbacks[slot] ?: return
         if (stopped) return
         if (cb.common.disabled) {
-            log("[$index] $label 监听 ${slot.wire}：动作已禁用，跳过")
+            log("第 ${index + 1} 条「$label」 监听 ${slot.wire}：动作已禁用，跳过")
             return
         }
         if (!cb.type.executable) {
-            log("[$index] $label 监听 ${slot.wire}：${cb.type.wire} 在安卓上暂不支持")
+            log("第 ${index + 1} 条「$label」 监听 ${slot.wire}：${cb.type.wire} 在安卓上暂不支持")
             return
         }
 
@@ -3262,13 +3281,13 @@ class ZExecutor(
             cb, index, cbLabel, cbSkips, abortOnRecognitionFail = false
         )
         if (r.jumpTo != null || r.stop || r.breakShell) {
-            log("[$index] $cbLabel 里的跳转/停止/结束子列表被忽略（作用域是外层脚本）")
+            log("第 ${index + 1} 条「$cbLabel」 里的跳转/停止/结束子列表被忽略（作用域是外层脚本）")
         }
         // 监听失败不能污染外层：否则下一条「缺位置」之类的失败会带着它的名义终止整条任务
         abortReason = null
         // 槽内动作的失败原因不能吞掉：这是用户唯一能看到「监听做了什么」的地方
-        cbSkips.forEach { log("[$index] $cbLabel 跳过：${it.reason}") }
-        log("[$index] $label 监听 ${slot.wire} 已执行")
+        cbSkips.forEach { log("第 ${index + 1} 条「$cbLabel」 跳过：${it.reason}") }
+        log("第 ${index + 1} 条「$label」 监听 ${slot.wire} 已执行")
     }
 
     /** 解析数字或区间 `"1-3"`，取随机。解析不了返回 null。 */

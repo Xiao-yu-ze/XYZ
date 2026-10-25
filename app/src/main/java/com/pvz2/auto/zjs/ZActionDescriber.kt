@@ -402,9 +402,10 @@ object ZActionDescriber {
                 "添加候选", "点这里加一个（无条件、跳出本节点）",
                 Kind.ENTER, field = "cand.add"
             )
+            // 单位是 ms，值就必须是数字；"0 = 一直等"写进说明，而不是顶掉数值
             rows += Row(
                 "总超时(ms)",
-                (action.waitTimeoutMs ?: 0).let { if (it <= 0) "一直等" else it.toString() },
+                (action.waitTimeoutMs ?: 0).toString(),
                 Kind.NUMBER, field = "waitTimeoutMs"
             )
             rows += Row(
@@ -413,8 +414,15 @@ object ZActionDescriber {
                 Kind.NUMBER, field = "waitIntervalMs"
             )
             // 超时去哪 —— 对应 Maa 的 on_error
+            /*
+             * ★ 判"跳到标识"要看**键在不在**，不能看值非空。
+             *
+             *   刚把「超时后」切成「跳到标识」时，值还是空的 ——
+             *   按"值非空"判断会立刻回落成「往下走」，那一行压根不出现，
+             *   用户说"ontimeoutjump 点不了、也没有问号"就是这么来的。
+             */
             val mode = when {
-                (action.extra["onTimeoutJump"] as? String).orEmpty().isNotEmpty() -> "跳到标识"
+                action.extra.containsKey("onTimeoutJump") -> "跳到标识"
                 anyBool(action.extra, "onTimeoutStop") -> "停止任务"
                 else -> "往下走"
             }

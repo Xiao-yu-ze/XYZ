@@ -49,7 +49,8 @@ class ZExecutorDelayTest {
             )
         )
         val cost = System.currentTimeMillis() - t0
-        assertTrue("200ms 的等待没生效（总耗时 ${cost}ms）：$logs", cost >= 180)
+        // 滑动自己的 duration 50 也占时间了，所以下限是 200 + 50
+        assertTrue("200ms 的等待没生效（总耗时 ${cost}ms）：$logs", cost >= 230)
     }
 
     /**
@@ -60,17 +61,25 @@ class ZExecutorDelayTest {
      */
     @Test
     fun `不写 delay 时按默认 100ms`() {
-        val logs = ArrayList<String>()
-        val t0 = System.currentTimeMillis()
-        ex(logs).run(
-            script(
-                """{"type":"滑动","startPos":{"type":"location","x":"100","y":"100"},""" +
-                    """"endPos":{"type":"location","x":"200","y":"200"},"duration":"50"}""",
-                """{"type":"控制执行","controlRunType":"stop"}"""
+        // JVM 单测的绝对耗时不稳（预热/GC），所以比**两条节点之差**：
+        //   delay 显式 0 vs 不写（缺省）→ 差值就是缺省值本身
+        fun nodeMs(delayJson: String): Int {
+            val logs = ArrayList<String>()
+            ex(logs).run(
+                script(
+                    """{"type":"点击","posData":{"type":"location","x":"1","y":"1"},""" +
+                        """"duration":"10"$delayJson}""",
+                    """{"type":"控制执行","controlRunType":"stop"}"""
+                )
             )
-        )
-        val cost = System.currentTimeMillis() - t0
-        assertTrue("默认 100ms 没生效（总耗时 ${cost}ms）：$logs", cost >= 80)
-        assertTrue("默认值变成了 200ms 那么久（总耗时 ${cost}ms）：$logs", cost < 220)
+            return Regex("""完成 \[1] 用时 (\d+)ms""")
+                .find(logs.joinToString("\n"))?.groupValues?.get(1)?.toIntOrNull()
+                ?: error("没有完成行：$logs")
+        }
+        val zero = nodeMs(""","delay":"0","delayUnit":0""")
+        val dflt = nodeMs("")
+        val diff = dflt - zero
+        assertTrue("缺省等待没有生效（0 → ${zero}ms，缺省 → ${dflt}ms）", diff >= 70)
+        assertTrue("缺省值看起来不是 100ms（差值 ${diff}ms，0 → ${zero}ms，缺省 → ${dflt}ms）", diff <= 200)
     }
 }

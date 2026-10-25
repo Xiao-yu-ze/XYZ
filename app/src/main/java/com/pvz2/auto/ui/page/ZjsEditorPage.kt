@@ -810,6 +810,41 @@ class ZjsEditorPage(
             }
         }
 
+        // ---- 超时跳转：先给本节点那几个候选目标（最多 2 个），要别的再手输
+        row.field == "onTimeoutJump" -> {
+            val a = currentActions().getOrNull(actionIndex)
+            if (a != null) {
+                val quick = a.candidates.mapNotNull { it.jumpTo }.distinct().take(2)
+                val sink: (String) -> Unit = { v ->
+                    commitFieldValue(
+                        ZActionDescriber.Row("超时跳转", "", field = "onTimeoutJump"),
+                        actionIndex, v
+                    )
+                }
+                val items = (quick + "手动输入…").toTypedArray()
+                androidx.appcompat.app.AlertDialog.Builder(host)
+                    .setTitle("超时后跳到哪个标识")
+                    .setItems(items) { d, which ->
+                        d.dismiss()
+                        if (which < quick.size) {
+                            sink(quick[which])
+                        } else {
+                            val input = android.widget.EditText(host).apply {
+                                setText((a.extra["onTimeoutJump"] as? String).orEmpty())
+                            }
+                            androidx.appcompat.app.AlertDialog.Builder(host)
+                                .setTitle("超时跳转（jumpId）")
+                                .setView(input)
+                                .setPositiveButton("确定") { _, _ -> sink(input.text.toString()) }
+                                .setNegativeButton("取消", null)
+                                .show()
+                        }
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+        }
+
         // ---- 监听
             row.field == "callbacks" -> {
                 val slots = Z.CallbackSlot.entries
