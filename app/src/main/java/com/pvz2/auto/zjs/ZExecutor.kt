@@ -2479,7 +2479,17 @@ class ZExecutor(
         val own = a.common.delay
         if (!own.isNullOrBlank()) return own to a.common.delayUnit
         val scriptDefault = scriptBaseDelay
-        if (!scriptDefault.isNullOrBlank()) return scriptDefault to scriptBaseDelayUnit
+        /*
+         * ★ 脚本级 delay 是 "0" 时**不算指定**。
+         *
+         * 很多脚本（包括我们转换出来的）baseInfo 里写着 delay:"0"，意思只是
+         * "没有全局额外节奏"；把它当成"每条都等 0ms"就会把动作自己的默认 200ms
+         * 一起压掉 —— 真机表现是：编辑器里显示「等待 200（默认）」，
+         * 实际日志里一条滑动只用了 4ms，连点全挤在一起。
+         */
+        if (!scriptDefault.isNullOrBlank() && (scriptDefault.trim().toDoubleOrNull() ?: 0.0) > 0.0) {
+            return scriptDefault to scriptBaseDelayUnit
+        }
         return null to a.common.delayUnit
     }
 

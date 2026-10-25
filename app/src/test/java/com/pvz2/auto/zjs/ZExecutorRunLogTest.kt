@@ -159,6 +159,26 @@ class ZExecutorRunLogTest {
         assertTrue("跳转的完成行里缺少用时：$jumped", jumped[0].contains("用时") && jumped[0].contains("ms"))
     }
 
+    /** 日志只留最近 10 份：一次运行一个文件、失败还存图，不清会占满存储。 */
+    @Test
+    fun `只保留最近十份运行日志`() {
+        val dir = File(System.getProperty("java.io.tmpdir"), "zjsprune-${System.nanoTime()}")
+        dir.mkdirs()
+        ZjsLog.baseDir = dir
+        // 先造 14 份旧日志
+        val runs = File(dir, "zjs_logs").apply { mkdirs() }
+        repeat(14) { i ->
+            val f = File(runs, "run-old$i.log")
+            f.writeText("old $i")
+            f.setLastModified(1_000_000L + i * 1000L)
+        }
+        ZjsLog.beginRun("单元测试.zjs")
+        val logs = runs.listFiles { f -> f.isFile && f.name.endsWith(".log") }!!.sortedByDescending { it.lastModified() }
+        ZjsLog.endRun("ok")
+        assertTrue("应当只剩 10 份，实际 ${logs.size}：${logs.map { it.name }}", logs.size <= 10)
+        assertTrue("最新的那份必须留着", logs.first().name.startsWith("run-") && !logs.first().name.contains("old"))
+    }
+
     @Test
     fun `每次运行会写一个日志文件`() {
         val dir = File(System.getProperty("java.io.tmpdir"), "zjslog-${System.nanoTime()}")

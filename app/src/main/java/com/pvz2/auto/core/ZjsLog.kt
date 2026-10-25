@@ -77,6 +77,8 @@ object ZjsLog {
         endRun()
         val ts = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         val safe = scriptName.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(40)
+        // 先清到 9 份：马上就要再建一份，最终正好 10 份
+        pruneOldRuns(keep = 9)
         val f = java.io.File(runsDir(), "run-$ts" + (if (safe.isBlank()) "" else "_$safe") + ".log")
         runCatching {
             runWriter = f.bufferedWriter(Charsets.UTF_8)
@@ -90,6 +92,23 @@ object ZjsLog {
                 newLine()
                 flush()
             }
+        }
+    }
+
+    /**
+     * 只保留最近 [keep] 份运行日志（含失败截图目录里的图）。
+     *
+     * 一次运行一个文件、失败还存图，跑一晚上就能堆出几百 MB ——
+     * 手机上没人会去清，最后把存储占满。保留最近 10 次够回看问题了。
+     */
+    fun pruneOldRuns(keep: Int = 10) {
+        runCatching {
+            val logs = runsDir().listFiles { f -> f.isFile && f.name.endsWith(".log") }
+                ?.sortedByDescending { it.lastModified() } ?: return
+            logs.drop(keep).forEach { it.delete() }
+            // 截图同理，按时间保留最近的
+            val shots = shotDir().listFiles { f -> f.isFile }?.sortedByDescending { it.lastModified() }
+            shots?.drop(keep * 3)?.forEach { it.delete() }
         }
     }
 
