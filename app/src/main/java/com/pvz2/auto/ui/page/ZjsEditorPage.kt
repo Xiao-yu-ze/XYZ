@@ -808,7 +808,16 @@ class ZjsEditorPage(
                     val list = currentActions().toMutableList()
                     list[actionIndex] = next
                     commitActions(list)
-                    adapter.notifyItemChanged(actionIndex)
+                    /*
+                     * ★ 必须 submit 整份列表，不能只 notifyItemChanged。
+                     *
+                     *   适配器渲染用的是它自己存的那份 items；只通知刷新时它拿**旧**
+                     *   列表重建这一行，候选数当然不变 —— 用户看到的正是
+                     *   "提示已添加候选，但看不到"。其它改动路径（复制/删除/子动作）
+                     *   都是 commitActions + submit。
+                     */
+                    adapter.submit(currentActions())
+                    expandedIndex = actionIndex
                     android.widget.Toast.makeText(host, "已添加候选（共 ${next.candidates.size} 个）", android.widget.Toast.LENGTH_SHORT).show()
                 }
                 }

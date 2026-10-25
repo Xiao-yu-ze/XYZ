@@ -692,16 +692,25 @@ class ZExecutor(
                 val why = detail ?: "条件不成立"
                 val msg = "第 ${index + 1} 条「$label」条件不满足（$condName）：$why"
                 skipped.add(Result.Skip(index, label, msg))
+                log("[跳过] $msg")
+                /*
+                 * ★ 先跑「运行条件失败后」监听，再看它的结果。
+                 *
+                 *   监听里如果是「跳转到」，就应该像 next 一样把流程带到别处 ——
+                 *   用户原话："条件不满足可以设置监听条件失败跳转，这个和 next 的功能很像"。
+                 *   所以监听产出的 jumpTo/stop 必须传出去，不能像以前那样只打一行
+                 *   "里的跳转被忽略"。
+                 */
+                val cbOut = runCallbacks(action, Z.CallbackSlot.AFTER_CONDITION_FAIL, index, label)
+                if (cbOut != null && (cbOut.jumpTo != null || cbOut.stop)) return cbOut
+                
                 if (abortOnRecognitionFail && isRecognitionCondition(cond!!)) {
-                    // 识别类条件不成立 = 这个节点进不去 → 整条任务结束
+                    // 识别类条件不成立、监听又没安排去处 = 这个节点进不去 → 整条任务结束
                     log("[任务结束] $msg")
                     return Outcome(abort = msg)
                 }
-                log("[跳过] $msg")
-                // ---- 运行条件失败后（协议里的 afterConditionFail）
-                runCallbacks(action, Z.CallbackSlot.AFTER_CONDITION_FAIL, index, label)
                 return Outcome(condSkipped = true)
-            }
+        }
             // ---- 条件满足后
             runCallbacks(action, Z.CallbackSlot.AFTER_CONDITION_SUC, index, label)
 
@@ -3256,16 +3265,16 @@ class ZExecutor(
         slot: Z.CallbackSlot,
         index: Int,
         label: String
-    ) {
-        val cb = action.callbacks[slot] ?: return
-        if (stopped) return
+    ): Outcome? {
+        val cb = action.callbacks[slot] ?: return null
+        if (stopped) return null
         if (cb.common.disabled) {
             log("第 ${index + 1} 条「$label」 监听 ${slot.wire}：动作已禁用，跳过")
-            return
+            return null
         }
         if (!cb.type.executable) {
             log("第 ${index + 1} 条「$label」 监听 ${slot.wire}：${cb.type.wire} 在安卓上暂不支持")
-            return
+            return null
         }
 
         val cbLabel = "监听·${slot.wire}"
@@ -3283,14 +3292,25 @@ class ZExecutor(
         val r = executeWithRepeat(
             cb, index, cbLabel, cbSkips, abortOnRecognitionFail = false
         )
-        if (r.jumpTo != null || r.stop || r.breakShell) {
-            log("第 ${index + 1} 条「$cbLabel」 里的跳转/停止/结束子列表被忽略（作用域是外层脚本）")
+        /*
+         * 监听的跳转/停止**要生效**。
+         *
+         * 以前这里只打一行"被忽略"，于是用户配了「条件失败后 → 跳转到某条」，
+         * 脚本照样停在原地。现在把结果交给调用方：条件失败分支会直接返回它，
+         * 等于 next 的效果。
+         */
+        val carried = if (r.jumpTo != null || r.stop) r else null
+        if (r.breakShell) {
+            log("第 ${index + 1} 条「$cbLabel」 里的「结束子列表」被忽略（作用域是外层脚本）")
         }
         // 监听失败不能污染外层：否则下一条「缺位置」之类的失败会带着它的名义终止整条任务
         abortReason = null
         // 槽内动作的失败原因不能吞掉：这是用户唯一能看到「监听做了什么」的地方
         cbSkips.forEach { log("第 ${index + 1} 条「$cbLabel」 跳过：${it.reason}") }
         log("第 ${index + 1} 条「$label」 监听 ${slot.wire} 已执行")
+        if (carried?.jumpTo != null) log("   → 监听里要求跳转到「${carried.jumpTo}」")
+        if (carried?.stop == true) log("   → 监听里要求停止任务")
+        return carried
     }
 
     /** 解析数字或区间 `"1-3"`，取随机。解析不了返回 null。 */
