@@ -582,7 +582,10 @@ class ZExecutor(
                 !m.contains("已禁用") && !m.contains("条件不满足") && !m.contains("条件的")
             }
             if (realFail != null || failReason != null) {
-                val tag = (failReason ?: realFail?.let { "#${it.index + 1} ${it.label}" } ?: "失败").take(40)
+                // 文件名要短：#4 点击 —— 原来把整段原因塞进去，几十个字符还带引号，
+            // 既难读又容易被文件系统截断
+            val tag = realFail?.let { "#${it.index + 1} ${it.label.take(12)}" }
+                ?: (failReason?.let { "abort" } ?: "失败")
                 matcher.saveFrame(com.pvz2.auto.core.ZjsLog.shotDir().absolutePath, tag)
                     ?.let { log("   现场截图：$it") }
             }

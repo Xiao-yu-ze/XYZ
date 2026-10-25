@@ -801,14 +801,18 @@ class ZjsEditorPage(
         row.field == "cand.add" -> {
             val a = currentActions().getOrNull(actionIndex)
             if (a != null) {
-                ZFieldEditor.apply(a, "cand.add", "add")?.let { next ->
+                val next = ZFieldEditor.apply(a, "cand.add", "add")
+                if (next == null) {
+                    android.widget.Toast.makeText(host, "添加候选失败（写回被拒）", android.widget.Toast.LENGTH_SHORT).show()
+                } else {
                     val list = currentActions().toMutableList()
                     list[actionIndex] = next
                     commitActions(list)
                     adapter.notifyItemChanged(actionIndex)
+                    android.widget.Toast.makeText(host, "已添加候选（共 ${next.candidates.size} 个）", android.widget.Toast.LENGTH_SHORT).show()
+                }
                 }
             }
-        }
 
         // ---- 超时跳转：先给本节点那几个候选目标（最多 2 个），要别的再手输
         row.field == "onTimeoutJump" -> {
