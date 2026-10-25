@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.viewpager2.widget.ViewPager2
+import com.pvz2.auto.ui.page.PageEndless
 import com.pvz2.auto.ui.page.RunLogPage
 import com.pvz2.auto.ui.page.ZjsEditorPage
 import com.pvz2.auto.ui.page.LibraryPage
@@ -65,6 +66,9 @@ class MainActivity : AppCompatActivity() {
         const val PAGE_SCRIPT = 1
         const val PAGE_ZJS = 2
     const val PAGE_RUNLOG = 3
+
+    /** 第 5 页：无尽模式（布阵台，没有虚拟屏）。 */
+    const val PAGE_ENDLESS = 4
         /* PAGE_EDITOR / PAGE_DIAG 已移除：前者只读浏览 MaaFramework 节点、
            后者是手填坐标的调试工具，对用户没有价值。 */
 
@@ -375,7 +379,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderDots(selected: Int) {
-            val ids = intArrayOf(R.id.dot0, R.id.dot1, R.id.dot2)
+            val ids = intArrayOf(R.id.dot0, R.id.dot1, R.id.dot2, R.id.dot3, R.id.dot4)
         ids.forEachIndexed { i, id ->
             findViewById<TextView>(id).apply {
                 text = getString(
@@ -392,7 +396,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private inner class PageAdapter : RecyclerView.Adapter<PageAdapter.Holder>() {
-        override fun getItemCount(): Int = 4
+        override fun getItemCount(): Int = 5
 
         /**
          * ★ 必须重写，否则启动即崩。
@@ -412,6 +416,7 @@ class MainActivity : AppCompatActivity() {
                 PAGE_SCRIPT -> R.layout.page_library
                 PAGE_ZJS -> R.layout.page_zjs_editor
                 PAGE_RUNLOG -> R.layout.page_runlog
+                PAGE_ENDLESS -> R.layout.page_endless
                 // 兜底：viewType 超出页数说明常量没同步。用第一页的布局
                 // 至少能起来，比崩在启动好。
                 else -> R.layout.page_screen
@@ -434,6 +439,7 @@ class MainActivity : AppCompatActivity() {
                     PAGE_SCRIPT -> LibraryPage(this@MainActivity, holder.itemView).bind()
                     PAGE_ZJS -> ZjsEditorPage(this@MainActivity, holder.itemView).bind()
                 PAGE_RUNLOG -> RunLogPage(this@MainActivity, holder.itemView).bind()
+                PAGE_ENDLESS -> PageEndless(this@MainActivity, holder.itemView).bind()
                 }
             }.onFailure {
                 Log.e(TAG, "第 $position 页绑定失败", it)

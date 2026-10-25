@@ -1005,7 +1005,8 @@ class ZExecutor(
              * 区别就是起点，终点都是格子点。
              */
             Z.ActionType.PVZ_PLANT, Z.ActionType.PVZ_FEED, Z.ActionType.PVZ_SHOVEL,
-            Z.ActionType.PVZ_TAP_CELL, Z.ActionType.PVZ_ARTIFACT ->
+            Z.ActionType.PVZ_TAP_CELL, Z.ActionType.PVZ_ARTIFACT,
+            Z.ActionType.PVZ_WAVE, Z.ActionType.PVZ_SPEED ->
                 runPvzAction(action, index, label, skipped)
 
             // ---- 多指滑动
@@ -3252,6 +3253,18 @@ class ZExecutor(
                     "当前屏幕 ${screen.width}×${screen.height}，点下去可能偏"
             )
         }
+        // 点波 / 加速：固定点位，不需要行列
+        val fixed = when (action.type) {
+            Z.ActionType.PVZ_WAVE -> PvzCoords.NEXT_WAVE to "下一波"
+            Z.ActionType.PVZ_SPEED -> PvzCoords.SPEED to "加速"
+            else -> null
+        }
+        if (fixed != null) {
+            log("   点「${fixed.second}」(${fixed.first[0]},${fixed.first[1]})")
+            inject.tap(fixed.first[0], fixed.first[1], 0)
+            return Outcome()
+        }
+
         val row = intExtra(action.extra, "pvzRow")
         val col = intExtra(action.extra, "pvzCol")
         if (row == null || col == null) {

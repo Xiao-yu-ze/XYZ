@@ -479,7 +479,10 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
     PVZ_FEED("喂豆", executable = true),
     PVZ_SHOVEL("铲除", executable = true),
     PVZ_TAP_CELL("点击格子", executable = true),
-    PVZ_ARTIFACT("使用神器", executable = true);
+    PVZ_ARTIFACT("使用神器", executable = true),
+    /* 点波 / 点加速：坐标固定，不需要选格子。原 MaaPVZ 的「下一波」「加速」。 */
+    PVZ_WAVE("点下一波", executable = true),
+    PVZ_SPEED("点加速", executable = true);
 
         companion object {
             /**

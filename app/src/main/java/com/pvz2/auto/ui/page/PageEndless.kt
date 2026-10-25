@@ -1,0 +1,713 @@
+package com.pvz2.auto.ui.page
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import com.pvz2.auto.zjs.PvzChainModel
+import com.pvz2.auto.zjs.PvzCoords
+import com.pvz2.auto.zjs.Z
+
+/**
+ * 第 5 页：**无尽模式**（布阵台）。
+ *
+ * ## 和自动精灵那套的区别
+ *
+ * 这一页不讲"动作节点"，只讲玩家脑子里的东西：把某个卡槽的植物摆到某格、
+ * 什么时候喂豆/铲/丢神器、点波点加速，然后分单次 / 循环 / 收尾三段跑。
+ * 底层仍是普通 .zjs 脚本（[PvzChainModel] 编译），所以运行/日志/监听全都复用。
+ *
+ * ## 视觉
+ *
+ * 主题是**草坪**：墨绿底 + 草皮格线；每个已放置的操作是一枚**贴片**
+ * （种3 / 豆 / 铲 / 点 / 器 / 波 / 速），一眼能看出格子上有什么。
+ * 阶段（前/中/后期）用一条横条表示，当前阶段点灯。
+ *
+ * ## 关卡变量
+ *
+ * `无尽关卡` 作为切换前中后期的依据：页面上可增减，生成脚本时写进运行时变量，
+ * 收尾链触发条件可以用 `[关卡] >= N` 来表达。
+ */
+class PageEndless(
+    private val host: android.app.Activity,
+    private val root: View
+) {
+
+    // ---------------------------------------------------------------- 主题
+
+    private val bg = Color.parseColor("#0E1512")
+    private val cellEmpty = Color.parseColor("#16211C")
+    private val cellLine = Color.parseColor("#24352C")
+    private val grassA = Color.parseColor("#18271F")
+    private val grassB = Color.parseColor("#1C2D24")
+    private val textMain = Color.parseColor("#E6EFE9")
+    private val textMuted = Color.parseColor("#7D9188")
+
+    private val cPlant = Color.parseColor("#7CB342")
+    private val cFeed = Color.parseColor("#F2B24C")
+    private val cShovel = Color.parseColor("#8D9BA6")
+    private val cTap = Color.parseColor("#4FA3D1")
+    private val cArtifact = Color.parseColor("#B07CE8")
+    private val cWave = Color.parseColor("#E06C5A")
+    private val cSpeed = Color.parseColor("#5AC8A6")
+
+    // ---------------------------------------------------------------- 状态
+
+    /** 关卡（前中后期切换依据）。 */
+    private var level = 1
+
+    /** 阶段分界：<=earlyTo 前期；<=midTo 中期；其余后期。 */
+    private var earlyTo = 30
+    private var midTo = 80
+
+    /** 当前要放置的操作：ActionType + 卡槽（种植物才有）。 */
+    private var curType: Z.ActionType = Z.ActionType.PVZ_PLANT
+    private var curSlot = 1
+    private var curChain = PvzChainModel.ONCE
+
+    /** 三条链的条目（编辑期数据）。 */
+    private val chains = HashMap<String, MutableList<Z.Action>>()
+
+    /** 格子视图（refreshBoard 直接按行列取，不去遍历子 view）。 */
+    private val cellViews: Array<Array<LinearLayout?>> =
+        Array(PvzCoords.ROWS) { arrayOfNulls(PvzCoords.COLS) }
+
+    private val board: Array<Array<MutableList<Z.Action>>> =
+        Array(PvzCoords.ROWS) { Array(PvzCoords.COLS) { ArrayList<Z.Action>() } }
+
+    private lateinit var levelText: TextView
+    private lateinit var stageRow: LinearLayout
+    private lateinit var boardBox: LinearLayout
+    private lateinit var chainBox: LinearLayout
+    private lateinit var hint: TextView
+    private val typeChips = LinkedHashMap<String, TextView>()
+
+    // ---------------------------------------------------------------- 入口
+
+    fun bind() {
+        android.util.Log.i("PageEndless", "bind 开始 root=${root.javaClass.simpleName}")
+        PvzChainModel.LABELS.forEach { (k, _) -> chains.getOrPut(k) { ArrayList() } }
+        val col = root as LinearLayout
+        col.setBackgroundColor(bg)
+        col.removeAllViews()
+
+        col.addView(buildHeader())
+        col.addView(buildBoard())
+        col.addView(buildToolbar())
+        val scroll = ScrollView(host).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+            isFillViewport = true
+            addView(buildChainArea())
+        }
+        col.addView(scroll)
+        refreshAll()
+        android.util.Log.i("PageEndless", "bind 完成，子视图 ${col.childCount} 个")
+    }
+
+    // ---------------------------------------------------------------- 顶部：关卡 + 阶段
+
+    private fun buildHeader(): View {
+        val box = LinearLayout(host).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, dp(6))
+        }
+
+        val row = LinearLayout(host).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(label("关卡", 13f, textMuted))
+        row.addView(stepBtn("−") { if (level > 1) { level--; refreshAll() } })
+        levelText = TextView(host).apply {
+            textSize = 20f
+            setTextColor(textMain)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        row.addView(levelText)
+        row.addView(stepBtn("+") { level++; refreshAll() })
+        row.addView(View(host).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+        })
+        row.addView(label("变量名 无尽关卡", 11f, textMuted))
+        box.addView(row)
+
+        stageRow = LinearLayout(host).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(6), 0, 0)
+        }
+        box.addView(stageRow)
+        return box
+    }
+
+    // ---------------------------------------------------------------- 棋盘
+
+    private fun buildBoard(): View {
+        boardBox = LinearLayout(host).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundRect(cellLine, 10f, stroke = true)
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6) }
+        }
+
+        // 列号表头
+        val head = LinearLayout(host).apply { orientation = LinearLayout.HORIZONTAL }
+        head.addView(View(host).apply { layoutParams = LinearLayout.LayoutParams(dp(22), 1) })
+        for (c in 1..PvzCoords.COLS) {
+            head.addView(label("C$c", 10f, textMuted).apply {
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(0, dp(16), 1f)
+            })
+        }
+        boardBox.addView(head)
+
+        for (r in 1..PvzCoords.ROWS) {
+            val line = LinearLayout(host).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(2), 0, dp(2))
+            }
+            line.addView(label("R$r", 10f, textMuted).apply {
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(dp(22), ViewGroup.LayoutParams.MATCH_PARENT)
+            })
+            for (c in 1..PvzCoords.COLS) {
+                val cell = LinearLayout(host).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    // 草坪感：深浅交替
+                    setBackgroundColor(if ((r + c) % 2 == 0) grassA else grassB)
+                    layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).apply {
+                        setMargins(dp(1), 0, dp(1), 0)
+                    }
+                    setOnClickListener { placeAt(r, c) }
+                }
+                cellViews[r - 1][c - 1] = cell
+                line.addView(cell)
+            }
+            boardBox.addView(line)
+        }
+        return boardBox
+    }
+
+    // ---------------------------------------------------------------- 工具条
+
+    private fun buildToolbar(): View {
+        val wrap = LinearLayout(host).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(4) }
+        }
+
+        // 第一行：种 1-8
+        val row1 = LinearLayout(host).apply { orientation = LinearLayout.HORIZONTAL }
+        for (s in 1..8) {
+            val chip = chip("种$s", cPlant) {
+                curType = Z.ActionType.PVZ_PLANT
+                curSlot = s
+                refreshToolbar()
+                refreshHint()
+            }
+            typeChips["plant$s"] = chip
+            row1.addView(chip)
+        }
+        wrap.addView(row1)
+
+        // 第二行：喂豆 / 铲 / 点格子 / 神器 / 点波 / 点加速
+        val row2 = LinearLayout(host).apply { orientation = LinearLayout.HORIZONTAL }
+        val others = listOf(
+            Triple("豆", cFeed, Z.ActionType.PVZ_FEED),
+            Triple("铲", cShovel, Z.ActionType.PVZ_SHOVEL),
+            Triple("点格子", cTap, Z.ActionType.PVZ_TAP_CELL),
+            Triple("神器", cArtifact, Z.ActionType.PVZ_ARTIFACT),
+            // 点波 / 点加速：坐标固定，不需要选格子
+            Triple("点波", cWave, Z.ActionType.PVZ_WAVE),
+            Triple("加速", cSpeed, Z.ActionType.PVZ_SPEED)
+        )
+        for ((name, color, t) in others) {
+            val chip = chip(name, color) {
+                curType = t
+                if (t == Z.ActionType.PVZ_WAVE || t == Z.ActionType.PVZ_SPEED) {
+                    // 这两个是全局按钮，点一下就直接加进当前链
+                    chains.getOrPut(curChain) { ArrayList() }.add(makeGlobal(t))
+                    refreshAll()
+                    toast("已把「$name」加到${PvzChainModel.label(curChain)}链")
+                } else {
+                    refreshToolbar(); refreshHint()
+                }
+            }
+            typeChips[t.wire] = chip
+            row2.addView(chip)
+        }
+        wrap.addView(row2)
+
+        hint = TextView(host).apply {
+            textSize = 11f
+            setTextColor(textMuted)
+            setPadding(0, dp(4), 0, dp(2))
+        }
+        wrap.addView(hint)
+        return wrap
+    }
+
+    // ---------------------------------------------------------------- 三条链
+
+    private fun buildChainArea(): View {
+        chainBox = LinearLayout(host).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(4), 0, dp(24))
+        }
+        return chainBox
+    }
+
+    // ---------------------------------------------------------------- 放置
+
+    private fun placeAt(row: Int, col: Int) {
+        if (curType == Z.ActionType.PVZ_WAVE || curType == Z.ActionType.PVZ_SPEED) {
+            toast("点波/加速不用选格子，直接点上面那颗按钮")
+            return
+        }
+        val a = Z.Action(
+            type = curType,
+            common = Z.ActionCommon(delay = "100", delayUnit = Z.TimeUnit.MILLISECONDS),
+            extra = HashMap<String, Any?>().apply {
+                put("pvzChain", curChain)
+                put("pvzRow", row.toString())
+                put("pvzCol", col.toString())
+                if (curType == Z.ActionType.PVZ_PLANT) put("pvzSlot", curSlot.toString())
+            }
+        )
+        chains.getOrPut(curChain) { ArrayList() }.add(a)
+        board[row - 1][col - 1].add(a)
+        refreshBoard()
+        refreshChains()
+    }
+
+    private fun makeGlobal(t: Z.ActionType): Z.Action = Z.Action(
+        type = t,
+        common = Z.ActionCommon(delay = "100", delayUnit = Z.TimeUnit.MILLISECONDS),
+        extra = HashMap<String, Any?>().apply { put("pvzChain", curChain) }
+    )
+
+    // ---------------------------------------------------------------- 刷新
+
+    private fun refreshAll() {
+        levelText.text = level.toString()
+        refreshStages()
+        refreshBoard()
+        refreshToolbar()
+        refreshChains()
+        refreshHint()
+    }
+
+    private fun stageOf(): String = when {
+        level <= earlyTo -> "前期"
+        level <= midTo -> "中期"
+        else -> "后期"
+    }
+
+    private fun refreshStages() {
+        stageRow.removeAllViews()
+        val cur = stageOf()
+        for ((name, range) in listOf(
+            "前期" to "1-$earlyTo",
+            "中期" to "${earlyTo + 1}-$midTo",
+            "后期" to "${midTo + 1}+"
+        )) {
+            val on = name == cur
+            stageRow.addView(TextView(host).apply {
+                text = "$name $range"
+                textSize = 11f
+                gravity = Gravity.CENTER
+                setTextColor(if (on) Color.parseColor("#0E1512") else textMuted)
+                background = roundRect(if (on) cPlant else cellEmpty, 8f)
+                setPadding(dp(8), dp(3), dp(8), dp(3))
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    setMargins(dp(2), 0, dp(2), 0)
+                }
+                setOnClickListener {
+                    val names = listOf("前期", "中期", "后期")
+                    android.app.AlertDialog.Builder(host)
+                        .setTitle("修改「$name」的关卡上界")
+                        .setItems(
+                            (level..(level + 200)).map { "到第 $it 关" }.toTypedArray()
+                        ) { _, which ->
+                            val v = level + which
+                            if (name == "前期") {
+                                earlyTo = v
+                                if (midTo < v) midTo = v
+                            } else if (name == "中期") {
+                                midTo = v
+                                if (earlyTo > v) earlyTo = v
+                            }
+                            refreshAll()
+                        }
+                        .show()
+                }
+            })
+        }
+    }
+
+    private fun refreshBoard() {
+        for (r in 1..PvzCoords.ROWS) {
+            for (c in 1..PvzCoords.COLS) {
+                val cell = cellViews[r - 1][c - 1] ?: continue
+                cell.removeAllViews()
+                val items = board[r - 1][c - 1]
+                if (items.isEmpty()) continue
+                // 一格里可能叠多个操作：竖着排，最多显示 3 个 + "…"
+                for (a in items.take(3)) {
+                    cell.addView(token(a))
+                }
+                if (items.size > 3) {
+                    cell.addView(label("+${items.size - 3}", 9f, textMuted))
+                }
+            }
+        }
+    }
+
+    private fun refreshToolbar() {
+        for ((key, chip) in typeChips) {
+            val on = when {
+                key.startsWith("plant") -> curType == Z.ActionType.PVZ_PLANT && key == "plant$curSlot"
+                else -> key == curType.wire
+            }
+            chip.alpha = if (on) 1f else 0.45f
+            chip.setTextColor(if (on) Color.parseColor("#0E1512") else Color.WHITE)
+        }
+    }
+
+    private fun refreshHint() {
+        val what = when (curType) {
+            Z.ActionType.PVZ_PLANT -> "种 卡槽$curSlot"
+            Z.ActionType.PVZ_FEED -> "喂豆"
+            Z.ActionType.PVZ_SHOVEL -> "铲除"
+            Z.ActionType.PVZ_ARTIFACT -> "使用神器"
+            Z.ActionType.PVZ_WAVE -> "点波"
+            Z.ActionType.PVZ_SPEED -> "点加速"
+            else -> "点格子"
+        }
+        hint.text = "点棋盘格子 → 把「$what」加到「${PvzChainModel.label(curChain)}」链"
+    }
+
+    private fun refreshChains() {
+        chainBox.removeAllViews()
+        for ((key, name) in PvzChainModel.LABELS) {
+            val items = chains.getOrPut(key) { ArrayList() }
+            val on = key == curChain
+
+            val head = LinearLayout(host).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(8), dp(6), dp(8), dp(6))
+                background = roundRect(if (on) Color.parseColor("#1E2E24") else cellEmpty, 8f)
+                setOnClickListener {
+                    curChain = key
+                    refreshChains(); refreshHint()
+                }
+            }
+            head.addView(label("$name（${items.size}）", 13f, if (on) textMain else textMuted).apply {
+                setTypeface(typeface, Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            // 收尾链：显示触发条件（循环 → 收尾 的判断依据）
+            if (key == PvzChainModel.END) {
+                head.addView(label(if (endCondition == null) "触发：未设" else "触发：已设", 11f, cWave))
+            }
+            chainBox.addView(head)
+
+            if (items.isEmpty()) {
+                chainBox.addView(label("  （空）", 11f, textMuted).apply { setPadding(dp(14), dp(2), 0, dp(6)) })
+                continue
+            }
+            items.forEachIndexed { idx, a ->
+                chainBox.addView(chainRow(key, idx, a))
+            }
+        }
+        // 收尾触发条件入口
+        chainBox.addView(
+            TextView(host).apply {
+                text = if (endCondition == null) "⚑ 设「循环 → 收尾」的判断依据" else "⚑ 收尾判据：已设置（点改）"
+                textSize = 12f
+                setTextColor(cWave)
+                setPadding(dp(8), dp(10), 0, dp(6))
+                setOnClickListener { pickEndCondition() }
+            }
+        )
+    }
+
+    /** 收尾触发条件（循环链什么时候跳出到收尾）。 */
+    private var endCondition: Z.Condition? = null
+
+    private fun pickEndCondition() {
+        val names = listOf(
+            "关卡数达到阈值（用变量 无尽关卡）",
+            "出现指定文字（如「挑战成功」）",
+            "出现指定图片（自己截图）",
+            "不设（循环一直跑）"
+        )
+        android.app.AlertDialog.Builder(host)
+            .setTitle("循环 → 收尾 的判断依据")
+            .setItems(names.toTypedArray()) { _, which ->
+                endCondition = when (which) {
+                    0 -> Z.Condition(
+                        type = Z.ConditionType.JS_EXPRESSION,
+                        extra = HashMap<String, Any?>().apply {
+                            put("expression", "Number(zdjl.getVar('无尽关卡')||0) >= $midTo")
+                        }
+                    )
+                    1 -> Z.Condition(
+                        type = Z.ConditionType.TEXT,
+                        posData = Z.PosData(type = Z.PosType.TEXT),
+                        extra = HashMap<String, Any?>().apply { put("text", "挑战成功") }
+                    )
+                    2 -> Z.Condition(
+                        type = Z.ConditionType.IMAGE,
+                        posData = Z.PosData(type = Z.PosType.IMAGE)
+                    )
+                    else -> null
+                }
+                if (which in 1..2) {
+                    toast("这个判据要在脚本编辑器里补具体文字/图片")
+                }
+                refreshChains()
+            }
+            .show()
+    }
+
+    /** 一条链里的一个条目：长按可拖动排序。 */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun chainRow(chainKey: String, idx: Int, a: Z.Action): View {
+        val row = LinearLayout(host).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(5), dp(8), dp(5))
+        }
+        row.addView(token(a))
+        row.addView(label(" " + describe(a), 12f, textMain).apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        row.addView(TextView(host).apply {
+            text = "✕"
+            textSize = 13f
+            setTextColor(textMuted)
+            setPadding(dp(10), dp(2), dp(4), dp(2))
+            setOnClickListener {
+                chains[chainKey]?.removeAt(idx)
+                rebuildBoardIndex()
+                refreshAll()
+            }
+        })
+        /*
+         * 长按拖动排序（不再用 ↑↓ 按钮）。
+         *
+         * 用系统 drag-and-drop：长按给个"拿起"的反馈，拖到别的条目上就插到它前面。
+         * 不引入 ItemTouchHelper/RecyclerView，因为这一页是手搭的普通 View 树。
+         */
+        row.setOnLongClickListener { v ->
+            dragPayload = chainKey to idx
+            v.alpha = 0.4f
+            v.startDragAndDrop(null, View.DragShadowBuilder(v), null, 0)
+            true
+        }
+        row.setOnDragListener { v, e ->
+            when (e.action) {
+                android.view.DragEvent.ACTION_DRAG_ENTERED -> {
+                    v.setBackgroundColor(Color.parseColor("#243B2C")); true
+                }
+                android.view.DragEvent.ACTION_DRAG_EXITED -> {
+                    v.setBackgroundColor(Color.TRANSPARENT); true
+                }
+                android.view.DragEvent.ACTION_DROP -> {
+                    v.setBackgroundColor(Color.TRANSPARENT)
+                    val payload = dragPayload
+                    if (payload != null && payload.first == chainKey && payload.second != idx) {
+                        val list = chains[chainKey]
+                        if (list != null) {
+                            val moved = list.removeAt(payload.second)
+                            list.add(idx.coerceIn(0, list.size), moved)
+                            rebuildBoardIndex()
+                            refreshAll()
+                        }
+                    }
+                    true
+                }
+                else -> true
+            }
+        }
+        return row
+    }
+
+    private var dragPayload: Pair<String, Int>? = null
+
+    /** 改过链的顺序后，棋盘索引按链重建（棋盘只显示，顺序以链为准）。 */
+    private fun rebuildBoardIndex() {
+        for (r in 0 until PvzCoords.ROWS) for (c in 0 until PvzCoords.COLS) {
+            board[r][c].clear()
+        }
+        for ((_, list) in chains) {
+            for (a in list) {
+                val r = a.extra["pvzRow"]?.toString()?.toIntOrNull() ?: continue
+                val c = a.extra["pvzCol"]?.toString()?.toIntOrNull() ?: continue
+                if (r in 1..PvzCoords.ROWS && c in 1..PvzCoords.COLS) board[r - 1][c - 1].add(a)
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- 贴片
+
+    private fun colorOf(t: Z.ActionType): Int = when (t) {
+        Z.ActionType.PVZ_PLANT -> cPlant
+        Z.ActionType.PVZ_FEED -> cFeed
+        Z.ActionType.PVZ_SHOVEL -> cShovel
+        Z.ActionType.PVZ_TAP_CELL -> cTap
+        Z.ActionType.PVZ_ARTIFACT -> cArtifact
+        Z.ActionType.PVZ_WAVE -> cWave
+        else -> cSpeed
+    }
+
+    private fun tokenText(a: Z.Action): String = when (a.type) {
+        Z.ActionType.PVZ_PLANT -> "种${a.extra["pvzSlot"] ?: "?"}"
+        Z.ActionType.PVZ_FEED -> "豆"
+        Z.ActionType.PVZ_SHOVEL -> "铲"
+        Z.ActionType.PVZ_TAP_CELL -> "点"
+        Z.ActionType.PVZ_ARTIFACT -> "器"
+        Z.ActionType.PVZ_WAVE -> "波"
+        else -> "速"
+    }
+
+    private fun token(a: Z.Action): TextView = TextView(host).apply {
+        text = tokenText(a)
+        textSize = 9f
+        gravity = Gravity.CENTER
+        setTextColor(Color.parseColor("#0E1512"))
+        setTypeface(typeface, Typeface.BOLD)
+        background = roundRect(colorOf(a.type), 4f)
+        setPadding(dp(3), dp(1), dp(3), dp(1))
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(dp(2), 0, 0, 0) }
+    }
+
+    private fun describe(a: Z.Action): String {
+        val r = a.extra["pvzRow"]?.toString()
+        val c = a.extra["pvzCol"]?.toString()
+        val cell = if (r != null && c != null) " → ${r}行${c}列" else ""
+        return when (a.type) {
+            Z.ActionType.PVZ_PLANT -> "种 卡槽${a.extra["pvzSlot"] ?: "?"}$cell"
+            Z.ActionType.PVZ_FEED -> "喂豆$cell"
+            Z.ActionType.PVZ_SHOVEL -> "铲除$cell"
+            Z.ActionType.PVZ_ARTIFACT -> "神器$cell"
+            Z.ActionType.PVZ_WAVE -> "点下一波"
+            Z.ActionType.PVZ_SPEED -> "点加速"
+            else -> "点格子$cell"
+        }
+    }
+
+    // ---------------------------------------------------------------- 小工具
+
+    private fun dp(v: Int): Int = (v * host.resources.displayMetrics.density).toInt()
+
+    private fun label(text: String, size: Float, color: Int): TextView = TextView(host).apply {
+        this.text = text
+        textSize = size
+        setTextColor(color)
+    }
+
+    private fun stepBtn(text: String, onClick: () -> Unit): TextView = TextView(host).apply {
+        this.text = text
+        textSize = 16f
+        gravity = Gravity.CENTER
+        setTextColor(textMain)
+        background = roundRect(cellEmpty, 8f)
+        layoutParams = LinearLayout.LayoutParams(dp(34), dp(30)).apply {
+            setMargins(dp(4), 0, dp(4), 0)
+        }
+        setOnClickListener { onClick() }
+    }
+
+    private fun chip(text: String, color: Int, onClick: () -> Unit): TextView = TextView(host).apply {
+        this.text = text
+        textSize = 12f
+        gravity = Gravity.CENTER
+        setTextColor(Color.WHITE)
+        setTypeface(typeface, Typeface.BOLD)
+        background = roundRect(color, 8f)
+        setPadding(dp(4), dp(6), dp(4), dp(6))
+        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            setMargins(dp(2), dp(2), dp(2), dp(2))
+        }
+        setOnClickListener { onClick() }
+    }
+
+    private fun roundRect(color: Int, radiusDp: Float, stroke: Boolean = false): GradientDrawable =
+        GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(radiusDp.toInt()).toFloat()
+            if (stroke) {
+                setStroke(dp(1), color)
+                setColor(Color.TRANSPARENT)
+            } else {
+                setColor(color)
+            }
+        }
+
+    private fun toast(msg: String) {
+        Toast.makeText(host, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    // ---------------------------------------------------------------- 对外
+
+    /** 当前三链编译出来的动作列表（给「生成脚本」用）。 */
+    fun buildActions(): List<Z.Action> {
+        val list = ArrayList<Z.Action>()
+        list.add(
+            Z.Action(
+                type = Z.ActionType.SET_VARS,
+                common = Z.ActionCommon(delay = "0"),
+                extra = HashMap<String, Any?>().apply {
+                    put(
+                        "vars",
+                        org.json.JSONArray().put(
+                            org.json.JSONObject().apply {
+                                put("name", "无尽关卡")
+                                put(
+                                    "value",
+                                    org.json.JSONObject().apply {
+                                        put("varType", "number")
+                                        put("valueExp", level.toString())
+                                    }
+                                )
+                            }
+                        )
+                    )
+                }
+            )
+        )
+        list.addAll(PvzChainModel.rebuild(emptyList(), chains, chains[PvzChainModel.LOOP]?.size?.let { 0 } ?: 0))
+        endCondition?.let { cond ->
+            // 收尾链的触发条件挂在第一个收尾节点上
+            val i = list.indexOfFirst {
+                PvzChainModel.chainOf(it) == PvzChainModel.END
+            }
+            if (i >= 0) {
+                val a = list[i]
+                list[i] = a.copy(common = a.common.copy(condition = cond))
+            }
+        }
+        return list
+    }
+}

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  第 5 页：无尽模式。
+
+  和别的页不同：这一页**没有虚拟屏**，整页就是一张 5×9 的棋盘 + 三条链。
+  布局本身在 PageEndless.kt 里用代码搭（格子要按数据画贴片，XML 写不出来），
+  这里只留一个容器。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/endlessRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:paddingHorizontal="10dp"
+    android:paddingTop="8dp" />

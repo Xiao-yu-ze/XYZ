@@ -42,6 +42,12 @@ object PvzCoords {
     /** 铲子（铲除的起点）。 */
     val SHOVEL = intArrayOf(1222, 674)
 
+    /** 「下一波」按钮。 */
+    val NEXT_WAVE = intArrayOf(1225, 219)
+
+    /** 「加速」按钮。 */
+    val SPEED = intArrayOf(1171, 35)
+
     /** 神器图标（拖拽类神器的起点）。 */
     val ARTIFACT = intArrayOf(749, 703)
 

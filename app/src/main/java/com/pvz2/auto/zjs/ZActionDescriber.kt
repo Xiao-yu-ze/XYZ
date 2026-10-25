@@ -824,7 +824,8 @@ return PosGroup(rec, par, oth)
     /** 我们自己的五种「游戏动作」（种/喂/铲/点格子/神器）。 */
     private val PVZ_TYPES = setOf(
         Z.ActionType.PVZ_PLANT, Z.ActionType.PVZ_FEED, Z.ActionType.PVZ_SHOVEL,
-        Z.ActionType.PVZ_TAP_CELL, Z.ActionType.PVZ_ARTIFACT
+        Z.ActionType.PVZ_TAP_CELL, Z.ActionType.PVZ_ARTIFACT,
+        Z.ActionType.PVZ_WAVE, Z.ActionType.PVZ_SPEED
     )
 
     private val CLICK_FAMILY = setOf(
