@@ -947,16 +947,41 @@ class ZjsEditorPage(
     ): View {
         val ctx = host
 
-        // ---- 小节标题：不是字段，只画一行淡字
+        /*
+         * ---- 小节标题：一条分隔线 + 一行小字
+         *
+         * 原来只有一行淡字，字段一多整卡片糊成一片（用户原话："好费眼睛，
+         * 几个大的分类可以用线分开"）。现在分类之间画 1dp 细线，并留出上下间距，
+         * 扫一眼就知道「触发 / 参数 / 执行 / 位置」从哪开始。
+         */
         if (row.kind == ZActionDescriber.Kind.SECTION) {
-            return TextView(ctx).apply {
-                text = row.label
-                textSize = 11f
-                setTextColor(ctx.getColor(R.color.ink_faint))
-                setPadding(0, dp(10), 0, dp(2))
+            return LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                setPadding(0, dp(14), 0, dp(2))
+                addView(
+                    View(ctx).apply {
+                        setBackgroundColor(ctx.getColor(R.color.ink_faint))
+                        alpha = 0.25f
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT, dp(1)
+                        )
+                    }
+                )
+                addView(
+                    TextView(ctx).apply {
+                        text = row.label
+                        textSize = 11f
+                        setTextColor(ctx.getColor(R.color.ink_faint))
+                        setPadding(0, dp(6), 0, dp(2))
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        )
+                    }
                 )
             }
         }
