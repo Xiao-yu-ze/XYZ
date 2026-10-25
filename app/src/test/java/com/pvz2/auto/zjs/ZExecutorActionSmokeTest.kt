@@ -110,13 +110,6 @@ class ZExecutorActionSmokeTest {
     }
 
     @Test
-    fun `AI点击——标为不支持并跳过`() {
-        val (r, rec) = run("""{"type":"AI点击","posData":{"type":"aiLoc","text":"x"}}""")
-        assertEquals(0, rec.calls.size)
-        assertTrue("要说清不支持：${r.skipped}", r.skipped.any { it.reason.contains("不支持") })
-    }
-
-    @Test
     fun `极速点击——把 hold 传成 0（注入层据此跳过等待）`() {
         val (r, rec) = run(
             """{"type":"点击","highSpeedTap":true,"posData":{"type":"location","x":"10","y":"20"}}"""
@@ -310,13 +303,6 @@ class ZExecutorActionSmokeTest {
         ).script!!
         val r = ex.run(script)
         assertEquals("JS 应把 n 改成 42：${r.skipped}", 0, r.skipped.size)
-    }
-
-    @Test
-    fun `加密动作——明确跳过`() {
-        val (r, rec) = run("""{"type":"加密动作","encryptId":"x","content":"y"}""")
-        assertEquals(0, rec.calls.size)
-        assertTrue("${r.skipped}", r.skipped.any { it.reason.contains("不支持") })
     }
 
     // ---------------------------------------------------------------- 容器

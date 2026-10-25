@@ -824,7 +824,7 @@ return PosGroup(rec, par, oth)
      */
     private val CLICK_FAMILY = setOf(
         Z.ActionType.CLICK, Z.ActionType.CLICK_IMAGE, Z.ActionType.CLICK_TEXT,
-        Z.ActionType.CLICK_COLOR, Z.ActionType.CLICK_NODE, Z.ActionType.AI_CLICK
+        Z.ActionType.CLICK_COLOR, Z.ActionType.CLICK_NODE
     )
 
     /**
@@ -1119,14 +1119,6 @@ return PosGroup(rec, par, oth)
                 anyStr(e, "jumpToPosition").orEmpty(),
                 Kind.TEXT,
                 field = "jumpToPosition"
-            )
-
-            // 控制执行·运行目标动作（10.17）
-            Z.ActionType.CONTROL_RUN_AIM -> rows += Row(
-                "目标动作",
-                anyStr(e, "aimActionPosition").orEmpty(),
-                Kind.TEXT,
-                field = "aimActionPosition"
             )
 
             // 系统提示（10.23）：三种 promptType 本机都只弹 toast

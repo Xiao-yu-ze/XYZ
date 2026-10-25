@@ -21,10 +21,10 @@ class ZModelTest {
     fun `26 种动作的线格式全部能认出来`() {
         // 21 个不同字符串（6 个控制执行共享 type="控制执行"）
         val wires = listOf(
-            "点击", "点击图片", "点击文字", "点击颜色", "点击节点", "AI点击",
+            "点击", "点击图片", "点击文字", "点击颜色", "点击节点",
             "滑动", "单指手势", "多指滑动", "按键", "输入内容", "识别屏幕",
             "执行脚本", "运行多个动作",
-            "系统提示", "设置变量", "加密动作", "加密动作"
+            "系统提示", "设置变量", "等待候选"
         )
         for (w in wires) {
             assertNotNull("认不出动作类型 [$w]", Z.ActionType.ofWire(w, null))
@@ -33,7 +33,7 @@ class ZModelTest {
             // 24 个协议类型（删掉了本机用不到的打开应用/打开链接）
             // + 1 个我们自己的（等待候选，等价于 Maa 的 next）。
             // 断言等于而不是大于：多出一个没登记的类型，说明有人加了节点却没更新这里。
-            25, Z.ActionType.entries.size
+            22, Z.ActionType.entries.size
         )
         assertEquals(1, Z.ActionType.entries.count { it.wire == "等待候选" })
     }
@@ -53,8 +53,6 @@ class ZModelTest {
         assertTrue(Z.ActionType.MULTI_SWIPE.executable)
         // 运行JS代码现在有 Rhino 引擎，能真跑
         assertTrue(Z.ActionType.RUN_JS.executable)
-        // 加密动作仍需要自动精灵的解密方案
-        assertTrue(!Z.ActionType.ENCRYPTED.executable)
     }
 
     // ------------------------------------------------------------ 位置

@@ -381,7 +381,6 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
         CLICK_TEXT("点击文字", executable = true),
         CLICK_COLOR("点击颜色", executable = true),
         CLICK_NODE("点击节点", executable = true),
-        AI_CLICK("AI点击"),
         SWIPE("滑动", executable = true),
         /*
      * 单指手势现在能跑了：轨迹点在 `gestureActions` 里，是一串普通动作，
@@ -417,7 +416,6 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
      * 而监听槽位也会拒绝把它当动作执行。
      */
     RUN_MULTI("运行多个动作", executable = true),
-        CONTROL_RUN_AIM("控制执行", "runAimAction", executable = true),
         CONTROL_JUMP("控制执行", "jumpTo", executable = true),
         /*
          * ★ setJumpId / pause 执行器里**没有分支**（ZExecutor 的 when 零引用），
@@ -442,7 +440,6 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
     SET_VARS("设置变量", executable = true),
         /* 运行JS代码：Rhino 解释执行，变量与运行时变量表互通。 */
     RUN_JS("运行JS代码", executable = true),
-        ENCRYPTED("加密动作"),
 
         /**
          * 等候选出现 —— **我们自己的动作类型，协议里没有**。

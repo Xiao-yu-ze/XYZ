@@ -445,7 +445,6 @@ object ZFieldEditor {
         Z.ActionType.CLICK_TEXT -> Z.PosType.TEXT
         Z.ActionType.CLICK_COLOR -> Z.PosType.COLOR
         Z.ActionType.CLICK_NODE -> Z.PosType.NODE
-        Z.ActionType.AI_CLICK -> Z.PosType.AI_LOC
         Z.ActionType.SWIPE -> Z.PosType.LOCATION
         else -> null
     }
@@ -818,17 +817,16 @@ object ZFieldEditor {
     /**
      * 「能加/能换」的动作类型列表（界面专用）。
      *
-     * 统一在一处过滤：AI 点击要调云端接口，本机跑不了；
-     * 各处如果各自 `ActionType.entries.sortedBy{}`，过滤就会漏掉某一处，
-     * 于是"添加动作"里还能选到它 —— 选了之后是一条永远不执行的节点。
+     * 统一在一处过滤：`运行多个动作` 在子动作列表里不能嵌套（includeRunMulti=false）；
+     * 各处如果各自 `ActionType.entries.sortedBy{}`，过滤就会漏掉某一处。
      */
     fun addableActionTypes(includeRunMulti: Boolean = true): List<Z.ActionType> =
         Z.ActionType.entries
-            .filter { it != Z.ActionType.AI_CLICK && (includeRunMulti || it != Z.ActionType.RUN_MULTI) }
+            .filter { includeRunMulti || it != Z.ActionType.RUN_MULTI }
             .sortedBy { if (it.executable) 0 else 1 }
 
     fun actionTypeLabels(): List<String> =
-        Z.ActionType.entries.filter { it != Z.ActionType.AI_CLICK }.map { actionTypeLabel(it) }
+        Z.ActionType.entries.map { actionTypeLabel(it) }
 
     /** 从下拉选中的标签找回枚举。认不出返回 null（调用方提示不合法）。 */
     private fun actionTypeFrom(raw: String): Z.ActionType? {

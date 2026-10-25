@@ -1607,16 +1607,6 @@ class ZExecutor(
                 Outcome()
             }
 
-            // ---- 运行目标动作（协议 10.17）
-            Z.ActionType.CONTROL_RUN_AIM -> {
-                val aim = action.extra["aimActionPosition"]?.toString().orEmpty()
-                val why = "运行目标动作（runAimAction）尚未实现" +
-                    (if (aim.isBlank()) "" else "：目标 $aim")
-                skipped.add(Result.Skip(index, label, why))
-                log("[跳过] $label — $why")
-                null
-            }
-
             // pause / setJumpId / 其余未实现的动作：明确拒绝，不静默
             else -> {
                 val why = when {

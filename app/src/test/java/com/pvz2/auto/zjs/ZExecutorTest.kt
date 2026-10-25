@@ -209,13 +209,6 @@ class ZExecutorTest {
     }
 
     @Test
-    fun `安卓不支持的动作跳过并记原因`() {
-        val (r, inj) = exec("""{"actions":[{"type":"加密动作","delayUnit":0}]}""")
-        assertEquals(0, inj.taps.size)
-        assertTrue("应说明不支持：${r.skipped}", r.skipped.any { it.reason.contains("暂不支持") })
-    }
-
-    @Test
     fun `图片没匹配到时记原因且不点击`() {
         // 这是最要紧的一条：找不到目标绝不能退化成点 (0,0)
         val (r, inj) = exec(

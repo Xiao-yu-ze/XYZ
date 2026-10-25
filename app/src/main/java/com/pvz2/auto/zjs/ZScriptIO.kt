@@ -224,16 +224,11 @@ object ZScriptIO {
                 }
             }
 
-            // ---- 控制执行：跳转目标 / 目标动作必填
+            // ---- 控制执行：跳转目标必填
             // FIELDS.md:541-546 —— 缺了运行时一定报错
             if (action.type == Z.ActionType.CONTROL_JUMP) {
                 if (action.extra["jumpToPosition"] == null) {
                     issues.add("$where 缺跳转目标（jumpToPosition）")
-                }
-            }
-            if (action.type == Z.ActionType.CONTROL_RUN_AIM) {
-                if (action.extra["aimActionPosition"] == null) {
-                    issues.add("$where 缺目标动作（aimActionPosition）")
                 }
             }
 

@@ -55,7 +55,6 @@ class ZActionDescriberTest {
          */
         val a = action("""{"type":"点击","delayUnit":1,"posData":{"type":"location","x":"1","y":"2"}}""")
         Z.ActionType.entries
-            .filter { it != Z.ActionType.AI_CLICK }
             .forEach { t ->
                 val label = ZFieldEditor.actionTypeLabel(t)
                 val got = ZFieldEditor.apply(a, "type", label)?.type
@@ -71,12 +70,6 @@ class ZActionDescriberTest {
         // 而落盘仍是英文 wire（协议不许改）。
         assertEquals("控制执行·跳转到", r.first().value)
         assertEquals("跳转到", r.first { it.label == "控制方式" }.value)
-    }
-
-    @Test
-    fun `安卓做不了的动作会有一行醒目提示`() {
-        val r = rows("""{"type":"加密动作","delayUnit":1}""")
-        assertTrue("应提示暂不支持：$r", r.any { it.label.contains("执行") && it.value.contains("暂不支持") })
     }
 
     @Test
