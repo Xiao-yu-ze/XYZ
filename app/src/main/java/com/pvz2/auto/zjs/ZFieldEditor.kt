@@ -525,6 +525,9 @@ object ZFieldEditor {
         "pvzSlot", "pvzRow", "pvzCol"
     )
 
+    /** 游戏动作属于哪条链（缺省单次；空串=删键）。 */
+    private val EXTRA_CHAINS = setOf("pvzChain")
+
     /** 字符串型 extra。空串 = 删掉这个键。 */
     private val EXTRA_STRINGS = setOf(
         "jumpToPosition", "aimActionPosition", "appPackageName",
@@ -558,6 +561,17 @@ object ZFieldEditor {
     }
 
     /** 动作专属字段的写回。不认识的键返回 null（调用方会提示"值不合法"）。 */
+    /**
+     * 「属于哪条链」界面值是中文（单次/循环/收尾），落盘要写 wire（once/loop/end）。
+     *
+     * 空串 → null（删键），正好等于缺省「单次」，不往文件里塞默认值。
+     */
+    fun chainKeyOf(label: String): String? {
+        val t = label.trim()
+        if (t.isEmpty()) return null
+        return PvzChainModel.LABELS.firstOrNull { it.second == t }?.first ?: t
+    }
+
     private fun applyExtra(action: Z.Action, field: String, value: String): Z.Action? = when {
         // 布尔：关掉时**删键**而不是写 false。
         // 协议里这些开关缺省就是 false，写一堆 `"highSpeedTap":false` 只是脏文件
@@ -567,6 +581,9 @@ object ZFieldEditor {
 
         field in EXTRA_INTS ->
             action.copy(extra = extraWith(action.extra, field, value.trim().toIntOrNull()))
+
+        field in EXTRA_CHAINS ->
+            action.copy(extra = extraWith(action.extra, field, chainKeyOf(value)))
 
         /*
          * `vars`（设置变量）：界面用 `名字=值;名字2=值2` 表达。

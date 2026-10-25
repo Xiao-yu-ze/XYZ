@@ -149,6 +149,7 @@
     <string name="zjs_save_failed">保存失败：%1$s</string>
     <string name="picker_ok">确定</string>
     <string name="zjs_add_action">+ 添加动作</string>
+    <string name="zjs_plant_order">🌱 种植顺序</string>
     <string name="zjs_run">运行</string>
     <string name="zjs_stop">停止</string>
     <string name="results_waiting">正在查找…</string>

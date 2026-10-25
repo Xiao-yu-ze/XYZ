@@ -1916,6 +1916,25 @@ class ZjsEditorPage(
             .setOnClickListener { promptSave() }
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsAddAction)
             .setOnClickListener { promptAddAction() }
+        /*
+         * 「种植顺序」面板：三条链 + 棋盘。
+         *
+         * 它只在**编辑期**存在 —— 应用时把三条链编译成平铺节点写回脚本，
+         * 运行格式不变（执行器不认识"链"）。
+         */
+        root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsChain)
+            ?.setOnClickListener {
+                if (navStack.isNotEmpty()) {
+                    android.widget.Toast.makeText(
+                        host, "先回到主脚本再开种植顺序", android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    return@setOnClickListener
+                }
+                PvzChainPanel.show(host, currentActions()) { rebuilt ->
+                    commitActions(rebuilt)
+                    adapter.submit(currentActions())
+                }
+            }
         root.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnZjsUp)
             .setOnClickListener { popNav() }
 
