@@ -350,9 +350,25 @@ class Conv:
         if rc and int(rc) > 1:
             d["repeatCount"] = int(rc)
             d["fastRepeatMode"] = True
-            if REPEAT_GAP_MS > 0:
-                d["repeatDelayValue"] = str(REPEAT_GAP_MS)
-                d["repeatDelayUnit"] = MS
+
+            # ★ 重复间隔必须**显式写**，不能留给默认值。
+
+            # 引擎的重复间隔缺省会回落到动作 delay，而 delay 缺省是 200ms ——
+            # 于是 Maa 里「repeat:250, pre_delay:0, post_delay:0, duration:1」
+            # 的划飞弹（250 次快速滑动）在我们这儿变成 250 × 208ms ≈ 52 秒，
+            # 真机日志里 52 号节点就是这么来的。
+
+            # 按 Maa 的原意：轮间间隔取 pre_delay/post_delay 的较大者（这里都是 0），
+            # --repeat-gap-ms 只作为下限（注入太快会被游戏合并时才需要）。
+
+            #
+            # 只用工装下限，**不要**把 pre_delay/post_delay 当轮间隔：
+            #   它们是"整个节点执行之前/之后各等一次"，引擎已经把 pre_delay
+            #   放在重复循环之外了。若把它们塞进轮间隔，点波2（pre_delay 2000、
+            #   repeat 60）会变成 60×2s = 120 秒，而 Maa 的原意是"等 2 秒，然后连点 60 下"。
+            gap_src = REPEAT_GAP_MS
+            d["repeatDelayValue"] = str(gap_src)
+            d["repeatDelayUnit"] = MS
 
         # pre_delay：识别之后、动作之前
         pre = int_field(node, "pre_delay", DEFAULT_DELAY)

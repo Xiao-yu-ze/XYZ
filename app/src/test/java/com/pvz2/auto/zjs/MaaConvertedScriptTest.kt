@@ -110,6 +110,29 @@ class MaaConvertedScriptTest {
         assertTrue("这些节点没按毫秒走：${wrong.map { it.common.delay }}", wrong.isEmpty())
     }
 
+    /**
+     * 重复节点的**轮间隔必须是显式 0**（而不是回落到 200ms 默认值）。
+     *
+     * Maa 里划飞弹是 `repeat:250, pre_delay:0, post_delay:0, duration:1`
+     * —— 250 次几乎零间隔的快速滑动。轮间隔回落到 200ms 的话，
+     * 这一条就会跑 250×208ms ≈ 52 秒（真机日志里 52 号节点就是这样）。
+     */
+    @Test
+    fun `重复节点有显式轮间隔 且不是 200ms 默认`() {
+        val s = many()
+        val reps = s.actions.filter { (it.common.repeatCount ?: 1) > 1 }
+        assertTrue("应当有重复节点", reps.isNotEmpty())
+        val bad = reps.filter { a ->
+            a.common.repeatDelayValue.isNullOrBlank() ||
+                a.common.repeatDelayUnit != Z.TimeUnit.MILLISECONDS
+        }
+        assertTrue("这些重复节点没写毫秒轮间隔：${bad.map { it.common.repeatCount }}", bad.isEmpty())
+        // 划飞弹那条（250 次）必须接近 0，否则又变回几十秒
+        val heavy = reps.first { (it.common.repeatCount ?: 0) >= 100 }
+        val gap = heavy.common.repeatDelayValue?.toDoubleOrNull() ?: -1.0
+        assertTrue("250 次那条的轮间隔应当是 0，实际 $gap", gap == 0.0)
+    }
+
     @Test
     fun `分段脚本也能解析`() {
         for (i in 1..3) {
