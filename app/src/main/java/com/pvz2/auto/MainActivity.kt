@@ -351,7 +351,19 @@ class MainActivity : AppCompatActivity() {
         pager.adapter = PageAdapter()
         pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
-                renderDots(position)
+                /*
+         * 第 5 页（无尽模式）没有虚拟屏，把预览区那一坨全藏起来。
+         *
+         * 预览画在 activity 层（flPreview），所有页共享；不藏的话布阵台
+         * 只能挤在下半屏 —— 用户原话："不要显示虚拟屏，不然会好挤"。
+         */
+        val endless = position == PAGE_ENDLESS
+        val gone = if (endless) View.GONE else View.VISIBLE
+        findViewById<View>(R.id.flPreview)?.visibility = gone
+        findViewById<View>(R.id.llVdStatus)?.visibility = gone
+        findViewById<View>(R.id.tvVdDetail)?.visibility = gone
+
+        renderDots(position)
                 // ★ 这里**不能**停预览。
                 //
                 //   预览本来就要把画面摆到用户眼前，而画面在第 1 页 ——

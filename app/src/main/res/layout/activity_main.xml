@@ -167,6 +167,7 @@
 
     <!-- 预览下面一行：左边状态，右边帧率。 -->
     <LinearLayout
+        android:id="@+id/llVdStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
