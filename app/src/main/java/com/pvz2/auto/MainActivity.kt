@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.viewpager2.widget.ViewPager2
+import com.pvz2.auto.ui.page.RunLogPage
 import com.pvz2.auto.ui.page.ZjsEditorPage
 import com.pvz2.auto.ui.page.LibraryPage
 import android.os.Bundle
@@ -63,6 +64,7 @@ class MainActivity : AppCompatActivity() {
         const val PAGE_SCREEN = 0
         const val PAGE_SCRIPT = 1
         const val PAGE_ZJS = 2
+    const val PAGE_RUNLOG = 3
         /* PAGE_EDITOR / PAGE_DIAG 已移除：前者只读浏览 MaaFramework 节点、
            后者是手填坐标的调试工具，对用户没有价值。 */
 
@@ -233,6 +235,14 @@ class MainActivity : AppCompatActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        /*
+         * 运行日志目录要在界面进程里也设好。
+         *
+         * 之前只在 AutomationService 里设 baseDir，于是日志页读到的是默认的
+         * /data/local/tmp（空目录），明明跑过却显示"还没有运行日志"。
+         */
+        com.pvz2.auto.core.ZjsLog.baseDir = getExternalFilesDir(null) ?: filesDir
         setContentView(R.layout.activity_main)
 
         // 预览固定在顶部，功能页在下面用 ViewPager2 左右滑动切换。
@@ -382,7 +392,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private inner class PageAdapter : RecyclerView.Adapter<PageAdapter.Holder>() {
-        override fun getItemCount(): Int = 3
+        override fun getItemCount(): Int = 4
 
         /**
          * ★ 必须重写，否则启动即崩。
@@ -401,6 +411,7 @@ class MainActivity : AppCompatActivity() {
                 PAGE_SCREEN -> R.layout.page_screen
                 PAGE_SCRIPT -> R.layout.page_library
                 PAGE_ZJS -> R.layout.page_zjs_editor
+                PAGE_RUNLOG -> R.layout.page_runlog
                 // 兜底：viewType 超出页数说明常量没同步。用第一页的布局
                 // 至少能起来，比崩在启动好。
                 else -> R.layout.page_screen
@@ -422,6 +433,7 @@ class MainActivity : AppCompatActivity() {
                     PAGE_SCREEN -> bindScreenPage(holder.itemView)
                     PAGE_SCRIPT -> LibraryPage(this@MainActivity, holder.itemView).bind()
                     PAGE_ZJS -> ZjsEditorPage(this@MainActivity, holder.itemView).bind()
+                PAGE_RUNLOG -> RunLogPage(this@MainActivity, holder.itemView).bind()
                 }
             }.onFailure {
                 Log.e(TAG, "第 $position 页绑定失败", it)

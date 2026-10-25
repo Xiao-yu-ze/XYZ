@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  第 4 页：运行日志。
+
+  只回答两个问题 —— **跑到哪了**、**哪条卡住 / 花了多久**。
+  列表一行一条动作，点进去才看那条的全部细节（识别到什么、点在哪、为什么跳过）。
+
+  为什么单独一页：日志文件是流水账，手机上看几百行滚不动；
+  而"顺序 + 用时 + 状态"才是调脚本时真正要看的东西。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/runLogRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:paddingHorizontal="12dp"
+    android:paddingTop="10dp">
+
+    <!-- 一行：选哪次运行 + 刷新 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnRunLogPick"
+            style="@style/AppButton.Outline"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="选日志" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnRunLogRefresh"
+            style="@style/AppButton.Outline"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="刷新" />
+    </LinearLayout>
+
+    <!-- 概要：脚本名 · 开始时间 · 成功/跳过条数 · 文件路径 -->
+    <TextView
+        android:id="@+id/tvRunLogHead"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tvRunLogPath"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="10sp"
+        android:alpha="0.7" />
+
+    <!-- 节点列表：顺序 + 类型/名字 + 用时 + 状态 -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="8dp"
+        android:layout_weight="1">
+
+        <LinearLayout
+            android:id="@+id/runLogList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+</LinearLayout>
