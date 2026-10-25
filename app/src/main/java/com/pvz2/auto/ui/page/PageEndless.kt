@@ -64,10 +64,6 @@ class PageEndless(
     /** 关卡（前中后期切换依据）。 */
     private var level = 1
 
-    /** 阶段分界：<=earlyTo 前期；<=midTo 中期；其余后期。 */
-    private var earlyTo = 30
-    private var midTo = 80
-
     /** 当前要放置的操作：ActionType + 卡槽（种植物才有）。 */
     private var curType: Z.ActionType = Z.ActionType.PVZ_PLANT
     private var curSlot = 1
@@ -313,23 +309,44 @@ class PageEndless(
         refreshHint()
     }
 
-    private fun stageOf(): String = when {
-        level <= earlyTo -> "前期"
-        level <= midTo -> "中期"
-        else -> "后期"
+    /** 当前关卡落在哪个阶段（名字）。 */
+    private fun stageOf(): String =
+        stages.getOrNull(stageIndexOf(level))?.name ?: stages.first().name
+
+    /**
+     * 阶段：**用户自己定的**，可增可删，一个也行。
+     *
+     * 原来写死了前/中/后期三段 —— 等于只允许三套阵容。改成一张表：
+     * 每个阶段有自己的名字和「到第几关为止」，最后一个阶段的上界是 ∞。
+     *
+     * 交互：**点一下 = 切到这一阶段**；改上界 / 改名 / 删除走长按菜单。
+     */
+    private class Stage(var name: String, var upTo: Int)
+
+    private val stages = mutableListOf(
+        Stage("前期", 30),
+        Stage("中期", 80),
+        Stage("后期", Int.MAX_VALUE)
+    )
+
+    private var curStage = 0
+
+    /** 关卡落在哪个阶段（返回下标）。 */
+    private fun stageIndexOf(level: Int): Int {
+        stages.forEachIndexed { i, s -> if (level <= s.upTo) return i }
+        return stages.lastIndex
     }
+
+    private fun stageText(s: Stage, index: Int): String =
+        if (s.upTo == Int.MAX_VALUE) "${s.name} ${s.upTo.let { "∞" }}"
+        else "${s.name} ≤${s.upTo}"
 
     private fun refreshStages() {
         stageRow.removeAllViews()
-        val cur = stageOf()
-        for ((name, range) in listOf(
-            "前期" to "1-$earlyTo",
-            "中期" to "${earlyTo + 1}-$midTo",
-            "后期" to "${midTo + 1}+"
-        )) {
-            val on = name == cur
-            stageRow.addView(TextView(host).apply {
-                text = "$name $range"
+        for ((i, s) in stages.withIndex()) {
+            val on = i == curStage
+            val chip = TextView(host).apply {
+                text = if (i == stages.lastIndex) "${s.name} ∞" else "${s.name} ≤${s.upTo}"
                 textSize = 11f
                 gravity = Gravity.CENTER
                 setTextColor(if (on) Color.parseColor("#0E1512") else textMuted)
@@ -338,28 +355,109 @@ class PageEndless(
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     setMargins(dp(2), 0, dp(2), 0)
                 }
+                // 点 = 切换；长按 = 改上界/改名/删除
                 setOnClickListener {
-                    val names = listOf("前期", "中期", "后期")
-                    android.app.AlertDialog.Builder(host)
-                        .setTitle("修改「$name」的关卡上界")
-                        .setItems(
-                            (level..(level + 200)).map { "到第 $it 关" }.toTypedArray()
-                        ) { _, which ->
-                            val v = level + which
-                            if (name == "前期") {
-                                earlyTo = v
-                                if (midTo < v) midTo = v
-                            } else if (name == "中期") {
-                                midTo = v
-                                if (earlyTo > v) earlyTo = v
-                            }
-                            refreshAll()
-                        }
-                        .show()
+                    curStage = i
+                    refreshStages(); refreshHint(); refreshChains()
                 }
-            })
+                setOnLongClickListener {
+                    stageMenu(i)
+                    true
+                }
+            }
+            stageRow.addView(chip)
         }
+        // 末尾一颗「＋」：加阶段
+        stageRow.addView(TextView(host).apply {
+            text = "＋"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(cPlant)
+            background = roundRect(cellEmpty, 8f)
+            layoutParams = LinearLayout.LayoutParams(dp(38), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(2), 0, dp(2), 0)
+            }
+            setOnClickListener { addStage() }
+        })
     }
+
+    private fun addStage() {
+        // 新阶段插在当前最后一段之前，上界 = 上一段上界 + 20（最后一段仍是 ∞）
+        val boundary = stages.lastOrNull()?.upTo ?: 0
+        val prev = if (boundary == Int.MAX_VALUE) {
+            (stages.getOrNull(stages.lastIndex - 1)?.upTo ?: level) + 20
+        } else boundary + 20
+        stages.add(stages.lastIndex, Stage("阶段${stages.size + 1}", prev))
+        curStage = stages.lastIndex - 1
+        refreshStages(); refreshHint()
+    }
+
+    private fun stageMenu(index: Int) {
+        val s = stages.getOrNull(index) ?: return
+        val lastOne = index == stages.lastIndex
+        val items = ArrayList<String>()
+        items.add("改上界（现在是 ${if (lastOne) "∞" else "≤${s.upTo} 关"}）")
+        items.add("改名（现在叫「${s.name}」）")
+        if (stages.size > 1) items.add("删除这个阶段")
+
+        android.app.AlertDialog.Builder(host)
+            .setTitle(s.name)
+            .setItems(items.toTypedArray()) { _, which ->
+                when (which) {
+                    0 -> editStageBound(index)
+                    1 -> editStageName(index)
+                    2 -> {
+                        stages.removeAt(index)
+                        if (curStage >= stages.size) curStage = stages.lastIndex
+                        refreshStages(); refreshHint()
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun editStageBound(index: Int) {
+        val s = stages.getOrNull(index) ?: return
+        if (index == stages.lastIndex) {
+            toast("最后一个阶段没有上界（∞）")
+            return
+        }
+        val et = android.widget.EditText(host).apply {
+            setText(if (s.upTo == Int.MAX_VALUE) "" else s.upTo.toString())
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            hint = "到第几关为止（含）"
+        }
+        android.app.AlertDialog.Builder(host)
+            .setTitle("「${s.name}」的上界")
+            .setView(et)
+            .setPositiveButton("确定") { _, _ ->
+                val v = et.text.toString().trim().toIntOrNull() ?: return@setPositiveButton
+                s.upTo = v
+                // 保持递增：后面的阶段不能比它小
+                for (i in index + 1 until stages.size - 1) {
+                    if (stages[i].upTo < v) stages[i].upTo = v + (i - index) * 20
+                }
+                refreshStages(); refreshHint()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun editStageName(index: Int) {
+        val s = stages.getOrNull(index) ?: return
+        val et = android.widget.EditText(host).apply { setText(s.name) }
+        android.app.AlertDialog.Builder(host)
+            .setTitle("阶段名")
+            .setView(et)
+            .setPositiveButton("确定") { _, _ ->
+                val v = et.text.toString().trim()
+                if (v.isNotEmpty()) s.name = v
+                refreshStages(); refreshHint()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
 
     private fun refreshBoard() {
         for (r in 1..PvzCoords.ROWS) {
@@ -466,7 +564,8 @@ class PageEndless(
                     0 -> Z.Condition(
                         type = Z.ConditionType.JS_EXPRESSION,
                         extra = HashMap<String, Any?>().apply {
-                            put("expression", "Number(zdjl.getVar('无尽关卡')||0) >= $midTo")
+                            val bound = stages.getOrNull(curStage)?.upTo?.takeIf { it != Int.MAX_VALUE } ?: level
+                            put("expression", "Number(zdjl.getVar('无尽关卡')||0) >= $bound")
                         }
                     )
                     1 -> Z.Condition(
