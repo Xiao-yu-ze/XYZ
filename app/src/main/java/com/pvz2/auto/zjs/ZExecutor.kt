@@ -1047,7 +1047,7 @@ class ZExecutor(
 
             // ---- 按键
             Z.ActionType.KEY -> {
-                val kc = (action.extra["keyCode"] as? Number)?.toInt()
+                val kc = intExtra(action.extra, "keyCode")
                 if (kc == null) {
                     skipped.add(Result.Skip(index, label, "缺 keyCode"))
                     return null
@@ -1339,7 +1339,7 @@ class ZExecutor(
                                 okText = okText.ifBlank { "确定" },
                                 cancelText = cancelText.ifBlank { "取消" },
                                 autoBtn = autoBtn,
-                                autoDelayMs = (action.extra["dialogAutoClickDelay"] as? Number)
+                                autoDelayMs = intExtra(action.extra, "dialogAutoClickDelay")
                                     ?.toInt() ?: 3000
                             )
                         )
@@ -2249,7 +2249,10 @@ class ZExecutor(
             }
 
             Z.ConditionType.RANDOM -> {
-                val p = (cond.extra["percent"] as? Number)?.toInt() ?: 50
+                val raw = cond.extra["percent"]
+                val p = intExtra(cond.extra, "percent") ?: 50.also {
+                    if (raw != null) log("[条件] 随机运行的概率「$raw」读不出来，按 50% 处理")
+                }
                 (0 until 100).random() < p
             }
 
@@ -2272,7 +2275,10 @@ class ZExecutor(
 
             // ---- 限制运行次数（FIELDS.md:271）
             Z.ConditionType.LIMIT_RUN_TIMES -> {
-                val limit = (cond.extra["limitTimes"] as? Number)?.toInt() ?: 0
+                val limitRaw = cond.extra["limitTimes"]
+            val limit = intExtra(cond.extra, "limitTimes") ?: 0.also {
+                if (limitRaw != null) log("[条件] 限制次数「$limitRaw」读不出来，按不限处理")
+            }
                 val key = condKey(cond)
                 // resetTime 决定"脚本整体重复"时要不要清零：
                 //   afterRepeat（每轮清零） / afterFinish（默认，动作跑完清零）
@@ -2330,7 +2336,7 @@ class ZExecutor(
             // ---- 时间间隔（FIELDS.md:275）
             Z.ConditionType.TIME_INTERVAL -> {
                 val v = cond.extra["timeIntervalValue"]?.toString()
-                val unit = (cond.extra["timeIntervalUnit"] as? Number)?.toInt() ?: 1
+                val unit = intExtra(cond.extra, "timeIntervalUnit") ?: 1
                 val gapMs = (randomIn(v) ?: 0.0).toLong() * unitToMs(unit)
                 val now = System.currentTimeMillis()
                 val key = condKey(cond)
@@ -2446,6 +2452,20 @@ class ZExecutor(
     }
 
     /** 反相（FIELDS.md:254）。 */
+    /**
+     * 宽容取整：`Number` 和"看起来是数字的字符串"都收。
+     *
+     * 为什么需要：`percent`、`limitTimes` 这类字段，本机界面写的是 Int，
+     * 但手动改过的 .zjs / 别处导出的脚本里常是 `"100"` 这样的字符串。
+     * 原来一律 `as? Number` —— 字符串直接不匹配，然后**静默**回落默认值：
+     * 随机概率变 50%、限制次数变 0（0 等于不限），用户完全看不出来。
+     */
+    private fun intExtra(extra: Map<String, Any?>, key: String): Int? = when (val v = extra[key]) {
+        is Number -> v.toInt()
+        is String -> v.trim().toDoubleOrNull()?.toInt()
+        else -> null
+    }
+
     private fun applyInvert(cond: Z.Condition, value: Boolean): Boolean =
         if (cond.runWhenFalse) !value else value
 

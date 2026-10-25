@@ -649,7 +649,15 @@ class ZRealMatcher(
             val total = (mask.rows() * mask.cols()).coerceAtLeast(1)
             val ratio = nonzero.toDouble() / total
             lastScore = ratio
-            note("颜色 占比${"%.1f".format(ratio * 100)}% 范围(${roi.joinToString(",")}) 容差${pos.similarPercent ?: 100}%")
+            /*
+         * 原来打的是"占比 x%"：颜色匹配只要有一个像素过线就算命中，
+         * 而 ROI 是整屏 —— 占比永远是 0.0%，看了等于没看。
+         * 改成命中像素数和扫描面积，至少能判断"真的找到了"还是"凑巧一个点"。
+         */
+        note(
+            "颜色 命中 $nonzero 个像素 / 扫描 $total 个 范围(${roi.joinToString(",")}) " +
+                "容差${pos.similarPercent ?: 100}%"
+        )
             // Maa 语义：至少一个像素（count = 1）
             val ok = nonzero > 0
             if (!ok) {

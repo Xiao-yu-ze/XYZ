@@ -964,8 +964,9 @@ class ZjsEditorPage(
                 setPadding(0, dp(14), 0, dp(2))
                 addView(
                     View(ctx).apply {
-                        setBackgroundColor(ctx.getColor(R.color.ink_faint))
-                        alpha = 0.25f
+                        // ink_faint@0.25 太淡，实际几乎看不见（用户反馈"没看到"）
+                        setBackgroundColor(ctx.getColor(R.color.ink_muted))
+                        alpha = 0.45f
                         layoutParams = LinearLayout.LayoutParams(
                             LinearLayout.LayoutParams.MATCH_PARENT, dp(1)
                         )
