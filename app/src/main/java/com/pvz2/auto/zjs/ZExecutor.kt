@@ -226,7 +226,17 @@ class ZExecutor(
      *   表现就是"点了停止没反应，只能杀进程"。
      */
     /** Maa 的 pre_delay / post_delay 默认值：没写 delay 时按这个走。 */
-    private val DEFAULT_DELAY_MS = 200
+    /**
+     * 动作没写 `delay` 时的缺省等待。
+     *
+     * 取 **100ms**：这是 自动精灵 的默认节奏（手写脚本里几乎每条都是
+     * `"delay":"100","delayUnit":0`）。原来是 200，于是"没写等待"的动作
+     * 比作者预期慢一倍 —— 用户实测反馈"等待缺省 100ms 没生效"。
+     *
+     * 注意：Maa 转换过来的节点自带 pre_delay/post_delay（Maa 自己的缺省是 200），
+     * 那些是**显式**写进文件的，不受这里影响。
+     */
+    private val DEFAULT_DELAY_MS = 100
 
     @Volatile
     private var stopped = false
@@ -491,9 +501,11 @@ class ZExecutor(
                      */
                     when (val resolved = resolveJump(outcome.jumpTo!!, pc, actions.size)) {
                         is JumpResult.Found -> {
+                                    val fromPc = pc
                             pc = resolved.index
                             log(
-                                "   ↳ 完成 [${pc + 1}] 用时 ${System.currentTimeMillis() - nodeStartedAt}ms" +
+                            // 序号用跳转前的位置：pc 已被改成目标，用它会和下面那个真节点撞号
+                                "   ↳ 完成 [${fromPc + 1}] 用时 ${System.currentTimeMillis() - nodeStartedAt}ms" +
                                     "（识别 ${recognizeMs}ms × ${recognizeCount} 次）→ 跳转"
                             )
                             continue
@@ -2422,9 +2434,19 @@ class ZExecutor(
      * [defaultMs]：没写 delay 时用多少毫秒。
      *
      * Maa 的 pre_delay / post_delay 默认都是 200ms，所以「真的去操作画面」的动作
-     * 走默认 200ms；控制流动作（跳转、等待候选）传 0 —— 否则「无限循环 + 每步 200ms」
+     * 走默认 100ms；控制流动作（跳转、等待候选）传 0 —— 否则「无限循环 + 每步等待」
      * 的脚本会在死循环保护生效前爬几小时，测试里那个死循环用例直接跑不完。
      */
+    /** 可中断的纯等待（按住时长、微间隔用）。 */
+    private fun waitBusy(ms: Long) {
+        var left = ms
+        while (left > 0 && !stopped) {
+            val step = minOf(left, 20L)
+            Thread.sleep(step)
+            left -= step
+        }
+    }
+
     private fun waitDelay(value: String?, unit: Z.TimeUnit, defaultMs: Int = 0) {
         val n = randomIn(value)
         val total: Long = if (n == null) {
@@ -2483,7 +2505,7 @@ class ZExecutor(
          * ★ 脚本级 delay 是 "0" 时**不算指定**。
          *
          * 很多脚本（包括我们转换出来的）baseInfo 里写着 delay:"0"，意思只是
-         * "没有全局额外节奏"；把它当成"每条都等 0ms"就会把动作自己的默认 200ms
+         * "没有全局额外节奏"；把它当成"每条都等 0ms"就会把动作自己的默认等待
          * 一起压掉 —— 真机表现是：编辑器里显示「等待 200（默认）」，
          * 实际日志里一条滑动只用了 4ms，连点全挤在一起。
          */
@@ -2540,6 +2562,14 @@ class ZExecutor(
         )
             try {
                 inject.tap(hit.x, hit.y, hold)
+                /*
+                 * 「按住 N ms」要真的占时间。
+                 *
+                 * 注入层把 hold 只写进两个事件的 eventTime 差值、不睡 —— 于是连点 35 次
+                 * 该有的时长，实际 178ms 就发完了（每下 3.5ms），用户看到的就是
+                 * "这条一下就结束了"，参数形同虚设。hold <= 0（极速模式）不等，与协议一致。
+                 */
+                if (hold > 0) waitBusy(hold.toLong())
             } catch (e: Throwable) {
                 /*
                  * 一个点注入失败**不该**让整条脚本以"执行异常"结束 ——

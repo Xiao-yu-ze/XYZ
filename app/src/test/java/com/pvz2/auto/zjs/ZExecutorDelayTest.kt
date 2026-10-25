@@ -52,9 +52,14 @@ class ZExecutorDelayTest {
         assertTrue("200ms 的等待没生效（总耗时 ${cost}ms）：$logs", cost >= 180)
     }
 
-    /** 不写 delay 时按默认 200ms（有位置的动作，见 delayDefaultMs）。 */
+    /**
+     * 不写 delay 时按**默认 100ms** 走（自动精灵的节奏）。
+     *
+     * 原来是 200，于是"没写等待"的动作比作者预期慢一倍 ——
+     * 用户实测反馈「等待缺省 100ms 没生效」。
+     */
     @Test
-    fun `不写 delay 时按默认 200ms`() {
+    fun `不写 delay 时按默认 100ms`() {
         val logs = ArrayList<String>()
         val t0 = System.currentTimeMillis()
         ex(logs).run(
@@ -65,6 +70,7 @@ class ZExecutorDelayTest {
             )
         )
         val cost = System.currentTimeMillis() - t0
-        assertTrue("默认 200ms 没生效（总耗时 ${cost}ms）：$logs", cost >= 150)
+        assertTrue("默认 100ms 没生效（总耗时 ${cost}ms）：$logs", cost >= 80)
+        assertTrue("默认值变成了 200ms 那么久（总耗时 ${cost}ms）：$logs", cost < 220)
     }
 }

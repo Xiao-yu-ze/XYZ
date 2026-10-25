@@ -136,7 +136,14 @@ object ZActionDescriber {
             ZFieldEditor.actionTypeLabel(action.type),
             Kind.ENUM,
             ZFieldEditor.actionTypeLabels(),
-            field = "type"
+            field = "type",
+            /*
+             * 「类型」这行的问号要解释**这个动作是干嘛的**（"点击节点"和"点击图片"
+             * 差在哪、本机哪部分做不到），而不是通用说明"改了类型会重建位置对象" ——
+             * 用户的原话是"不知道每个节点是干嘛的"。通用说明仍在 ZFieldHelp 的
+             * "type" 里，靠 field 兜底。
+             */
+            help = ZFieldHelp.ofAction(ZFieldEditor.actionTypeHelpKey(action.type))
         )
         action.type.controlRunType?.let { rows += Row("控制方式", Z.controlRunTypeLabel(it) ?: it) }
         if (!action.type.executable) {

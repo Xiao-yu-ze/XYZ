@@ -14,9 +14,27 @@ class ActionTypeHelpCoverageTest {
     @Test
     fun `所有可添加的动作类型都有说明`() {
         val missing = ZFieldEditor.addableActionTypes()
-            .map { t -> t.controlRunType?.let { "${t.wire}·$it" } ?: t.wire }
+            .map { t -> ZFieldEditor.actionTypeHelpKey(t) }
             .filter { ZFieldHelp.ofAction(it) == null }
         assertTrue("这些动作类型没有说明：\n  " + missing.joinToString("\n  "), missing.isEmpty())
+    }
+
+    /**
+     * 卡片里「类型」那一行的问号必须解释**这个动作干什么**。
+     *
+     * 用户反馈过两次：先是"动作类型也加个问号，点击会解释说明"，
+     * 后来说"节点类型的问号不见了，不知道每个节点是干嘛的" ——
+     * 中间被我在删别的东西时弄丢过一次。这条守住它。
+     */
+    @Test
+    fun `卡片里类型行的问号是动作说明`() {
+        val bad = ZFieldEditor.addableActionTypes().filter { t ->
+            val key = ZFieldEditor.actionTypeHelpKey(t)
+            val row = ZActionDescriber.describe(Z.Action(type = t))
+                .firstOrNull { it.label == "类型" }
+            row?.help == null || row.help != ZFieldHelp.ofAction(key)
+        }.map { ZFieldEditor.actionTypeHelpKey(it) }
+        assertTrue("这些类型的「类型」行没有动作说明：$bad", bad.isEmpty())
     }
 
     @Test

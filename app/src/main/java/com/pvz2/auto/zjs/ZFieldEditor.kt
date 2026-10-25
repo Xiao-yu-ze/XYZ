@@ -69,6 +69,17 @@ object ZFieldEditor {
      * @return 新的动作；路径不认识时返回 null（调用方应记录，不要静默）
      */
     fun apply(action: Z.Action, field: String, value: String): Z.Action? {
+        /*
+         * ★ 候选字段必须**先**处理。
+         *
+         * 下面那段看到字段里有 "." 就当"位置前缀 + 字段名"（位置./起点./终点.），
+         * 前缀不在 POS_PREFIXES 里直接 return null —— 于是 `cand.add`、
+         * `cand.0.cond` 这些全被挡在门外：用户点「添加候选」毫无反应
+         * （真机反馈）。
+         */
+        if (field.startsWith("cand.")) return applyCandidate(action, field, value)
+        if (field == "onTimeoutMode") return applyTimeoutMode(action, value)
+
         // ---- 位置类：前缀 + 字段名
         val dot = field.indexOf('.')
         if (dot > 0) {
@@ -295,6 +306,15 @@ object ZFieldEditor {
         Z.ConditionType.NODE -> Z.PosType.NODE
         else -> Z.PosType.LOCATION
     }
+
+    /**
+     * 动作类型在**帮助表**里的键：`wire` 或 `wire·controlRunType`。
+     *
+     * 6 个「控制执行」子类型必须带 controlRunType 才分得开（否则六条说明一模一样），
+     * 加动作的选择器和卡片里的「类型」行都得用同一套键，不然问号会空掉。
+     */
+    fun actionTypeHelpKey(t: Z.ActionType): String =
+        t.controlRunType?.let { "${t.wire}·$it" } ?: t.wire
 
     private fun parsePercent(raw: String): Int? {
         val t = raw.trim().removeSuffix("%").trim()

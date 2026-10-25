@@ -328,7 +328,11 @@ class Conv:
             else:
                 pt = self.pts_of(target) if target is not None else (640, 360)
                 d = {"type": "点击",
-                     "posData": {"type": "location", "x": str(pt[0]), "y": str(pt[1])}}
+                     "posData": {"type": "location", "x": str(pt[0]), "y": str(pt[1])},
+                     # Maa 的 Click 是"点一下"，没有按住时长；缺省给 10ms。
+                     # 写 100（界面默认）会让 35 连点变成 3.5 秒，
+                     # 而手写脚本里的点波就是 duration 5~20ms。
+                     "duration": str(int(node.get("duration") or 10))}
                 if cond:
                     d["condition"] = cond
         elif atype == "Swipe":
