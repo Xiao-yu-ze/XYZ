@@ -1860,8 +1860,17 @@ class ZExecutor(
             /*
              * 下标全部越界：这是**脚本配置问题**，不是"识别不到"。
              * 所以不设 abortReason —— 让上层只跳过这一条，不要因此结束整个任务。
+             *
+             * ★ 但要看清楚是哪一种"空"：周围条件把候选点全过滤光时，
+             *   indexNum 是空的，原来却报 `indexNum「null」指定的下标都超出了命中数 0`
+             *   —— 用户会去改「选第几个」，实际该改的是周围条件。
              */
-            val msg = "indexNum「${pos.indexNum}」指定的下标都超出了命中数 ${hits.size}"
+            val msg = when {
+                hits.isEmpty() && pos.extra.containsKey("filterByAroundConditionSet") ->
+                    "周围条件把候选点位全部过滤掉了"
+                hits.isEmpty() -> "没有命中任何点位"
+                else -> "indexNum「${pos.indexNum}」指定的下标都超出了命中数 ${hits.size}"
+            }
             skipped.add(Result.Skip(index, label, msg))
             log("[动作 $index] $label — $msg")
             return null
