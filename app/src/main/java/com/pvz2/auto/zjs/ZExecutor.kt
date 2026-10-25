@@ -358,6 +358,13 @@ class ZExecutor(
         scriptBaseDelayUnit = script.baseInfo.delayUnit
         var loop = 0
 
+        /*
+         * 节点耗时用的计数器。
+         *
+         * recognizeMs 只累加"真正去画面里找"的时间（不含等待间隔），
+         * 这样"这条为什么慢"能分清是识别慢还是单纯在等画面。
+         */
+
         while (!stopped) {
             // 0 与负数都是无限
             if (!scriptInfinite && loop >= scriptRepeat) break
@@ -385,6 +392,8 @@ class ZExecutor(
                  *   猜哪段属于哪条动作。带上序号/类型/节点名，配合下面
                  *   每步的实测值，就能直接定位到"哪个字段算错了"。
                  */
+                resetRecognizeStats()
+                val nodeStartedAt = System.currentTimeMillis()
                 log("── [${pc + 1}/${actions.size}] ${rawAction.type.wire} · $label")
 
                 /*
@@ -483,6 +492,10 @@ class ZExecutor(
                     when (val resolved = resolveJump(outcome.jumpTo!!, pc, actions.size)) {
                         is JumpResult.Found -> {
                             pc = resolved.index
+                            log(
+                                "   ↳ 完成 [${pc + 1}] 用时 ${System.currentTimeMillis() - nodeStartedAt}ms" +
+                                    "（识别 ${recognizeMs}ms × ${recognizeCount} 次）→ 跳转"
+                            )
                             continue
                         }
 
@@ -510,9 +523,23 @@ class ZExecutor(
                     }
                 }
                 if (outcome.stop) {
+                    log(
+                        "   ↳ 完成 [${pc + 1}] 用时 ${System.currentTimeMillis() - nodeStartedAt}ms" +
+                            "（识别 ${recognizeMs}ms × ${recognizeCount} 次）"
+                    )
                     finishRunLog(executed, skipped, null)
                     return Result(executed, skipped, null)
                 }
+                /*
+                 * 这条的耗时。识别耗时单独列出来 ——
+                 * 一条动作慢，可能是识别慢，也可能大部分时间在等画面（重试间隔）。
+                 */
+                val nodeCost = System.currentTimeMillis() - nodeStartedAt
+                log(
+                    "   ↳ 完成 [${pc + 1}] 用时 ${nodeCost}ms" +
+                        "（识别 ${recognizeMs}ms × ${recognizeCount} 次）" +
+                        ""
+                )
                 executed++
                 pc++
             }
@@ -859,7 +886,8 @@ class ZExecutor(
                 log(
                     "   识别：" + describePos(pos) + " → 命中 ${hits.size} 个" +
                         (matcher.lastDetail()?.let { " | $it" } ?: "") +
-                        " | " + (hits.firstOrNull()?.let { "首点(${it.x},${it.y})" } ?: "无")
+                        " | " + (hits.firstOrNull()?.let { "首点(${it.x},${it.y})" } ?: "无") +
+                        " | 本次识别 ${lastSearchMs}ms"
                 )
                 tapHits(hits, hold, action, index, label, skipped, afterLocateMs)
                 Outcome()
@@ -1988,8 +2016,33 @@ class ZExecutor(
         return (preMs + reps * (effectiveDur + repeatGapMs)).coerceIn(1, 600_000)
     }
 
-    /** 按位置类型找一遍。抽出来是因为重试要重复调用它。 */
-    private fun searchPos(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit> =
+    /**
+     * 按位置类型找一遍。抽出来是因为重试要重复调用它。
+     *
+     * 顺带统计"真正识别耗时"（不含重试间隔）：日志里要能分清
+     * "识别慢"和"在等画面"，这两件的处理方式完全不同。
+     */
+    private var lastSearchMs: Long = 0
+    private var recognizeMs: Long = 0
+    private var recognizeCount: Int = 0
+
+    /** 进入一个新节点时清空统计。 */
+    private fun resetRecognizeStats() {
+        recognizeMs = 0
+        recognizeCount = 0
+        lastSearchMs = 0
+    }
+
+    private fun searchPos(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit> {
+        val t0 = System.nanoTime()
+        val r = searchPosRaw(pos, rect)
+        lastSearchMs = (System.nanoTime() - t0) / 1_000_000
+        recognizeMs += lastSearchMs
+        recognizeCount++
+        return r
+    }
+
+    private fun searchPosRaw(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit> =
         when (pos.type) {
             Z.PosType.IMAGE -> matcher.findImage(pos, rect)
             Z.PosType.TEXT -> matcher.findText(pos, rect)

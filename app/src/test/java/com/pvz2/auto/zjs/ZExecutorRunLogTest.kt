@@ -105,6 +105,60 @@ class ZExecutorRunLogTest {
         assertTrue("重试行没带识别细节：$line", line!!.contains("| 文字 最佳41%"))
     }
 
+    /**
+     * 每个节点都要有"用了多久"，而且把识别耗时单独列出来。
+     *
+     * 用户问的是"每个节点的运行时间、持续了多久、识别到了什么都有吗"。
+     * 时间戳只能看出行与行之间的间隔，看不出：
+     *  · 这条动作本身跑了多久；
+     *  · 慢在识别，还是慢在等画面（重试间隔）。
+     */
+    @Test
+    fun `每个节点都有耗时和识别耗时`() {
+        val logs = ArrayList<String>()
+        val ex = ZExecutor(Rec(), ZPosResolver.Screen(1280, 720, 1.5f), DetailMatcher()) {
+            logs.add(it)
+        }
+        ex.run(
+            script(
+                """{"type":"点击文字","posData":{"type":"text","text":"开始战斗","similarPercent":90}}""",
+                """{"type":"控制执行","controlRunType":"stop"}"""
+            )
+        )
+        val done = logs.filter { it.contains("↳ 完成") }
+        assertEquals("两条动作都该有完成行：$logs", 2, done.size)
+        assertTrue("完成行里没有用时：$done", done.all { it.contains("用时") && it.contains("ms") })
+        assertTrue("完成行里没有识别耗时：$done", done.all { it.contains("识别") && it.contains("次") })
+        // 识别细节行也要带本次耗时
+        val rec = logs.first { it.contains("识别：") }
+        assertTrue("识别行没有本次耗时：$rec", rec.contains("本次识别") && rec.contains("ms"))
+    }
+
+    /**
+     * 跳转的节点也要有"完成 + 用时"。
+     *
+     * 真机日志里发现过：等待候选命中后直接跳走（Maa 的 next 语义），
+     * 那一跳的分支没有记完成行 —— 于是"这个分支节点花了多久"就丢了。
+     */
+    @Test
+    fun `跳转分支的节点也有完成行`() {
+        val logs = ArrayList<String>()
+        val ex = ZExecutor(Rec(), ZPosResolver.Screen(1280, 720, 1.5f), DetailMatcher()) {
+            logs.add(it)
+        }
+        ex.run(
+            // 往前跳到标了 jumpId 的那条（往回跳会成死循环，maxSteps 兜住）
+            script(
+                """{"type":"控制执行","controlRunType":"jumpTo","jumpToPosition":"目标"}""",
+                """{"type":"控制执行","controlRunType":"setJumpId","jumpId":"目标"}""",
+                """{"type":"控制执行","controlRunType":"stop"}"""
+            )
+        )
+        val jumped = logs.filter { it.contains("↳ 完成") && it.contains("→ 跳转") }
+        assertEquals("跳转的那条应当有完成行：$logs", 1, jumped.size)
+        assertTrue("跳转的完成行里缺少用时：$jumped", jumped[0].contains("用时") && jumped[0].contains("ms"))
+    }
+
     @Test
     fun `每次运行会写一个日志文件`() {
         val dir = File(System.getProperty("java.io.tmpdir"), "zjslog-${System.nanoTime()}")
