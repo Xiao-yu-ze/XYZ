@@ -801,39 +801,59 @@ class PageEndless(
     /** 启用的预置识别（默认三个全开：结算 / 开始战斗 / 补给入口）。 */
     private val usePresets: MutableSet<String> =
         com.pvz2.auto.zjs.PvzRecognizers.PRESETS.map { it.key }.toMutableSet()
+    /** 进关后是否自动点一下加速（用户可关，默认关）。 */
+    private var autoSpeed = false
 
     /**
-     * 把**所有阶段**编译成一份可运行的脚本。
+     * 把布阵台编译成一份能跑的脚本。
      *
-     * 结构：
-     *   设置变量 无尽关卡 = N
-     *   [阶段1] 运行多个动作（条件：关卡落在本阶段）→ 单次链 + 循环链
-     *   [阶段2] 同上
-     *   ...
-     *   收尾链（全局，触发条件由用户设）
+     * 结构照 MAA 那套实际跑法（用户确认过）：
      *
-     * 每 [checkEvery] 个游戏动作插一个「等待候选」节点做状态识别 ——
-     * 这就是用户要的"自动识别"，不需要他自己摆。
+     * ```text
+     * 设置变量 无尽关卡 = N
+     * :轮询
+     *   状态轮询（等待候选，三个预置识别）
+     *     命中「开始战斗」→ 跳 进关
+     *     命中「补给/BOSS入口」→ 跳 补给
+     *     命中「结算·继续挑战」→ 跳 结算
+     *   :进关
+     *     （可选）点加速
+     *     每个阶段一段（条件：关卡落在本阶段）→ 单次链 + 循环链
+     *     跳回 轮询
+     *   :补给
+     *     点「查看」→（分类选择待 UI 补）→ 跳回 轮询
+     *   :结算
+     *     无尽关卡 +1 → 跳回 轮询
+     * ```
+     *
+     * 用户原话："+1 之后是回到轮询容器重来一遍"；"每 5 的倍数关卡前会遇到补给，
+     * 5 的倍数那关是 boss 关，选完补给进 boss 的选卡界面"；"加速要不要内建
+     * 由用户决定"。
      */
     fun buildActions(): List<Z.Action> {
         val out = ArrayList<Z.Action>()
-        out.add(
-            Z.Action(
-                type = Z.ActionType.SET_VARS,
-                common = Z.ActionCommon(delay = "0"),
-                extra = HashMap<String, Any?>().apply {
-                    put("vars", org.json.JSONArray().put(varJson("无尽关卡", level)))
-                }
-            )
-        )
+        out.add(setVarNode("无尽关卡", level.toString()))
+        out.add(jumpLabel("轮询"))
+        out.add(statePollNode())
+        out.add(jumpLabel("进关"))
 
+        if (autoSpeed) {
+            out.add(
+                Z.Action(
+                    type = Z.ActionType.PVZ_SPEED,
+                    common = Z.ActionCommon(delay = "100"),
+                    extra = HashMap<String, Any?>().apply { put("pvzChain", PvzChainModel.ONCE) }
+                )
+            )
+        }
+
+        // 每个阶段一段，条件按关卡变量判
         var prevBound = 0
         var pending = 0
         for (st in stages) {
             val m = stageChains[st.id]
             val once = m?.get(PvzChainModel.ONCE).orEmpty()
             val loop = m?.get(PvzChainModel.LOOP).orEmpty()
-            val bound = st.upTo
             if (once.isNotEmpty() || loop.isNotEmpty()) {
                 val body = ArrayList<Z.Action>()
                 for (a in once) {
@@ -860,15 +880,37 @@ class PageEndless(
                         scriptSet = body,
                         common = Z.ActionCommon(
                             delay = "0",
-                            condition = rangeCondition(prevBound, bound, st.name)
+                            condition = rangeCondition(prevBound, st.upTo, st.name)
                         )
                     )
                 )
             }
-            prevBound = bound
+            prevBound = st.upTo
         }
+        out.add(jumpToNode("轮询"))
 
-        // 收尾链（最后一个阶段的收尾，挂用户设的触发条件）
+        // 补给段：点「查看」进去，然后回轮询等 boss 的「开始战斗」
+        out.add(jumpLabel("补给"))
+        out.add(
+            // 补给界面的「查看」按钮 = MAA 的 [1499,526] × 2/3 ≈ (999,350)
+            Z.Action(
+                type = Z.ActionType.CLICK,
+                posData = Z.PosData(
+                    type = Z.PosType.LOCATION,
+                    x = com.pvz2.auto.zjs.ZValue.Px("999", 999.0),
+                    y = com.pvz2.auto.zjs.ZValue.Px("350", 350.0)
+                ),
+                common = Z.ActionCommon(delay = "300")
+            )
+        )
+        out.add(jumpToNode("轮询"))
+
+        // 结算段：关卡 +1 后回轮询重来
+        out.add(jumpLabel("结算"))
+        out.add(jsNode("zdjl.setVar('无尽关卡', Number(zdjl.getVar('无尽关卡')||0) + 1); log('关卡 +1 → ' + zdjl.getVar('无尽关卡'));"))
+        out.add(jumpToNode("轮询"))
+
+        // 收尾链：挂在最后（由用户设的触发条件控制）
         val lastEnd = stages.lastOrNull()?.let { stageChains[it.id] }
             ?.get(PvzChainModel.END).orEmpty()
         for ((i, a) in lastEnd.withIndex()) {
@@ -882,13 +924,61 @@ class PageEndless(
         return out
     }
 
-    private fun varJson(name: String, value: Int) = org.json.JSONObject().apply {
+    /** 「状态轮询」：三个预置识别按顺序判，命中就跳到对应段。 */
+    private fun statePollNode(): Z.Action {
+        val cands = org.json.JSONArray()
+        fun add(presetKey: String, target: String) {
+            val ps = com.pvz2.auto.zjs.PvzRecognizers.PRESETS.first { it.key == presetKey }
+            cands.put(
+                org.json.JSONObject().apply {
+                    put("condition", ps.build().toJson())
+                    put("jumpTo", target)
+                }
+            )
+        }
+        add("start", "进关")
+        add("supply", "补给")
+        add("settle", "结算")
+        val o = org.json.JSONObject().apply {
+            put("type", "等待候选")
+            put("delay", "0")
+            put("desc", "状态轮询")
+            put("candidates", cands)
+        }
+        return Z.Action.parse(o)!!
+    }
+
+    private fun jumpLabel(id: String): Z.Action = Z.Action(
+        type = Z.ActionType.CONTROL_SET_JUMP_ID,
+        common = Z.ActionCommon(jumpId = id, delay = "0")
+    )
+
+    private fun jumpToNode(target: String): Z.Action = Z.Action(
+        type = Z.ActionType.CONTROL_JUMP,
+        common = Z.ActionCommon(delay = "0"),
+        extra = HashMap<String, Any?>().apply { put("jumpToPosition", target) }
+    )
+
+    private fun setVarNode(name: String, value: String): Z.Action = Z.Action(
+        type = Z.ActionType.SET_VARS,
+        common = Z.ActionCommon(delay = "0"),
+        extra = HashMap<String, Any?>().apply { put("vars", org.json.JSONArray().put(varJson(name, value))) }
+    )
+
+    private fun jsNode(code: String): Z.Action = Z.Action(
+        type = Z.ActionType.RUN_JS,
+        common = Z.ActionCommon(delay = "0"),
+        extra = HashMap<String, Any?>().apply { put("jsCode", code) }
+    )
+
+
+    private fun varJson(name: String, value: String) = org.json.JSONObject().apply {
         put("name", name)
         put(
             "value",
             org.json.JSONObject().apply {
                 put("varType", "number")
-                put("valueExp", value.toString())
+                put("valueExp", value)
             }
         )
     }
