@@ -48,7 +48,7 @@ object PvzChainModel {
     val PVZ_TYPES: Set<Z.ActionType> = setOf(
         Z.ActionType.PVZ_PLANT, Z.ActionType.PVZ_FEED, Z.ActionType.PVZ_SHOVEL,
         Z.ActionType.PVZ_TAP_CELL, Z.ActionType.PVZ_ARTIFACT,
-        Z.ActionType.PVZ_WAVE, Z.ActionType.PVZ_SPEED
+        Z.ActionType.PVZ_WAVE, Z.ActionType.PVZ_SPEED, Z.ActionType.PVZ_SWITCH_DECK
     )
 
     /** 把脚本里的游戏动作按链分组（保持原相对顺序）。 */

@@ -825,7 +825,7 @@ return PosGroup(rec, par, oth)
     private val PVZ_TYPES = setOf(
         Z.ActionType.PVZ_PLANT, Z.ActionType.PVZ_FEED, Z.ActionType.PVZ_SHOVEL,
         Z.ActionType.PVZ_TAP_CELL, Z.ActionType.PVZ_ARTIFACT,
-        Z.ActionType.PVZ_WAVE, Z.ActionType.PVZ_SPEED
+        Z.ActionType.PVZ_WAVE, Z.ActionType.PVZ_SPEED, Z.ActionType.PVZ_SWITCH_DECK
     )
 
     private val CLICK_FAMILY = setOf(

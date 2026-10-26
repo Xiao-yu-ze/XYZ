@@ -72,7 +72,27 @@ object PvzCoords {
 
     fun artifact(key: String?): Artifact? = ARTIFACTS.firstOrNull { it.key == key }
 
-    /** 点开神器图标后，等神器选择器弹出来的时间。 */
+    // ---------------------------------------------------------------- 切换编队
+
+    /** 编队最多 6 个（用户确认）。 */
+    const val DECK_COUNT = 6
+
+    /**
+     * 编队号那一竖条（用户实测 ROI `9.84% 16.53% 13.75% 97.64%`，换算成 1280×720）。
+     * 行号识别就扫这一条；点编队也用同一块。
+     */
+    val DECK_AREA = intArrayOf(126, 119, 176, 703)
+
+    /** 编队列表的滑动：从下往上翻（用户脚本 `15.08%,86.67% → 15.31%,31.39%`）。 */
+    val DECK_SWIPE_UP = intArrayOf(193, 624, 196, 226)
+
+    /** 单次滑动时长（用户脚本 duration=1500）。 */
+    const val DECK_SWIPE_MS = 1500
+
+    /** 连续滑这么多次还没认出目标，就反向滑（用户："划个5、6次就往反方向划"）。 */
+    const val DECK_REVERSE_AFTER = 6
+
+        /** 点开神器图标后，等神器选择器弹出来的时间。 */
     const val ARTIFACT_PICK_GAP_MS = 350L
 
     /** 「下一波」按钮。 */

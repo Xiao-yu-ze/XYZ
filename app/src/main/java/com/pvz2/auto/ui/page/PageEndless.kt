@@ -471,6 +471,12 @@ class PageEndless(
      */
     private val stageChains = HashMap<String, HashMap<String, MutableList<Z.Action>>>()
 
+    /**
+     * 每个阶段要切到第几编队：0 = 不变（不切换），1..6 = 切到对应编队。
+     * 键是 Stage.id。
+     */
+    private val stageDeck = HashMap<Int, Int>()
+
     /** 当前在编辑「普通关」还是「Boss 关」的那套链。 */
     private var curBoss = false
 
@@ -507,7 +513,11 @@ class PageEndless(
         for ((i, s) in stages.withIndex()) {
             val on = i == curStage
             val chip = TextView(host).apply {
-                text = if (i == stages.lastIndex) "${s.name} ∞" else "${s.name} ≤${s.upTo}"
+                text = buildString {
+                    append(if (i == stages.lastIndex) "${s.name} ∞" else "${s.name} ≤${s.upTo}")
+                    val dk = stageDeck[s.id] ?: 0
+                    if (dk > 0) append(" ·编队$dk")
+                }
                 textSize = 11f
                 gravity = Gravity.CENTER
                 setTextColor(if (on) Color.parseColor("#0E1512") else textMuted)
@@ -559,6 +569,8 @@ class PageEndless(
         val items = ArrayList<String>()
         items.add("改上界（现在是 ${if (lastOne) "∞" else "≤${s.upTo} 关"}）")
         items.add("改名（现在叫「${s.name}」）")
+        val dk = stageDeck[s.id] ?: 0
+        items.add("切换编队（现在：${if (dk == 0) "不变" else "编队 $dk"}）")
         if (stages.size > 1) items.add("删除这个阶段")
 
         android.app.AlertDialog.Builder(host)
@@ -567,7 +579,8 @@ class PageEndless(
                 when (which) {
                     0 -> editStageBound(index)
                     1 -> editStageName(index)
-                    2 -> {
+                    2 -> editStageDeck(index)
+                    3 -> {
                         stageChains.remove(chainKey(stages[index].id, false))
                         stageChains.remove(chainKey(stages[index].id, true))
                         stages.removeAt(index)
@@ -601,6 +614,25 @@ class PageEndless(
                     if (stages[i].upTo < v) stages[i].upTo = v + (i - index) * 20
                 }
                 refreshStages(); refreshHint()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 选「进入这个阶段时切到第几编队」。0 = 不变。 */
+    private fun editStageDeck(index: Int) {
+        val st = stages.getOrNull(index) ?: return
+        val cur = stageDeck[st.id] ?: 0
+        val names = (0..com.pvz2.auto.zjs.PvzCoords.DECK_COUNT).map {
+            if (it == 0) "不变（不切换编队）" else "编队 $it"
+        }
+        android.app.AlertDialog.Builder(host)
+            .setTitle("「${st.name}」进入时切到哪个编队")
+            .setSingleChoiceItems(names.toTypedArray(), cur) { dlg, which ->
+                if (which == 0) stageDeck.remove(st.id) else stageDeck[st.id] = which
+                dlg.dismiss()
+                refreshStages()
+                toast(if (which == 0) "「${st.name}」不切换编队" else "「${st.name}」→ 编队 $which")
             }
             .setNegativeButton("取消", null)
             .show()
@@ -994,6 +1026,28 @@ class PageEndless(
             val loop = m?.get(PvzChainModel.LOOP).orEmpty()
             if (once.isNotEmpty() || loop.isNotEmpty()) {
                 val body = ArrayList<Z.Action>()
+                /*
+                 * 阶段开始的这一关，先切编队（用户："只在阶段切换那一关切一次，
+                 * 比如前期 1-51 就在第 1 关切，中期 52-103 就在 52 关切"）。
+                 *
+                 * 用「关卡 == 本段起始关」当条件，所以整个阶段里只有那一关会执行；
+                 * 选「不变」就不生成这个节点。
+                 */
+                val deckNo = stageDeck[st.id] ?: 0
+                if (deckNo > 0) {
+                    body.add(
+                        Z.Action(
+                            type = Z.ActionType.PVZ_SWITCH_DECK,
+                            common = Z.ActionCommon(
+                                delay = "100",
+                                condition = stageStartCondition(prevBound + 1, st.name)
+                            ),
+                            extra = HashMap<String, Any?>().apply {
+                                put("pvzDeck", deckNo.toString())
+                            }
+                        )
+                    )
+                }
                 for (a in once) {
                     body.add(chained(a, PvzChainModel.ONCE))
                     if (++pending % checkEvery == 0) body.add(stateCheckNode())
@@ -1142,6 +1196,19 @@ class PageEndless(
             }
         )
     }
+
+    /** 「正好是阶段起始的那一关」的条件（用来只切一次编队）。 */
+    private fun stageStartCondition(startLevel: Int, name: String): Z.Condition =
+        Z.Condition(
+            type = Z.ConditionType.JS_EXPRESSION,
+            desc = "阶段「$name」起始关 = $startLevel",
+            extra = HashMap<String, Any?>().apply {
+                put(
+                    "expression",
+                    "Number(zdjl.getVar('无尽关卡')||0) == $startLevel"
+                )
+            }
+        )
 
     /** 「关卡落在这个阶段」的条件。 */
     private fun rangeCondition(

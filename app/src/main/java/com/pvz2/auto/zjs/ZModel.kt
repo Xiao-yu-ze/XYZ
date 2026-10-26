@@ -482,7 +482,9 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
     PVZ_ARTIFACT("使用神器", executable = true),
     /* 点波 / 点加速：坐标固定，不需要选格子。原 MaaPVZ 的「下一波」「加速」。 */
     PVZ_WAVE("点下一波", executable = true),
-    PVZ_SPEED("点加速", executable = true);
+    PVZ_SPEED("点加速", executable = true),
+    /* 切换编队：先认后滑、6 次反向、循环，直到认出目标编队并点它。 */
+    PVZ_SWITCH_DECK("切换编队", executable = true);
 
         companion object {
             /**

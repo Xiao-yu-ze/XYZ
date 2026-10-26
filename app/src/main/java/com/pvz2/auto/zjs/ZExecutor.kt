@@ -1076,7 +1076,8 @@ class ZExecutor(
              */
             Z.ActionType.PVZ_PLANT, Z.ActionType.PVZ_FEED, Z.ActionType.PVZ_SHOVEL,
             Z.ActionType.PVZ_TAP_CELL, Z.ActionType.PVZ_ARTIFACT,
-            Z.ActionType.PVZ_WAVE, Z.ActionType.PVZ_SPEED ->
+            Z.ActionType.PVZ_WAVE, Z.ActionType.PVZ_SPEED,
+            Z.ActionType.PVZ_SWITCH_DECK ->
                 runPvzAction(action, index, label, skipped)
 
             // ---- 多指滑动
@@ -3324,6 +3325,75 @@ class ZExecutor(
      * 行列越界、卡槽缺失、屏幕不是 1280×720，全部写进日志/跳过原因 ——
      * 这些是"点了但没反应"的最常见原因，闷头点下去最难查。
      */
+    /**
+     * 切换编队：**先识别、再滑动**，直到认出目标编队为止。
+     *
+     * ## 为什么要"先认后滑"
+     *
+     * 用户原话："在划之前要先识别一次，防止用户选的编队1，划的时候直接把
+     * 编队一划走了就永远识别不到了"。所以每一轮都是：先扫一眼编队号那一竖条，
+     * 认到目标就点它收工；没认到才滑一段。
+     *
+     * ## 滑到不能滑怎么办
+     *
+     * 用户："到底就停住，可以加一个划个 5、6 次就往反方向划，一直循环"。
+     * 所以连续误滑 [PvzCoords.DECK_REVERSE_AFTER] 次就换方向，来回找。
+     */
+    private fun switchDeck(
+        action: Z.Action,
+        index: Int,
+        label: String,
+        skipped: MutableList<Result.Skip>
+    ): Outcome? {
+        val deck = intExtra(action.extra, "pvzDeck") ?: 0
+        if (deck !in 1..PvzCoords.DECK_COUNT) {
+            val why = "切换编队缺目标（pvzDeck 应为 1..${PvzCoords.DECK_COUNT}，实际 $deck）"
+            skipped.add(Result.Skip(index, label, why))
+            log("[跳过] $why")
+            return null
+        }
+        val pos = Z.PosData(
+            type = Z.PosType.TEXT,
+            text = deck.toString(),
+            similarPercent = 90,
+            limitArea = ZArea.fromPxRect(
+                PvzCoords.DECK_AREA[0], PvzCoords.DECK_AREA[1],
+                PvzCoords.DECK_AREA[2] - PvzCoords.DECK_AREA[0],
+                PvzCoords.DECK_AREA[3] - PvzCoords.DECK_AREA[1],
+                PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
+            )
+        )
+        val rect = PvzCoords.DECK_AREA
+        var forward = true          // true = 往上翻（露出后面的编队）
+        var sinceReverse = 0
+        var rounds = 0
+        log("   切换编队 → 编队 $deck（先认后滑）")
+        while (!stopped) {
+            rounds++
+            // ① 先认一次
+            val hits = matcher.findText(pos, rect)
+            if (hits.isNotEmpty()) {
+                val hit = hits.first()
+                log("   认出编队 $deck 在第 $rounds 轮 (${hit.x},${hit.y})，点它")
+                inject.tap(hit.x, hit.y, 0)
+                return Outcome()
+            }
+            // ② 没认到 → 滑一段（方向按连续失败次数翻转）
+            if (sinceReverse >= PvzCoords.DECK_REVERSE_AFTER) {
+                forward = !forward
+                sinceReverse = 0
+                log("   连续 ${PvzCoords.DECK_REVERSE_AFTER} 次没认出，反向滑")
+            }
+            val from = PvzCoords.DECK_SWIPE_UP
+            val x1 = from[0]; val y1 = if (forward) from[1] else from[3]
+            val x2 = from[2]; val y2 = if (forward) from[3] else from[1]
+            log("   没认出编队 $deck（第 $rounds 轮），滑一段 ${if (forward) "上翻" else "下翻"}")
+            inject.swipe(x1, y1, x2, y2, PvzCoords.DECK_SWIPE_MS)
+            sinceReverse++
+        }
+        return Outcome()
+    }
+
     private fun runPvzAction(
         action: Z.Action,
         index: Int,
@@ -3336,6 +3406,11 @@ class ZExecutor(
                     "当前屏幕 ${screen.width}×${screen.height}，点下去可能偏"
             )
         }
+        // 切换编队：先认后滑、6 次反向、循环，直到认出目标编队并点它
+        if (action.type == Z.ActionType.PVZ_SWITCH_DECK) {
+            return switchDeck(action, index, label, skipped)
+        }
+
         // 点波 / 加速：固定点位，不需要行列
         val fixed = when (action.type) {
             Z.ActionType.PVZ_WAVE -> PvzCoords.NEXT_WAVE to "下一波"
