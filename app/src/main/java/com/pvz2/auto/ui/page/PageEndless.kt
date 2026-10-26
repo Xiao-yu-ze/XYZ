@@ -1092,20 +1092,12 @@ class PageEndless(
         }
         out.add(jumpToNode("轮询"))
 
-        // 补给段：点「查看」进去，然后回轮询等 boss 的「开始战斗」
+        /*
+         * 补给段：整条链 1:1 复刻 MAA Supply.json
+         * （查看 → 5 分类候选 → 兜底点第一个卡片 → 确定1 → [提示|确定3] → 确定3 → 确定4）
+         */
         out.add(jumpLabel("补给"))
-        out.add(
-            // 补给界面的「查看」按钮 = MAA 的 [1499,526] × 2/3 ≈ (999,350)
-            Z.Action(
-                type = Z.ActionType.CLICK,
-                posData = Z.PosData(
-                    type = Z.PosType.LOCATION,
-                    x = com.pvz2.auto.zjs.ZValue.Px("999", 999.0),
-                    y = com.pvz2.auto.zjs.ZValue.Px("350", 350.0)
-                ),
-                common = Z.ActionCommon(delay = "300")
-            )
-        )
+        out.addAll(com.pvz2.auto.zjs.PvzSupplyChain.build())
         out.add(jumpToNode("轮询"))
 
         // 结算段：关卡 +1 后回轮询重来
