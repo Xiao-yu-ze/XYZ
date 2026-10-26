@@ -69,6 +69,9 @@ class MainActivity : AppCompatActivity() {
 
     /** 第 5 页：无尽模式（布阵台，没有虚拟屏）。 */
     const val PAGE_ENDLESS = 4
+
+    /** 第 2 页实例：别处（如第 5 页应用脚本）改动了脚本目录后要能让它重读。 */
+    private var libraryPage: com.pvz2.auto.ui.page.LibraryPage? = null
         /* PAGE_EDITOR / PAGE_DIAG 已移除：前者只读浏览 MaaFramework 节点、
            后者是手填坐标的调试工具，对用户没有价值。 */
 
@@ -357,6 +360,9 @@ class MainActivity : AppCompatActivity() {
          * 预览画在 activity 层（flPreview），所有页共享；不藏的话布阵台
          * 只能挤在下半屏 —— 用户原话："不要显示虚拟屏，不然会好挤"。
          */
+        // 切到脚本库就重读一次目录：第 5 页刚生成的脚本要立刻能看到
+        if (position == PAGE_SCRIPT) libraryPage?.reload()
+
         val endless = position == PAGE_ENDLESS
         val gone = if (endless) View.GONE else View.VISIBLE
         findViewById<View>(R.id.flPreview)?.visibility = gone
@@ -448,7 +454,11 @@ class MainActivity : AppCompatActivity() {
             runCatching {
                 when (position) {
                     PAGE_SCREEN -> bindScreenPage(holder.itemView)
-                    PAGE_SCRIPT -> LibraryPage(this@MainActivity, holder.itemView).bind()
+                    PAGE_SCRIPT -> {
+                        val page = LibraryPage(this@MainActivity, holder.itemView)
+                        libraryPage = page
+                        page.bind()
+                    }
                     PAGE_ZJS -> ZjsEditorPage(this@MainActivity, holder.itemView).bind()
                 PAGE_RUNLOG -> RunLogPage(this@MainActivity, holder.itemView).bind()
                 PAGE_ENDLESS -> PageEndless(this@MainActivity, holder.itemView).bind()

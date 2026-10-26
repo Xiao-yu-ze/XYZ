@@ -168,8 +168,14 @@ class LibraryPage(
         reload()
     }
 
-    /** 从磁盘重读列表。 */
-    private fun reload() {
+    /**
+     * 从磁盘重读列表。
+     *
+     * ★ 必须是**公开**的：第 5 页「应用脚本」在运行中会往这个目录写文件，
+     *   而这一页只在首次绑定（bind）时读一次目录 —— 所以回到第 2 页看不到新脚本。
+     *   现在 MainActivity 在切到本页时调 [reload] 一次。
+     */
+    fun reload() {
         host.lifecycleScope.launch {
             val list = withContext(Dispatchers.IO) { ZjsRunner.listSaved(host) }
             adapter.submit(list, ScriptRunState.state.value)
