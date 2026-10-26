@@ -91,6 +91,18 @@ object PvzCoords {
      */
     val DECK_ENTRY = intArrayOf(763, 394)
 
+    /** 开始战斗按钮的识别区（yuan_big: OCR [915,530,357,181]）。 */
+    val START_BATTLE_ROI = intArrayOf(915, 530, 1272, 711)
+
+    /** 进关判定的绿点区（yuan_big: ColorMatch [467,669,27,27]）。 */
+    val ENTER_ROI = intArrayOf(467, 669, 494, 696)
+
+    /** 进关后顺手点的加速键（yuan_big 判进关命中后 Click[1171,37]）。 */
+    val SPEED_ON_ENTER = intArrayOf(1171, 37)
+
+    /** 结算「继续挑战」的识别区（yuan_big: OCR [716,621,179,50]）。 */
+    val SETTLE_ROI = intArrayOf(716, 621, 895, 671)
+
     /** 「开始战斗」文字的识别区：`82.11% 90.69% 100.00% 98.47%` → `[1051,652,1280,708]`。 */
     val START_BATTLE_AREA = intArrayOf(1051, 652, 1280, 708)
 

@@ -1060,6 +1060,8 @@ class ZExecutor(
                     val b = ends.getOrNull(i) ?: lastEnd
                     log("   滑动 (${a.x},${a.y})→(${b.x},${b.y}) 用时 ${hold}ms")
                     inject.swipe(a.x, a.y, b.x, b.y, hold)
+                // post_delay：动作执行完再等这么久（MAA 的 post_delay 语义）
+                intExtra(action.extra, "pvzPostMs")?.let { if (it > 0) waitBusy(it.toLong()) }
                     /*
                      * 滑动的 duration 也要真的占时间。
                      *
@@ -1092,6 +1094,11 @@ class ZExecutor(
 
             Z.ActionType.PVZ_SUPPLY ->
                 runPvzSupply(action, index, label, skipped)
+
+            Z.ActionType.PVZ_START_BATTLE,
+            Z.ActionType.PVZ_ENTER_CHECK,
+            Z.ActionType.PVZ_SETTLE ->
+                runPvzGate(action, index, label, skipped)
 
             // ---- 多指滑动
             Z.ActionType.MULTI_SWIPE -> {
@@ -3552,6 +3559,86 @@ class ZExecutor(
         return Outcome()
     }
 
+    /**
+     * 三个"闸门"型游戏节点：开始战斗 / 进关判定 / 识别结算。
+     *
+     * 共同点：都是"等一个画面 → 点它"，只是判据不同：
+     *  - 开始战斗：OCR「开始战斗」（yuan_big ROI [915,530,357,181]）
+     *  - 进关判定：ColorMatch 绿点（[467,669,27,27]），命中后顺手点加速 [1171,37]
+     *  - 识别结算：OCR「继续挑战」（[716,621,179,50]）
+     *
+     * 都带 `pvzWaitMs`（默认 20000）的等待上限，等不到就明确跳过并说明，
+     * 不会像以前那样无限等。
+     */
+    private fun runPvzGate(
+        action: Z.Action,
+        index: Int,
+        label: String,
+        skipped: MutableList<Result.Skip>
+    ): Outcome? {
+        val waitMs = (intExtra(action.extra, "pvzWaitMs") ?: 20_000).coerceIn(500, 600_000)
+        val deadline = System.currentTimeMillis() + waitMs
+        val interval = 200L
+
+        // 判据
+        val (roi, pos) = when (action.type) {
+            Z.ActionType.PVZ_ENTER_CHECK -> PvzCoords.ENTER_ROI to Z.PosData(
+                type = Z.PosType.COLOR, color = "#9AD216", similarPercent = 85,
+                limitArea = ZArea.fromPxRect(
+                    PvzCoords.ENTER_ROI[0], PvzCoords.ENTER_ROI[1],
+                    PvzCoords.ENTER_ROI[2] - PvzCoords.ENTER_ROI[0],
+                    PvzCoords.ENTER_ROI[3] - PvzCoords.ENTER_ROI[1],
+                    PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
+                )
+            )
+            Z.ActionType.PVZ_SETTLE -> PvzCoords.SETTLE_ROI to textPosOf("继续挑战", PvzCoords.SETTLE_ROI)
+            else -> PvzCoords.START_BATTLE_ROI to textPosOf("开始战斗", PvzCoords.START_BATTLE_ROI)
+        }
+
+        val what = when (action.type) {
+            Z.ActionType.PVZ_ENTER_CHECK -> "进关绿点"
+            Z.ActionType.PVZ_SETTLE -> "「继续挑战」"
+            else -> "「开始战斗」"
+        }
+        log("   ${label}：等 $what（最多 ${waitMs}ms）")
+        while (!stopped && System.currentTimeMillis() < deadline) {
+            val hits = when (action.type) {
+                Z.ActionType.PVZ_ENTER_CHECK -> matcher.findColor(pos, roi)
+                else -> matcher.findText(pos, roi)
+            }
+            if (hits.isNotEmpty()) {
+                val h = hits.first()
+                if (action.type == Z.ActionType.PVZ_SETTLE ||
+                    action.type == Z.ActionType.PVZ_START_BATTLE
+                ) {
+                    log("   认出 $what (${h.x},${h.y})，点它")
+                    inject.tap(h.x, h.y, 0)
+                } else {
+                    // 进关：命中绿点后点加速（yuan_big 的做法）
+                    log("   已进关，点加速 (${PvzCoords.SPEED_ON_ENTER[0]},${PvzCoords.SPEED_ON_ENTER[1]})")
+                    inject.tap(PvzCoords.SPEED_ON_ENTER[0], PvzCoords.SPEED_ON_ENTER[1], 0)
+                }
+                intExtra(action.extra, "pvzPostMs")?.let { if (it > 0) waitBusy(it.toLong()) }
+                return Outcome()
+            }
+            waitBusy(interval)
+        }
+        val why = "${label}：${waitMs}ms 内没等到 $what" +
+            (matcher.lastReason()?.let { "（$it）" } ?: "")
+        skipped.add(Result.Skip(index, label, why))
+        log("[跳过] $why")
+        return null
+    }
+
+    /** 造一个"认这几个字 + 限定区域"的文字位置。 */
+    private fun textPosOf(text: String, roi: IntArray): Z.PosData = Z.PosData(
+        type = Z.PosType.TEXT, text = text, similarPercent = 80,
+        limitArea = ZArea.fromPxRect(
+            roi[0], roi[1], roi[2] - roi[0], roi[3] - roi[1],
+            PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
+        )
+    )
+
     private fun runPvzAction(
         action: Z.Action,
         index: Int,
@@ -3687,18 +3774,62 @@ class ZExecutor(
             else -> Unit // 点击格子
         }
 
+        /*
+         * 拖动时长可以按节点指定（`pvzSwipeMs`）。
+         *
+         * YS 里"大哥滑动"是 500ms、"原豌滑动"是 100ms，抛花走默认 80ms ——
+         * 三种速度是设计的一部分，不能统一成一个值。
+         * 另外注入层现在按真实节奏滑满 duration，这里**不再额外 waitBusy**，
+         * 否则 500ms 的动作会变成 1 秒。
+         */
+        /*
+         * 「有条件才执行」：`pvzNeedColor` = "x1,y1,x2,y2,#RRGGBB,容差%"。
+         *
+         * yuan_big 里大哥滑动4/5 是**带条件的分叉**：
+         *   UI 那块色带 ROI[115,250,7,45] 色域 250,140,0~255,167,18 命中才滑，
+         *   没命中就直接跳到点波2。以前我把它们做成无条件滑动 —— 那是错的。
+         */
+        action.extra["pvzNeedColor"]?.toString()?.takeIf { it.isNotBlank() }?.let { spec ->
+            val a = spec.split(",")
+            if (a.size >= 5) {
+                val r = intArrayOf(
+                    a[0].trim().toIntOrNull() ?: 0, a[1].trim().toIntOrNull() ?: 0,
+                    a[2].trim().toIntOrNull() ?: 0, a[3].trim().toIntOrNull() ?: 0
+                )
+                val posColor = Z.PosData(
+                    type = Z.PosType.COLOR, color = a[4].trim(),
+                    similarPercent = a.getOrNull(5)?.trim()?.toIntOrNull() ?: 85,
+                    limitArea = ZArea.fromPxRect(
+                        r[0], r[1], r[2] - r[0], r[3] - r[1],
+                        PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
+                    )
+                )
+                val hit = matcher.findColor(posColor, r)
+                if (hit.isEmpty()) {
+                    log("   条件色带没命中（$spec），跳过这一条")
+                    return null
+                }
+                log("   条件色带命中，执行")
+            }
+        }
+
+        val swipeMsRaw = intExtra(action.extra, "pvzSwipeMs")
+        val swipeMs = (swipeMsRaw ?: 0).takeIf { it > 0 } ?: PvzCoords.SWIPE_MS
+        if (swipeMsRaw == null && action.extra.keys.any { it.contains("pvz") }) {
+            log("   [诊断] pvzSwipeMs 没读到；extra 里有：${action.extra.keys.filter { it.contains("pvz") }}")
+        }
         val at = PvzCoords.cellLabel(row, col)
         if (start == null) {
             log("   点击 $at (${dst[0]},${dst[1]})")
             inject.tap(dst[0], dst[1], 0)
+            intExtra(action.extra, "pvzPostMs")?.let { if (it > 0) waitBusy(it.toLong()) }
         } else {
             log(
                 "   $startName (${start[0]},${start[1]}) → $at (${dst[0]},${dst[1]}) " +
-                    "用时 ${PvzCoords.SWIPE_MS}ms"
+                    "用时 ${swipeMs}ms"
             )
-            inject.swipe(start[0], start[1], dst[0], dst[1], PvzCoords.SWIPE_MS)
-            // 滑动时长要真的占住时间，否则连发会被游戏合并成一次
-            waitBusy(PvzCoords.SWIPE_MS.toLong())
+            inject.swipe(start[0], start[1], dst[0], dst[1], swipeMs)
+            intExtra(action.extra, "pvzPostMs")?.let { if (it > 0) waitBusy(it.toLong()) }
         }
         return Outcome()
     }
