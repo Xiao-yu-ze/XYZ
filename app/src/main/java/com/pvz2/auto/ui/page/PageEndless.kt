@@ -795,8 +795,12 @@ class PageEndless(
     /** 每多少个游戏动作自动插一次「识别当前状态」。 */
     private var checkEvery = 10
 
-    /** 自动识别用的状态文字候选（用户可以改）。 */
-    private val stateChecks = mutableListOf("挑战成功", "继续挑战", "挑战失败")
+    /** 自定义的状态文字候选（预置之外再加的）。 */
+    private val stateChecks = mutableListOf<String>()
+
+    /** 启用的预置识别（默认三个全开：结算 / 开始战斗 / 补给入口）。 */
+    private val usePresets: MutableSet<String> =
+        com.pvz2.auto.zjs.PvzRecognizers.PRESETS.map { it.key }.toMutableSet()
 
     /**
      * 把**所有阶段**编译成一份可运行的脚本。
@@ -916,6 +920,15 @@ class PageEndless(
         // 用 JSON 构造再交给解析器：候选是模型的内部类，直接 new 容易踩可见性；
         // 走 parse 这条路读文件和落盘用的是同一套逻辑。
         val cands = org.json.JSONArray()
+        // 预置识别（结算 / 开始战斗 / 补给入口）
+        for (ps in com.pvz2.auto.zjs.PvzRecognizers.PRESETS) {
+            if (ps.key !in usePresets) continue
+            cands.put(
+                org.json.JSONObject().apply {
+                    put("condition", ps.build().toJson())
+                }
+            )
+        }
         for (t in stateChecks) {
             cands.put(
                 org.json.JSONObject().apply {
