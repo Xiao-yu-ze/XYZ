@@ -2131,6 +2131,18 @@ class ZExecutor(
         }
 
         val first = evaluate(cond, index, skipped)
+        /*
+         * 诊断：把"取反/反复检查"这几个开关的实际值打出来。
+         *
+         * 用户真机脚本「切换编队.zjs」里，滑动节点写了 runWhenFalse:true
+         * （没看到"4"就滑动），日志却是"条件不满足 → 任务结束"。
+         * 单测里同样的条件是通过的，所以必须知道运行时这些字段到底读成了什么。
+         */
+        log(
+            "   [条件诊断] 结果=$first 取反=${cond.runWhenFalse} " +
+                "反复检查=${cond.repeatWhenFalse} 额外次数=${cond.repeatWhenFalseLimitTimes} " +
+                "延迟前判=${cond.checkBeforeDelay} 类型=${cond.type.wire}"
+        )
         if (first || !cond.repeatWhenFalse) return first
 
         /*
