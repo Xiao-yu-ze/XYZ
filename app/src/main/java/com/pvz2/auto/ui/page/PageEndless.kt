@@ -287,6 +287,17 @@ class PageEndless(
         }
         wrap.addView(row2)
 
+        // 补给优先顺序（候选顺序 = 判定顺序）
+        wrap.addView(
+            TextView(host).apply {
+                text = "补给优先：" + supplyOrder.joinToString(" > ")
+                textSize = 11f
+                setTextColor(cSpeed)
+                setPadding(0, dp(2), 0, dp(2))
+                setOnClickListener { editSupplyOrder() }
+            }
+        )
+
         hint = TextView(host).apply {
             textSize = 11f
             setTextColor(textMuted)
@@ -351,6 +362,37 @@ class PageEndless(
             putAll(extraSet)
         }
     )
+
+    /** 调补给分类的优先顺序：▲▼ 换位，确定后生效。 */
+    private fun editSupplyOrder() {
+        val list = supplyOrder.toMutableList()
+        fun show() {
+            android.app.AlertDialog.Builder(host)
+                .setTitle("补给优先顺序（从上往下试）")
+                .setItems(list.toTypedArray()) { _, which ->
+                    // 点一项 = 和上一项换位（最上面那条点了不动）
+                    if (which > 0) {
+                        val t = list[which]; list[which] = list[which - 1]; list[which - 1] = t
+                    }
+                    show()
+                }
+                .setNeutralButton("恢复默认", android.content.DialogInterface.OnClickListener { _, _ ->
+                    list.clear()
+                    list.addAll(com.pvz2.auto.zjs.PvzSupplyChain.defaultOrder)
+                    supplyOrder = list
+                    refreshHint()
+                    toast("补给优先已恢复默认")
+                })
+                .setNegativeButton("取消", null)
+                .setPositiveButton("确定") { _, _ ->
+                    supplyOrder = list
+                    refreshHint()
+                    toast("补给优先：" + list.joinToString(" > "))
+                }
+                .show()
+        }
+        show()
+    }
 
     /** 点波参数：次数 + 间隔（毫秒）。 */
     private fun promptWave() {
@@ -485,6 +527,13 @@ class PageEndless(
      * 键是 Stage.id。
      */
     private val stageDeck = HashMap<Int, Int>()
+
+    /**
+     * 补给分类的优先顺序（用户可调）。
+     * 默认：全部植物 > 橙色 > 蓝色 > 紫色 > 神器。
+     */
+    private var supplyOrder: MutableList<String> =
+        com.pvz2.auto.zjs.PvzSupplyChain.defaultOrder.toMutableList()
 
     /** 当前在编辑「普通关」还是「Boss 关」的那套链。 */
     private var curBoss = false
@@ -1123,7 +1172,7 @@ class PageEndless(
          * （查看 → 5 分类候选 → 兜底点第一个卡片 → 确定1 → [提示|确定3] → 确定3 → 确定4）
          */
         out.add(jumpLabel("补给"))
-        out.addAll(com.pvz2.auto.zjs.PvzSupplyChain.build())
+        out.addAll(com.pvz2.auto.zjs.PvzSupplyChain.build(supplyOrder))
         out.add(jumpToNode("轮询"))
 
         // 结算段：关卡 +1 后回轮询重来
