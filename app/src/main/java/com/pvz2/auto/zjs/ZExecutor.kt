@@ -162,7 +162,17 @@ class ZExecutor(
 
     /** 识别接口。图片/文字/颜色匹配都走这里。 */
     interface Matcher {
-        /** 在 [rect] 范围内找模板图，返回所有命中的左上角。 */
+        /**
+     * 「一轮判断」的开始/结束：这一轮里的多次识别**共用同一帧**。
+     *
+     * 等待候选一轮要判 N 个候选，如果每个候选各抓一帧，既有 N 倍开销，
+     * 也因为画面在变而"同时识别"名不副实。实现方可以钉住一帧给整轮用。
+     */
+    fun beginFrameGroup() {}
+
+    fun endFrameGroup() {}
+
+    /** 在 [rect] 范围内找模板图，返回所有命中的左上角。 */
         fun findImage(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit>
 
         /** 找文字（OCR）。 */

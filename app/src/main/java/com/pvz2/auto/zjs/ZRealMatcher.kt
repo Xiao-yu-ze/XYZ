@@ -125,9 +125,24 @@ class ZRealMatcher(
     private var cachedFrame: org.opencv.core.Mat? = null
     private var cachedFrameAt = 0L
 
+    /** 「一轮判断」是否正在进行（开始后所有识别共用一帧，不看 TTL）。 */
+    private var frameGroupOn = false
+
+    override fun beginFrameGroup() {
+        frameGroupOn = true
+        cachedFrame = nextFrame()
+        cachedFrameAt = System.currentTimeMillis()
+    }
+
+    override fun endFrameGroup() {
+        frameGroupOn = false
+    }
+
     private fun frameForMatch(): org.opencv.core.Mat? {
         val now = System.currentTimeMillis()
         val c = cachedFrame
+        // 一轮判断里：不管多久，都用这一帧 —— 这才是"同时识别"
+        if (frameGroupOn && c != null && !c.empty()) return c
         if (c != null && !c.empty() && now - cachedFrameAt <= frameTtlMs) return c
         val fresh = nextFrame() ?: return null
         cachedFrame = fresh
