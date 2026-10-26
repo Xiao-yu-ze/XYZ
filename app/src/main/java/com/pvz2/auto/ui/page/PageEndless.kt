@@ -67,6 +67,9 @@ class PageEndless(
     /** 当前要放置的操作：ActionType + 卡槽（种植物才有）。 */
     private var curType: Z.ActionType = Z.ActionType.PVZ_PLANT
     private var curSlot = 1
+
+    /** 当前选中的神器预设键（拖拽类需要再点格子）。 */
+    private var curArtifact: String = com.pvz2.auto.zjs.PvzCoords.ARTIFACTS.first().key
     private var curChain = PvzChainModel.ONCE
 
     /** 三条链的条目（编辑期数据）。 */
@@ -262,14 +265,21 @@ class PageEndless(
         )
         for ((name, color, t) in others) {
             val chip = chip(name, color) {
-                curType = t
-                if (t == Z.ActionType.PVZ_WAVE || t == Z.ActionType.PVZ_SPEED) {
-                    // 这两个是全局按钮，点一下就直接加进当前链
-                    chains.getOrPut(curChain) { ArrayList() }.add(makeGlobal(t))
-                    refreshAll()
-                    toast("已把「$name」加到${PvzChainModel.label(curChain)}链")
-                } else {
-                    refreshToolbar(); refreshHint()
+                when (t) {
+                    // 点波：先问次数和间隔（连点催波很常见）
+                    Z.ActionType.PVZ_WAVE -> promptWave()
+                    // 加速：固定点，点一下直接入链
+                    Z.ActionType.PVZ_SPEED -> {
+                        chains.getOrPut(curChain) { ArrayList() }.add(makeGlobal(t))
+                        refreshAll()
+                        toast("已把「加速」加到${PvzChainModel.label(curChain)}链")
+                    }
+                    // 神器：先选是哪一个（不同神器用法不同）
+                    Z.ActionType.PVZ_ARTIFACT -> promptArtifact()
+                    else -> {
+                        curType = t
+                        refreshToolbar(); refreshHint()
+                    }
                 }
             }
             typeChips[t.wire] = chip
@@ -283,6 +293,16 @@ class PageEndless(
             setPadding(0, dp(4), 0, dp(2))
         }
         wrap.addView(hint)
+        wrap.addView(
+            com.google.android.material.button.MaterialButton(host).apply {
+                text = "应用到脚本（生成 .zjs）"
+                textSize = 13f
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(2) }
+                setOnClickListener { applyScript() }
+            }
+        )
         return wrap
     }
 
@@ -311,6 +331,7 @@ class PageEndless(
                 put("pvzRow", row.toString())
                 put("pvzCol", col.toString())
                 if (curType == Z.ActionType.PVZ_PLANT) put("pvzSlot", curSlot.toString())
+                if (curType == Z.ActionType.PVZ_ARTIFACT) put("pvzArtifact", curArtifact)
             }
         )
         chains.getOrPut(curChain) { ArrayList() }.add(a)
@@ -319,11 +340,94 @@ class PageEndless(
         refreshChains()
     }
 
-    private fun makeGlobal(t: Z.ActionType): Z.Action = Z.Action(
+    private fun makeGlobal(
+        t: Z.ActionType,
+        extraSet: Map<String, Any?> = emptyMap()
+    ): Z.Action = Z.Action(
         type = t,
         common = Z.ActionCommon(delay = "100", delayUnit = Z.TimeUnit.MILLISECONDS),
-        extra = HashMap<String, Any?>().apply { put("pvzChain", curChain) }
+        extra = HashMap<String, Any?>().apply {
+            put("pvzChain", curChain)
+            putAll(extraSet)
+        }
     )
+
+    /** 点波参数：次数 + 间隔（毫秒）。 */
+    private fun promptWave() {
+        val box = LinearLayout(host).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), 0)
+        }
+        fun field(hintText: String, def: String): android.widget.EditText {
+            val et = android.widget.EditText(host).apply {
+                setText(def)
+                hint = hintText
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            }
+            box.addView(TextView(host).apply { text = hintText; textSize = 12f; setTextColor(textMuted) })
+            box.addView(et)
+            return et
+        }
+        val times = field("点几次（1-50）", "1")
+        val gap = field("每次间隔（毫秒，0 = 连点）", "300")
+        android.app.AlertDialog.Builder(host)
+            .setTitle("点下一波")
+            .setView(box)
+            .setPositiveButton("加到${PvzChainModel.label(curChain)}链") { _, _ ->
+                val t = (times.text.toString().trim().toIntOrNull() ?: 1).coerceIn(1, 50)
+                val g = (gap.text.toString().trim().toIntOrNull() ?: 300).coerceIn(0, 10_000)
+                chains.getOrPut(curChain) { ArrayList() }.add(
+                    makeGlobal(
+                        Z.ActionType.PVZ_WAVE,
+                        mapOf("pvzWaveTimes" to t.toString(), "pvzWaveInterval" to g.toString())
+                    )
+                )
+                refreshAll()
+                toast("点波 ×$t，间隔 ${g}ms → ${PvzChainModel.label(curChain)}链")
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 神器选择：6 个预设，点按类直接入链，拖拽类等用户点格子。 */
+    private fun promptArtifact() {
+        val list = com.pvz2.auto.zjs.PvzCoords.ARTIFACTS
+        android.app.AlertDialog.Builder(host)
+            .setTitle("用哪个神器")
+            .setItems(list.map { it.label }.toTypedArray()) { _, which ->
+                val ps = list[which]
+                curArtifact = ps.key
+                if (ps.use == com.pvz2.auto.zjs.PvzCoords.Use.TAP) {
+                    // 选中即生效：不用选格子
+                    chains.getOrPut(curChain) { ArrayList() }.add(
+                        makeGlobal(Z.ActionType.PVZ_ARTIFACT, mapOf("pvzArtifact" to ps.key))
+                    )
+                    refreshAll()
+                    toast("已把「${ps.label}」加到${PvzChainModel.label(curChain)}链")
+                } else {
+                    curType = Z.ActionType.PVZ_ARTIFACT
+                    refreshToolbar(); refreshHint()
+                    toast("「${ps.label}」需要点一个目标格子")
+                }
+            }
+            .show()
+    }
+
+    /** 「应用脚本」：把布阵台编译成 .zjs 落到脚本目录。 */
+    private fun applyScript() {
+        val acts = buildActions()
+        val hasPvz = acts.any { PvzChainModel.isPvz(it) }
+        if (!hasPvz) {
+            toast("还没有任何操作 —— 先在棋盘上摆几个")
+            return
+        }
+        val name = "无尽模式_" +
+            java.text.SimpleDateFormat("MMdd-HHmm", java.util.Locale.US)
+                .format(java.util.Date()) + ".zjs"
+        val f = java.io.File(com.pvz2.auto.zjs.ZjsRunner.savedDir(host), name)
+        val ok = com.pvz2.auto.zjs.ZjsRunner.saveSaved(f, Z.Script(actions = acts))
+        toast(if (ok) "已生成 $name（第 2 页可运行）" else "生成失败")
+    }
 
     // ---------------------------------------------------------------- 刷新
 
