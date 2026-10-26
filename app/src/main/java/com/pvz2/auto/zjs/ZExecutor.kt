@@ -1090,6 +1090,9 @@ class ZExecutor(
             Z.ActionType.PVZ_SWITCH_DECK ->
                 runPvzAction(action, index, label, skipped)
 
+            Z.ActionType.PVZ_SUPPLY ->
+                runPvzSupply(action, index, label, skipped)
+
             // ---- 多指滑动
             Z.ActionType.MULTI_SWIPE -> {
                 /*
@@ -3414,6 +3417,96 @@ class ZExecutor(
             inject.swipe(x1, y1, x2, y2, PvzCoords.DECK_SWIPE_MS)
             sinceReverse++
         }
+        return Outcome()
+    }
+
+    /**
+     * 「选补给」组合动作：一个节点跑完整条补给链。
+     *
+     * 用户问："为什么不把选补给做成组合动作" —— 对，摊成 12 个节点既难改也难读。
+     * 这里把 MAA `Supply.json` 的整条链收进一个动作里，编译时只出一个节点。
+     *
+     * 顺序与延迟 1:1 照抄（见 PvzSupplyChain 的注释）：
+     *   查看(2000) → 判断(1000) → 分类候选 → 兜底(颜色条件) → 确定1(0)
+     *   → [提示 | 确定3] → 确定3(1000) → 确定4(1000)
+     */
+    private fun runPvzSupply(
+        action: Z.Action,
+        index: Int,
+        label: String,
+        skipped: MutableList<Result.Skip>
+    ): Outcome? {
+        val order = (action.extra["pvzSupplyOrder"]?.toString() ?: "")
+            .split("|").map { it.trim() }.filter { it.isNotEmpty() }
+            .ifEmpty { PvzSupplyChain.defaultOrder }
+        val area = PvzSupplyChain.CATEGORY_AREA
+        fun tapPt(pt: IntArray) { inject.tap(pt[0], pt[1], 0) }
+        fun sleep(ms: String) { ms.toIntOrNull()?.let { if (it > 0) waitBusy(it.toLong()) } }
+        fun textPos(name: String) = Z.PosData(
+            type = Z.PosType.TEXT, text = name, similarPercent = 90,
+            limitArea = ZArea.fromPxRect(
+                area[0], area[1], area[2] - area[0], area[3] - area[1],
+                PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
+            )
+        )
+
+        // 查看
+        log("   选补给：点「查看」(${PvzSupplyChain.VIEW[0]},${PvzSupplyChain.VIEW[1]})")
+        tapPt(PvzSupplyChain.VIEW)
+        sleep(PvzSupplyChain.DELAY_VIEW)
+
+        // 判断：先认分类
+        sleep(PvzSupplyChain.DELAY_CHECK)
+        var picked: String? = null
+        for (name in order) {
+            if (stopped) return null
+            val hits = matcher.findText(textPos(name), area)
+            if (hits.isNotEmpty()) {
+                val h = hits.first()
+                log("   选补给：认出「$name」(${h.x},${h.y})，点它")
+                inject.tap(h.x, h.y, 0)
+                picked = name
+                break
+            }
+        }
+        if (picked == null) {
+            // 兜底：MAA `buji_补给` 点第一个卡片
+            log("   选补给：一个分类都没认出 → 兜底点第一个卡片")
+            tapPt(PvzSupplyChain.FALLBACK_FIRST_CARD)
+        }
+        sleep(PvzSupplyChain.DELAY_CATEGORY)
+
+        // 确定1
+        log("   选补给：确定1")
+        tapPt(PvzSupplyChain.CONFIRM)
+        waitBusy(300)
+
+        // 提示弹窗（选到有上限的补给会弹）
+        val tipHits = matcher.findText(
+            Z.PosData(
+                type = Z.PosType.TEXT, text = "提示", similarPercent = 90,
+                limitArea = ZArea.fromPxRect(
+                    PvzSupplyChain.TIP_AREA[0], PvzSupplyChain.TIP_AREA[1],
+                    PvzSupplyChain.TIP_AREA[2] - PvzSupplyChain.TIP_AREA[0],
+                    PvzSupplyChain.TIP_AREA[3] - PvzSupplyChain.TIP_AREA[1],
+                    PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
+                )
+            ),
+            PvzSupplyChain.TIP_AREA
+        )
+        if (tipHits.isNotEmpty()) {
+            log("   选补给：出现「提示」（补给有上限），点掉 ($ {PvzSupplyChain.TIP_TAP[0]},${PvzSupplyChain.TIP_TAP[1]})")
+            tapPt(PvzSupplyChain.TIP_TAP)
+            waitBusy(300)
+        }
+
+        // 确定3 / 确定4
+        log("   选补给：确定3")
+        tapPt(PvzSupplyChain.CONFIRM)
+        sleep(PvzSupplyChain.DELAY_CONFIRM3)
+        log("   选补给：确定4")
+        tapPt(PvzSupplyChain.CONFIRM)
+        sleep(PvzSupplyChain.DELAY_CONFIRM4)
         return Outcome()
     }
 

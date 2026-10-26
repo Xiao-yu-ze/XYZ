@@ -1172,7 +1172,16 @@ class PageEndless(
          * （查看 → 5 分类候选 → 兜底点第一个卡片 → 确定1 → [提示|确定3] → 确定3 → 确定4）
          */
         out.add(jumpLabel("补给"))
-        out.addAll(com.pvz2.auto.zjs.PvzSupplyChain.build(supplyOrder))
+        // 补给整条链收进一个组合动作（用户："为什么不把选补给做成组合动作"）
+        out.add(
+            Z.Action(
+                type = Z.ActionType.PVZ_SUPPLY,
+                common = Z.ActionCommon(delay = "0", desc = "补给·选补给"),
+                extra = HashMap<String, Any?>().apply {
+                    put("pvzSupplyOrder", supplyOrder.joinToString("|"))
+                }
+            )
+        )
         out.add(jumpToNode("轮询"))
 
         // 结算段：关卡 +1 后回轮询重来

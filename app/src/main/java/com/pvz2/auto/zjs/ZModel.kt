@@ -484,7 +484,9 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
     PVZ_WAVE("点下一波", executable = true),
     PVZ_SPEED("点加速", executable = true),
     /* 切换编队：先认后滑、6 次反向、循环，直到认出目标编队并点它。 */
-    PVZ_SWITCH_DECK("切换编队", executable = true);
+    PVZ_SWITCH_DECK("切换编队", executable = true),
+    /* 选补给：一个动作内部跑完整条补给链（查看→分类→兜底→确定×2~3）。 */
+    PVZ_SUPPLY("选补给", executable = true);
 
         companion object {
             /**
