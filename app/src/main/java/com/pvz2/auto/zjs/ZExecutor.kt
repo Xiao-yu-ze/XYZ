@@ -3291,7 +3291,19 @@ class ZExecutor(
                 return null
             }
             if (preset.use == PvzCoords.Use.TAP) {
-                log("   神器「${preset.label}」点 (${preset.point[0]},${preset.point[1]})")
+                /*
+                 * 葫芦 / 相机这类「选中即生效」的神器：
+                 *   先点神器图标 → 弹出选择 → 再点具体那一项。
+                 *
+                 * 用户原话："葫芦使用后会吸走全场对应体型的僵尸，直接使用进行；
+                 * 相机和葫芦使用前都要点一下神器才能选"。
+                 * 所以那两个点位是**选择器里的按钮**，不是拖拽的起点。
+                 */
+                val open = PvzCoords.ARTIFACT
+                log("   神器「${preset.label}」：点神器图标 (${open[0]},${open[1]})")
+                inject.tap(open[0], open[1], 0)
+                waitBusy(PvzCoords.ARTIFACT_PICK_GAP_MS)
+                log("   神器「${preset.label}」：选「${preset.label}」(${preset.point[0]},${preset.point[1]})")
                 inject.tap(preset.point[0], preset.point[1], 0)
                 return Outcome()
             }

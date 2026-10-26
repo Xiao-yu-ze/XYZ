@@ -160,13 +160,13 @@ class PvzActionTest {
     }
 
     @Test
-    fun `葫芦按体型选起点`() {
+    fun `葫芦是选中即用——先点神器图标再点体型`() {
         val (r, rec) = run(
             """{"type":"使用神器","pvzArtifact":"gourd_l","pvzRow":"3","pvzCol":"3"}"""
         )
         assertEquals(0, r.skipped.size)
-        // 葫芦·大 = (830,577)，格子 3行3列 = (651,368)
-        assertEquals(listOf("swipe(830,577→651,368,80ms)"), rec.calls)
+        // 点神器图标 (749,703) → 点「葫芦·大」(830,577)，不需要终点
+        assertEquals(listOf("tap(749,703)", "tap(830,577)"), rec.calls)
     }
 
     @Test

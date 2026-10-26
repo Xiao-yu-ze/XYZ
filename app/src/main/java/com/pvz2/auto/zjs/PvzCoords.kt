@@ -62,15 +62,18 @@ object PvzCoords {
     val ARTIFACTS: List<Artifact> = listOf(
         // 拖拽类：起点不同（葫芦按体型算距离，所以分三档）
         Artifact("bean", "魔豆（拖到格子）", Use.SWIPE, intArrayOf(749, 703)),
-        Artifact("gourd_s", "葫芦·小（拖到格子）", Use.SWIPE, intArrayOf(664, 573)),
-        Artifact("gourd_m", "葫芦·中（拖到格子）", Use.SWIPE, intArrayOf(748, 577)),
-        Artifact("gourd_l", "葫芦·大（拖到格子）", Use.SWIPE, intArrayOf(830, 577)),
+        Artifact("gourd_s", "葫芦·小（选中即用）", Use.TAP, intArrayOf(664, 573)),
+        Artifact("gourd_m", "葫芦·中（选中即用）", Use.TAP, intArrayOf(748, 577)),
+        Artifact("gourd_l", "葫芦·大（选中即用）", Use.TAP, intArrayOf(830, 577)),
         // 点按类：点固定位置
         Artifact("camera_copy", "相机·复制（点一下）", Use.TAP, intArrayOf(707, 570)),
         Artifact("camera_paste", "相机·粘贴（点一下）", Use.TAP, intArrayOf(794, 570))
     )
 
     fun artifact(key: String?): Artifact? = ARTIFACTS.firstOrNull { it.key == key }
+
+    /** 点开神器图标后，等神器选择器弹出来的时间。 */
+    const val ARTIFACT_PICK_GAP_MS = 350L
 
     /** 「下一波」按钮。 */
     val NEXT_WAVE = intArrayOf(1225, 219)
