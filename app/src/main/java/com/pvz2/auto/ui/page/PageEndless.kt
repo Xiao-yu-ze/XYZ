@@ -948,6 +948,9 @@ class PageEndless(
             put("type", "等待候选")
             put("delay", "0")
             put("desc", "状态轮询")
+            // 用户要求：节点间隔与运行时间都 100ms；进关要快，别拖慢喂豆打断
+            put("waitIntervalMs", 100)
+            put("waitTimeoutMs", 100)
             put("candidates", cands)
         }
         return Z.Action.parse(o)!!
