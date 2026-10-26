@@ -111,4 +111,50 @@ class ZConditionRunWhenFalseTest {
         assertEquals("取反条件不满足时必须真的滑：${r.skipped.map { it.reason }}", 1, rec.calls.size)
         assertTrue("滑动时长必须是 duration=3000，实际 ${rec.calls}", rec.calls[0].contains("dur=3000"))
     }
+
+    /** 认不出前 N 次、之后能认出来的匹配器：用来验证"滑到认出来为止"。 */
+    private class LateMatcher(private val succeedAfter: Int) : ZExecutor.Matcher {
+        var calls = 0
+        override fun findImage(pos: Z.PosData, rect: IntArray) = emptyList<ZPosResolver.Hit>()
+        override fun findText(pos: Z.PosData, rect: IntArray): List<ZPosResolver.Hit> {
+            calls++
+            return if (calls > succeedAfter) {
+                listOf(ZPosResolver.Hit(100, 100, score = 1.0))
+            } else emptyList()
+        }
+        override fun findColor(pos: Z.PosData, rect: IntArray) = emptyList<ZPosResolver.Hit>()
+        override fun findNode(pos: Z.PosData, rect: IntArray) = emptyList<ZPosResolver.Hit>()
+        override fun lastReason() = "还没出现"
+    }
+
+    @Test
+    fun `repeatCount0 加取反条件要滑到认出来为止`() {
+        val rec = Rec()
+        val matcher = LateMatcher(succeedAfter = 2)
+        val logs = ArrayList<String>()
+        val ex = ZExecutor(rec, ZPosResolver.Screen(1280, 720, 1.5f), matcher) { logs.add(it) }
+        val swipe = Z.Action(
+            type = Z.ActionType.SWIPE,
+            startPos = Z.PosData(
+                type = Z.PosType.LOCATION,
+                x = ZValue.Px("200", 200.0),
+                y = ZValue.Px("900", 900.0)
+            ),
+            endPos = Z.PosData(
+                type = Z.PosType.LOCATION,
+                x = ZValue.Px("200", 200.0),
+                y = ZValue.Px("300", 300.0)
+            ),
+            common = Z.ActionCommon(
+                duration = "0",
+                delay = "0",
+                repeatCount = 0,
+                condition = textCond(runWhenFalse = true)
+            )
+        )
+        val r = ex.run(Z.Script(actions = listOf(swipe, Z.Action(type = Z.ActionType.CONTROL_STOP))))
+        // 前 2 次认不出 → 滑；第 3 次认出 → 退出。所以至少滑 2 次、并且真的退出了（不是死循环）
+        assertTrue("应重复滑动，实际 ${rec.calls.size} 次：$logs", rec.calls.size >= 2)
+        assertTrue("应记录结束重复：$logs", logs.any { it.contains("结束这条的重复") })
+    }
 }

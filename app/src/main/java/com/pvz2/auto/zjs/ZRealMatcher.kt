@@ -553,15 +553,34 @@ class ZRealMatcher(
                 emptyList()
             } else {
                 lastUnsupported = null
+                /*
+                 * ★ 同一个 ROI 里可能有多行都要（匹配到的全部返回）。
+                 *
+                 * 用户反馈："我设了一个 ROI 覆盖了编队 1、2、3，它只能识别到编队2"。
+                 * 原来只返回 maxByOrNull 那一行 —— 多行场景永远只拿到一个。
+                 * 现在返回**所有达标行**（相似度降序，第一个仍是"最佳"），
+                 * 点击类动作取 hits.first() 的行为完全不变；
+                 * 需要"这块里有哪几个"的地方就能拿到全部。
+                 */
+                val kind = if (regex != null) {
+                    lines.withIndex().filter { regex.containsMatchIn(it.value.text) }
+                        .map { it.value to 1.0 }
+                } else {
+                    lines.map { it to textSimilarity(want, it.text) }
+                        .filter { it.second >= threshold }
+                        .sortedByDescending { it.second }
+                }
+                if (kind.size > 1) {
+                    note("文字 命中 ${kind.size} 行：" + kind.take(5).joinToString("、") { it.first.text })
+                }
                 // 行坐标是相对 ROI 的，加回 ROI 左上角才是屏幕坐标
-                listOf(
+                kind.map { (line, sc) ->
                     ZPosResolver.Hit(
-                        roi[0] + best.centerX.toInt(),
-                        roi[1] + best.centerY.toInt(),
-                        // 文字命中码给"文字相似度"（正则命中是 1.0），供执行器选最优命中。
-                        score = score
+                        roi[0] + line.centerX.toInt(),
+                        roi[1] + line.centerY.toInt(),
+                        score = sc
                     )
-                )
+                }
             }
         } catch (t: Throwable) {
             Log.e(TAG, "文字识别失败", t)

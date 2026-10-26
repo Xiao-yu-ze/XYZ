@@ -759,9 +759,22 @@ class ZExecutor(
          * 所以：能退出 → 真无限（由 stopped / 跳转结束）；
          *       不能退出 → 只跑一次，并明确警告。
          */
+        /*
+         * ★ 「带条件」也算一种退出方式。
+         *
+         * 用户脚本里的经典写法：`repeatCount: 0` + 条件取反
+         * （`runWhenFalse: true`，即"没看到 4 就滑"）——
+         * 语义是**反复滑直到看到 4**。原来 canEscape 只认跳转/停止，
+         * 于是这种写法被判成"没有退出方式"，降级成只跑 1 次，
+         * 用户看到的就是"一下就划完了"。
+         *
+         * 现在把"带条件"也当退出方式，并在循环体开头用**取反前**的条件判一次：
+         * 成立 = 目的达到 → break。这样才安全，不会死循环。
+         */
+        val hasCondition = action.common.condition != null
         val canEscape = action.type.controlRunType == "jumpTo" ||
             action.type.controlRunType == "stop" ||
-            action.extra["jumpToPosition"] != null
+            action.extra["jumpToPosition"] != null || hasCondition
         val infinite = repeat <= 0 && canEscape
         if (repeat <= 0 && !canEscape) {
             log("第 ${index + 1} 条「$label」 重复次数为 0（无限）但这条没有跳转/停止，按 1 次执行以免卡死")
@@ -783,8 +796,21 @@ class ZExecutor(
         // fastRepeatMode 的复用缓存：首轮识别出来的坐标，后面几轮直接用（见 RepeatMemo）
         val memo = RepeatMemo()
 
+        val repeatWhileCond = repeat <= 0 && hasCondition
         for (n in 0 until times) {
             if (stopped) break
+            // 「无限重复 + 带条件」：每轮先看条件（取反前）是否已经成立 → 成立就退出
+            if (repeatWhileCond && n > 0) {
+                val done = evaluate(
+                    action.common.condition!!.copy(runWhenFalse = false),
+                    index,
+                    skipped
+                )
+                if (done) {
+                    log("   条件已成立，结束这条的重复（共 ${n} 次）")
+                    break
+                }
+            }
             if (n > 0) {
                 /*
                  * 重复间隔缺省时**回落到 delay**（FIELDS.md:116）。
