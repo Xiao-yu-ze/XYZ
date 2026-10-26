@@ -987,7 +987,8 @@ class ZExecutor(
                      * 注入层同样只把 duration 写进事件的 eventTime 差值、不睡 ——
                      * 自检脚本里 duration=400 的滑动实测只有 5ms，连点/连滑全会挤在一起。
                      */
-                    if (hold > 0) waitBusy(hold.toLong())
+                    // ★ 不再 waitBusy(hold)：注入层已按真实节奏滑满 hold 毫秒。
+                    //   之前是「瞬间滑完 + 干等 hold」，用户看到的是「一下划完然后等 3 秒」。
                 }
                 Outcome()
             }
@@ -2621,7 +2622,8 @@ class ZExecutor(
                  * 该有的时长，实际 178ms 就发完了（每下 3.5ms），用户看到的就是
                  * "这条一下就结束了"，参数形同虚设。hold <= 0（极速模式）不等，与协议一致。
                  */
-                if (hold > 0) waitBusy(hold.toLong())
+                // ★ 不再 waitBusy(hold)：注入层已按真实节奏滑满 hold 毫秒。
+                //   之前是「瞬间滑完 + 干等 hold」，用户看到的是「一下划完然后等 3 秒」。
             } catch (e: Throwable) {
                 /*
                  * 一个点注入失败**不该**让整条脚本以"执行异常"结束 ——

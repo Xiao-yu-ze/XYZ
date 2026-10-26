@@ -318,19 +318,35 @@ internal object InputInjector {
             return false
         }
 
+        /*
+         * ★ 中间移动必须**按真实时间**发，不能一口气发完。
+         *
+         *   原来只把 eventTime 摊在 duration 上，然后 MODE_ASYNC 连着送 ——
+         *   系统收到的是"3 秒的位移记录、几毫秒送完"，游戏看来就是瞬移一下；
+         *   调用方只好再额外 sleep(duration) 等它，表现成用户说的
+         *   "一下就划完了，然后一直等了 3 秒"。
+         *
+         *   现在按 ~16ms 一步切成 steps 步，每步发完睡到该步的
+         *   **真实时间点**，手指才是真的慢慢滑过去。
+         */
         var allOk = true
-        for (i in 1..MOVE_STEPS) {
-            val fraction = i.toFloat() / MOVE_STEPS
+        val steps = (duration / 16).coerceIn(MOVE_STEPS, 200)
+        val stepSleep = duration.toLong() / steps
+        for (i in 1..steps) {
+            val fraction = i.toFloat() / steps
             val mx = (x1 + (x2 - x1) * fraction).toFloat()
             val my = (y1 + (y2 - y1) * fraction).toFloat()
-            // 时间戳按比例推进；最后一步留给 UP。
-            val offset = duration.toLong() * i / (MOVE_STEPS + 1)
+            val offset = stepSleep * i
             val ok = injectEvent(
                 buildEvent(downTime, downTime + offset, MotionEvent.ACTION_MOVE, mx, my),
                 displayId,
                 MODE_ASYNC
             )
             if (!ok) allOk = false
+            // 真实节奏：这一步发完，等到它该到的时刻
+            val now = SystemClock.uptimeMillis()
+            val target = downTime + offset
+            if (target > now) SystemClock.sleep(target - now)
         }
 
         val upOk = injectEvent(
@@ -340,6 +356,8 @@ internal object InputInjector {
         )
         if (!upOk) allOk = false
 
+        val spent = SystemClock.uptimeMillis() - downTime
+        Log.i(TAG, "滑动实耗 ${spent}ms / 计划 ${duration}ms display=$displayId ($x1,$y1)->($x2,$y2) steps=$steps")
         if (!allOk) Log.w(TAG, "滑动有事件被拒 display=$displayId ($x1,$y1)->($x2,$y2)")
         return allOk
     }
