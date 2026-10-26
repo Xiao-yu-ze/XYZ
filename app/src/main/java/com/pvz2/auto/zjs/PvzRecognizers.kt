@@ -108,6 +108,61 @@ object PvzRecognizers {
         }
     )
 
+    /**
+     * 「开始战斗」的**模板优先 + OCR 兜底**条件。
+     *
+     * 用户要求：MAA 用的是模板图 `xinta/开始战斗.png`，认不出再退 OCR。
+     * 我们把 PNG 读成 base64 内嵌进条件（协议里图片位置就是内嵌 base64，
+     * 运行时由 ZRealMatcher 落成临时文件再匹配），然后用 conditionSet 的 OR 组合：
+     * 模板命中就用模板（对艺术字/缩放更稳），否则用文字。
+     *
+     * 返回 null = 读不到图（只留 OCR 那条，不至于整个条件失效）。
+     */
+    fun startBattleAny(context: android.content.Context): Z.Condition {
+        val textCond = startBattle()
+        val img = startBattleTemplate(context) ?: return textCond
+        return Z.Condition(
+            type = Z.ConditionType.CONDITION_SET,
+            desc = "开始战斗（模板优先 / OCR 兜底）",
+            extra = HashMap<String, Any?>().apply {
+                put("matchMode", "any")
+                put(
+                    "conditions",
+                    org.json.JSONArray().put(img.toJson()).put(textCond.toJson())
+                )
+            }
+        )
+    }
+
+    /** 读 assets 里的「开始战斗.png」→ 内嵌 base64 的图片条件。 */
+    fun startBattleTemplate(context: android.content.Context): Z.Condition? = runCatching {
+        val bmp = context.assets.open("Endless/开始战斗.png").use {
+            android.graphics.BitmapFactory.decodeStream(it)
+        } ?: return null
+        val bos = java.io.ByteArrayOutputStream()
+        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bos)
+        val b64 = android.util.Base64.encodeToString(bos.toByteArray(), android.util.Base64.NO_WRAP)
+        val r = scaleRoi(1590, 970, 301, 88)
+        Z.Condition(
+            type = Z.ConditionType.IMAGE,
+            desc = "开始战斗（模板）",
+            posData = Z.PosData(
+                type = Z.PosType.IMAGE,
+                imageData = Z.ImageData(
+                    data = b64,
+                    width = bmp.width,
+                    height = bmp.height,
+                    screenWidth = PvzCoords.BASE_WIDTH,
+                    screenHeight = PvzCoords.BASE_HEIGHT
+                ),
+                limitArea = ZArea.fromPxRect(
+                    r[0], r[1], r[2], r[3],
+                    PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
+                )
+            )
+        )
+    }.getOrNull()
+
     /** 三个预置（顺序即候选顺序：先判结算，再判入口）。 */
     val PRESETS: List<Preset> = listOf(
         Preset("settle", "结算·继续挑战", "认出「继续挑战」= 这一局结束", ::settleContinue),

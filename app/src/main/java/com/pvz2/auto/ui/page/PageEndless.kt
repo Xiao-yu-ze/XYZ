@@ -1130,16 +1130,18 @@ class PageEndless(
     /** 「状态轮询」：三个预置识别按顺序判，命中就跳到对应段。 */
     private fun statePollNode(): Z.Action {
         val cands = org.json.JSONArray()
-        fun add(presetKey: String, target: String) {
-            val ps = com.pvz2.auto.zjs.PvzRecognizers.PRESETS.first { it.key == presetKey }
+        fun add(presetKey: String, target: String, cond: Z.Condition? = null) {
+            val c = cond
+                ?: com.pvz2.auto.zjs.PvzRecognizers.PRESETS.first { it.key == presetKey }.build()
             cands.put(
                 org.json.JSONObject().apply {
-                    put("condition", ps.build().toJson())
+                    put("condition", c.toJson())
                     put("jumpTo", target)
                 }
             )
         }
-        add("start", "进关")
+        // 开始战斗：模板优先，认不出退 OCR（用户要求）
+        add("start", "进关", com.pvz2.auto.zjs.PvzRecognizers.startBattleAny(host))
         add("supply", "补给")
         add("settle", "结算")
         val o = org.json.JSONObject().apply {

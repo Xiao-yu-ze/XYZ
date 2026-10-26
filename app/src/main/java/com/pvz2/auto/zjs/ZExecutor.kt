@@ -1595,6 +1595,16 @@ class ZExecutor(
                 var round = 0
                 while (!stopped) {
                     round++
+                    /*
+                     * ★ 一轮候选 = 同一帧。
+                     *
+                     * 用户要求："候选等待节点，同时识别，如果命中多个目标，
+                     * 就优先执行最上那个"。
+                     * 同一帧是"同时"的前提：否则候选 1 看第 1 帧、候选 5 看第 6 帧，
+                     * 画面在动时结论会自相矛盾。顺序优先由"逐个判、第一个命中就 return"保证。
+                     */
+                    matcher.beginFrameGroup()
+                    try {
                     for ((ci, cand) in action.candidates.withIndex()) {
                         val ok = cand.condition == null ||
                             evaluate(cand.condition, index, skipped)
@@ -1607,6 +1617,9 @@ class ZExecutor(
                             )
                             return if (target.isNullOrBlank()) Outcome() else Outcome(jumpTo = target)
                         }
+                    }
+                    } finally {
+                        matcher.endFrameGroup()
                     }
                     // 每 10 轮报一次"还在等什么"。
                     // 不报的话脚本会长时间毫无动静，用户无法区分
