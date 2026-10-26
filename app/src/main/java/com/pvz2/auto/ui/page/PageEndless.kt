@@ -416,7 +416,16 @@ class PageEndless(
     /** 「应用脚本」：把布阵台编译成 .zjs 落到脚本目录。 */
     private fun applyScript() {
         val acts = buildActions()
-        val hasPvz = acts.any { PvzChainModel.isPvz(it) }
+        /*
+         * ★ 判空要看**链里的内容**，不能扫编译结果的第一层。
+         *
+         *   编译时每个阶段会包一层「运行多个动作」，游戏动作都在它的 scriptSet 里，
+         *   顶层只剩设置变量/跳转标识/等待候选 —— 原来用
+         *   `acts.any { isPvz(it) }` 必然为 false，于是"点应用脚本它说还没有任何操作"。
+         */
+        val hasPvz = stageChains.values.any { m ->
+            m.values.any { list -> list.isNotEmpty() }
+        }
         if (!hasPvz) {
             toast("还没有任何操作 —— 先在棋盘上摆几个")
             return
@@ -678,12 +687,21 @@ class PageEndless(
                 cell.removeAllViews()
                 val items = board[r - 1][c - 1]
                 if (items.isEmpty()) continue
-                // 一格里可能叠多个操作：竖着排，最多显示 3 个 + "…"
-                for (a in items.take(3)) {
-                    cell.addView(token(a))
+                /*
+                 * 一格里可能叠多个操作：**全部显示**，不截断。
+                 *
+                 * 原来只 take(3) 再补个 "+N"，用户原话"一个格子只能显示 3 个操作" ——
+                 * 叠了 4 个以上就看不到后面的，等于布阵被藏起来了。
+                 * 位置不够时靠字号自适应：<=3 个用 9sp，更多逐级缩小。
+                 */
+                val fs = when {
+                    items.size <= 3 -> 9f
+                    items.size <= 5 -> 8f
+                    items.size <= 8 -> 7f
+                    else -> 6f
                 }
-                if (items.size > 3) {
-                    cell.addView(label("+${items.size - 3}", 9f, textMuted))
+                for (a in items) {
+                    cell.addView(token(a, fs))
                 }
             }
         }
@@ -900,9 +918,9 @@ class PageEndless(
         else -> "速"
     }
 
-    private fun token(a: Z.Action): TextView = TextView(host).apply {
+    private fun token(a: Z.Action, sizeSp: Float = 9f): TextView = TextView(host).apply {
         text = tokenText(a)
-        textSize = 9f
+        textSize = sizeSp
         gravity = Gravity.CENTER
         setTextColor(Color.parseColor("#0E1512"))
         setTypeface(typeface, Typeface.BOLD)
