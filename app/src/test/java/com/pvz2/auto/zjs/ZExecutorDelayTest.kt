@@ -13,7 +13,12 @@ class ZExecutorDelayTest {
 
     private class Rec : ZExecutor.Injector {
         override fun tap(x: Int, y: Int, holdMs: Int) {}
-        override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int) {}
+        // 注入契约：swipe 必须**阻塞** durationMs（真实注入层按真实节奏滑）。
+        // 执行器不再额外 waitBusy(duration)，所以假实现也必须睡，
+        // 否则测出来的耗时会比真机短一截。
+        override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int) {
+            if (durationMs > 0) Thread.sleep(durationMs.toLong())
+        }
         override fun key(keyCode: Int, holdMs: Int) {}
         override fun inputText(text: String) {}
     }
@@ -61,9 +66,14 @@ class ZExecutorDelayTest {
      */
     @Test
     fun `不写 delay 时按默认 100ms`() {
-        // JVM 单测的绝对耗时不稳（预热/GC），所以比**两条节点之差**：
-        //   delay 显式 0 vs 不写（缺省）→ 差值就是缺省值本身
-        fun nodeMs(delayJson: String): Int {
+        /*
+         * 改成断言**日志里记的等待值**，不再比墙钟时间。
+         *
+         * 原来比"两条节点的总耗时差"，JVM 上受预热/GC 影响能差到 30ms 以上，
+         * 这条会偶发失败（实测出现过 104 vs 36 = 68ms）。
+         * 引擎自己会把每次等待写成 `等待 100ms`，断言它既确定又更贴近语义。
+         */
+        fun waitLogged(delayJson: String): List<String> {
             val logs = ArrayList<String>()
             ex(logs).run(
                 script(
@@ -72,14 +82,18 @@ class ZExecutorDelayTest {
                     """{"type":"控制执行","controlRunType":"stop"}"""
                 )
             )
-            return Regex("""完成 \[1] 用时 (\d+)ms""")
-                .find(logs.joinToString("\n"))?.groupValues?.get(1)?.toIntOrNull()
-                ?: error("没有完成行：$logs")
+            return logs
         }
-        val zero = nodeMs(""","delay":"0","delayUnit":0""")
-        val dflt = nodeMs("")
-        val diff = dflt - zero
-        assertTrue("缺省等待没有生效（0 → ${zero}ms，缺省 → ${dflt}ms）", diff >= 70)
-        assertTrue("缺省值看起来不是 100ms（差值 ${diff}ms，0 → ${zero}ms，缺省 → ${dflt}ms）", diff <= 200)
+
+        val explicit = waitLogged(""","delay":"0","delayUnit":0""")
+        val default = waitLogged("")
+        assertTrue(
+            "缺省等待应记成 100ms：${default.filter { it.contains("等待") }}",
+            default.any { it.contains("等待 100ms") }
+        )
+        assertTrue(
+            "显式 0 不应出现 100ms：${explicit.filter { it.contains("等待") }}",
+            explicit.none { it.contains("等待 100ms") }
+        )
     }
 }
