@@ -281,6 +281,16 @@ class ZExecutor(
      */
     private var subShellDepth = 0
 
+    /**
+     * 当前「监听套监听」的层数。
+     *
+     * 「执行脚本」有 8 层限制、「条件嵌套」有 8 层限制，**唯独监听没有**。
+     * 于是 `执行成功后 → 点A`，而 A 自己又挂 `执行成功后 → 点A`，
+     * 就会无限递归：轻则 StackOverflow 崩掉本次运行，重则 ANR 卡死。
+     * 这里补上同样的上限。
+     */
+    private var callbackDepth = 0
+
     /** 子列表嵌套上限。协议没有这一条，纯粹防止脚本自引用成无限递归。 */
     /** 子列表内 `&` 跳转的次数上限：防止 `&-1` 这种写法变成死循环。 */
     private val MAX_SUB_JUMPS = 10000
@@ -306,6 +316,9 @@ class ZExecutor(
     )
 
     private val MAX_SUB_SHELL_DEPTH = 8
+
+    /** 监听最多套几层（和执行脚本一致）。 */
+    private val MAX_CALLBACK_DEPTH = 8
 
     /**
      * 跑完整个脚本。
@@ -3527,6 +3540,12 @@ class ZExecutor(
         }
 
         val cbLabel = "监听·${slot.wire}"
+        if (callbackDepth >= MAX_CALLBACK_DEPTH) {
+            val msg = "监听嵌套超过 $MAX_CALLBACK_DEPTH 层，跳过（疑似自触发死循环）"
+            log("第 ${index + 1} 条「$label」 $msg")
+            skipped.add(Result.Skip(index, cbLabel, msg))
+            return null
+        }
         val cbSkips = ArrayList<Result.Skip>()
         /*
          * ★ 监听里的动作也是**完整动作**。
@@ -3538,9 +3557,14 @@ class ZExecutor(
          *   条件失败（abortOnRecognitionFail = false）只跳过这一条 ——
          *   一个监听没命中不该把整条脚本干掉。
          */
-        val r = executeWithRepeat(
-            cb, index, cbLabel, cbSkips, abortOnRecognitionFail = false
-        )
+        callbackDepth++
+        val r = try {
+            executeWithRepeat(
+                cb, index, cbLabel, cbSkips, abortOnRecognitionFail = false
+            )
+        } finally {
+            callbackDepth--
+        }
         /*
          * 监听的跳转/停止**要生效**。
          *
