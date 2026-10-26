@@ -85,6 +85,9 @@ class PageEndless(
     private lateinit var hint: TextView
     private val typeChips = LinkedHashMap<String, TextView>()
 
+    /** 普通关 / Boss 关 两个切换按钮。 */
+    private val modeChips = LinkedHashMap<Boolean, TextView>()
+
     // ---------------------------------------------------------------- 入口
 
     fun bind() {
@@ -142,6 +145,32 @@ class PageEndless(
             setPadding(0, dp(6), 0, 0)
         }
         box.addView(stageRow)
+
+        // 普通关 / Boss 关：两套独立的链（boss 关 = 关卡 % 5 == 0）
+        val modeRow = LinearLayout(host).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4), 0, 0)
+        }
+        for (boss in listOf(false, true)) {
+            val chip = TextView(host).apply {
+                text = if (boss) "Boss 关（关卡 % 5 == 0）" else "普通关"
+                textSize = 11f
+                gravity = Gravity.CENTER
+                background = roundRect(cellEmpty, 8f)
+                setPadding(dp(8), dp(3), dp(8), dp(3))
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    setMargins(dp(2), 0, dp(2), 0)
+                }
+                setOnClickListener {
+                    curBoss = boss
+                    rebuildBoardIndex()
+                    refreshAll()
+                }
+            }
+            modeChips[boss] = chip
+            modeRow.addView(chip)
+        }
+        box.addView(modeRow)
         return box
     }
 
@@ -301,6 +330,7 @@ class PageEndless(
     private fun refreshAll() {
         levelText.text = level.toString()
         refreshStages()
+        refreshMode()
         refreshBoard()
         refreshToolbar()
         refreshChains()
@@ -335,11 +365,17 @@ class PageEndless(
      * 用户原话："前中后期的切换它脚本也要切换，它阶段不同操作也不同" ——
      * 所以三条链按阶段分开存：切到哪个阶段，棋盘和三链就显示哪个阶段的。
      */
-    private val stageChains = HashMap<Int, HashMap<String, MutableList<Z.Action>>>()
+    private val stageChains = HashMap<String, HashMap<String, MutableList<Z.Action>>>()
+
+    /** 当前在编辑「普通关」还是「Boss 关」的那套链。 */
+    private var curBoss = false
+
+    private fun chainKey(stageId: Int, boss: Boolean = curBoss) =
+        "$stageId|" + if (boss) "boss" else "normal"
 
     private fun chainMap(): HashMap<String, MutableList<Z.Action>> {
         val id = stages.getOrNull(curStage)?.id ?: 0
-        return stageChains.getOrPut(id) {
+        return stageChains.getOrPut(chainKey(id)) {
             HashMap<String, MutableList<Z.Action>>().apply {
                 PvzChainModel.LABELS.forEach { (k, _) -> put(k, ArrayList()) }
             }
@@ -428,7 +464,8 @@ class PageEndless(
                     0 -> editStageBound(index)
                     1 -> editStageName(index)
                     2 -> {
-                        stageChains.remove(stages[index].id)
+                        stageChains.remove(chainKey(stages[index].id, false))
+                        stageChains.remove(chainKey(stages[index].id, true))
                         stages.removeAt(index)
                         if (curStage >= stages.size) curStage = stages.lastIndex
                         refreshStages(); refreshHint()
@@ -480,6 +517,15 @@ class PageEndless(
             .show()
     }
 
+
+    /** 重画「普通关 / Boss 关」两个按钮的选中态。 */
+    private fun refreshMode() {
+        for ((boss, chip) in modeChips) {
+            val on = boss == curBoss
+            chip.setTextColor(if (on) Color.parseColor("#0E1512") else textMuted)
+            chip.background = roundRect(if (on) cWave else cellEmpty, 8f)
+        }
+    }
 
     private fun refreshBoard() {
         for (r in 1..PvzCoords.ROWS) {
@@ -838,7 +884,8 @@ class PageEndless(
         var prevBound = 0
         var pending = 0
         for (st in stages) {
-            val m = stageChains[st.id]
+          for (boss in listOf(false, true)) {
+            val m = stageChains[chainKey(st.id, boss)]
             val once = m?.get(PvzChainModel.ONCE).orEmpty()
             val loop = m?.get(PvzChainModel.LOOP).orEmpty()
             if (once.isNotEmpty() || loop.isNotEmpty()) {
@@ -877,11 +924,12 @@ class PageEndless(
                         scriptSet = body,
                         common = Z.ActionCommon(
                             delay = "0",
-                            condition = rangeCondition(prevBound, st.upTo, st.name)
+                            condition = rangeCondition(prevBound, st.upTo, st.name, boss)
                         )
                     )
                 )
             }
+          }
             prevBound = st.upTo
         }
         out.add(jumpToNode("轮询"))
@@ -909,7 +957,7 @@ class PageEndless(
 
         // 收尾段：由循环里的 settleJumpNode() 跳进来
         out.add(jumpLabel("收尾"))
-        val lastEnd = stages.lastOrNull()?.let { stageChains[it.id] }
+        val lastEnd = stages.lastOrNull()?.let { stageChains[chainKey(it.id)] }
             ?.get(PvzChainModel.END).orEmpty()
         for (a in lastEnd) out.add(chained(a, PvzChainModel.END))
         return out
@@ -992,15 +1040,22 @@ class PageEndless(
     }
 
     /** 「关卡落在这个阶段」的条件。 */
-    private fun rangeCondition(prevBound: Int, bound: Int, name: String): Z.Condition =
+    private fun rangeCondition(
+        prevBound: Int,
+        bound: Int,
+        name: String,
+        boss: Boolean = false
+    ): Z.Condition =
         Z.Condition(
             type = Z.ConditionType.JS_EXPRESSION,
             desc = "阶段：$name",
             extra = HashMap<String, Any?>().apply {
                 val hi = if (bound == Int.MAX_VALUE) "Number.MAX_SAFE_INTEGER" else bound.toString()
+                // boss 关 = 关卡 % 5 == 0（用户确认：补给之后进的就是 boss 关）
+                val bossPart = if (boss) " && L % 5 == 0" else " && L % 5 != 0"
                 put(
                     "expression",
-                    "var L=Number(zdjl.getVar('无尽关卡')||0); L > $prevBound && L <= $hi"
+                    "var L=Number(zdjl.getVar('无尽关卡')||0); L > $prevBound && L <= $hi$bossPart"
                 )
             }
         )
