@@ -136,6 +136,25 @@ class ZRealMatcher(
 
     override fun endFrameGroup() {
         frameGroupOn = false
+        /*
+         * ★ 必须释放这一帧的 native 内存。
+         *
+         *   Mat 是 OpenCV 的 native 对象（1280×720×4 ≈ 3.7MB），不受 GC 管理。
+         *   一轮候选 beginFrameGroup() 抓一帧，跑一局就是几百轮 ——
+         *   原来这里只关开关不 release，几百个 3.7MB 全留着，
+         *   表现为 native 内存只涨不降、整机 MemFree 见底、最后 App 被系统杀
+         *   （用户观察："放着不动都会崩，可能是内存不够"）。
+         */
+        /*
+         * ★ 注意所有权：beginFrameGroup() 里 cachedFrame 就是 nextFrame() 的返回值，
+         *   而 nextFrame() 已经把它存进 pendingFrame 并负责在下一帧时释放。
+         *   如果这里再 release 一次，就是**双重释放**（下一次 nextFrame 会再放一次）。
+         *   所以只有"不是同一块"时才由本函数释放。
+         */
+        val c = cachedFrame
+        if (c != null && c !== pendingFrame && !c.empty()) runCatching { c.release() }
+        cachedFrame = null
+        cachedFrameAt = 0L
     }
 
     private fun frameForMatch(): org.opencv.core.Mat? {
@@ -145,6 +164,10 @@ class ZRealMatcher(
         if (frameGroupOn && c != null && !c.empty()) return c
         if (c != null && !c.empty() && now - cachedFrameAt <= frameTtlMs) return c
         val fresh = nextFrame() ?: return null
+        // 覆盖旧缓存前先释放，避免又漏一块
+        if (c != null && c !== fresh && c !== pendingFrame && !c.empty()) {
+            runCatching { c.release() }
+        }
         cachedFrame = fresh
         cachedFrameAt = now
         return fresh
