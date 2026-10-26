@@ -3389,6 +3389,41 @@ class ZExecutor(
                 PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
             )
         )
+        /*
+         * 前置：先确认在**选卡界面**（有「开始战斗」），再点「点击编队」进去。
+         *
+         * 用户实测反馈："你都没有点到编队界面里面，你在植物界面划" ——
+         * 直接在关卡里滑当然永远认不到编队号。顺序照他写的脚本：
+         *   等「开始战斗」出现 → 点「点击编队」(763,394) → 才去认/滑。
+         */
+        val startPos = Z.PosData(
+            type = Z.PosType.TEXT, text = "开始战斗", similarPercent = 90,
+            limitArea = ZArea.fromPxRect(
+                PvzCoords.START_BATTLE_AREA[0], PvzCoords.START_BATTLE_AREA[1],
+                PvzCoords.START_BATTLE_AREA[2] - PvzCoords.START_BATTLE_AREA[0],
+                PvzCoords.START_BATTLE_AREA[3] - PvzCoords.START_BATTLE_AREA[1],
+                PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
+            )
+        )
+        var ready = false
+        val waitUntil = System.currentTimeMillis() + 20_000
+        while (!stopped && System.currentTimeMillis() < waitUntil) {
+            if (matcher.findText(startPos, PvzCoords.START_BATTLE_AREA).isNotEmpty()) {
+                ready = true
+                break
+            }
+            waitBusy(300)
+        }
+        if (!ready) {
+            val why = "切换编队：20 秒内没看到「开始战斗」，可能不在选卡界面"
+            skipped.add(Result.Skip(index, label, why))
+            log("[跳过] $why")
+            return null
+        }
+        log("   切换编队：已到选卡界面，点「点击编队」(${PvzCoords.DECK_ENTRY[0]},${PvzCoords.DECK_ENTRY[1]})")
+        inject.tap(PvzCoords.DECK_ENTRY[0], PvzCoords.DECK_ENTRY[1], 0)
+        waitBusy(1200)
+
         val rect = PvzCoords.DECK_AREA
         var forward = true          // true = 往上翻（露出后面的编队）
         var sinceReverse = 0
@@ -3406,6 +3441,13 @@ class ZExecutor(
             }
             // ② 没认到 → 滑一段（方向按连续失败次数翻转）
             if (sinceReverse >= PvzCoords.DECK_REVERSE_AFTER) {
+                if (rounds > PvzCoords.DECK_REVERSE_AFTER * 2) {
+                    // 正反各扫一轮仍没有 → 明确放弃，不无限滑
+                    val why = "切换编队：来回扫过一轮没找到编队 $deck"
+                    skipped.add(Result.Skip(index, label, why))
+                    log("[跳过] $why")
+                    return null
+                }
                 forward = !forward
                 sinceReverse = 0
                 log("   连续 ${PvzCoords.DECK_REVERSE_AFTER} 次没认出，反向滑")
