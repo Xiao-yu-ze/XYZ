@@ -40,8 +40,14 @@ package com.pvz2.auto.core
  */
 object GameFps {
 
-    /** 采集帧率上限。识别用，30 足够。 */
-    const val CAPTURE_FPS = 30
+    /*
+     * 采集帧率**跟随**用户选的帧率（用户要求："我们改的 30 和 60 是采集和游戏同时改的"）。
+     *
+     * 原来采集写死 30：那是当初为了压住 120fps 的取帧带宽（约 1.8GB/s 会把
+     * system_server 饿死）而定的。现在上限已经收到 60，采集跟到 60 也只有
+     * 当年那个带宽的一半（约 0.9GB/s），且不再有 120 那条路径。
+     */
+    val CAPTURE_FPS: Int get() = REQUESTED_REFRESH_RATE.toInt().coerceAtLeast(1)
 
     /** 采集节流间隔，毫秒。 */
     val captureIntervalMs: Long get() = 1000L / CAPTURE_FPS
@@ -64,5 +70,37 @@ object GameFps {
      * **结论：游戏在虚拟屏上跑 120 本身就会把系统搞崩，与采集多少无关。**
      * 所以这里必须显式请求 30，不能留给系统默认。
      */
-    const val REQUESTED_REFRESH_RATE = 30f
+    /*
+     * ★ 用户可选择 30 / 60（2026-10-26）。
+     *
+     * 原来写死 30，依据是"虚拟屏跑 120 会把系统搞崩"。
+     * 但后来查清了崩溃的真实原因不是帧率（是 WM 的多显示越界 + 内存压力），
+     * 所以帧率交还给用户选：省电/稳一点用 30，顺滑一点用 60。
+     *
+     * 仍然**不提供 120**：那条 1.8GB/s 的取帧带宽是有实测记录的，留着不碰。
+     */
+    @Volatile
+    var REQUESTED_REFRESH_RATE: Float = 60f
+
+    /** 允许的取值：只有 30 和 60。 */
+    val ALLOWED_RATES = listOf(30f, 60f)
+
+    private const val PREF = "vd_fps"
+    private const val KEY = "rate"
+
+    /** App 启动时读回上次选的帧率。 */
+    fun load(ctx: android.content.Context) {
+        val v = ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+            .getFloat(KEY, 60f)
+        if (v in ALLOWED_RATES) REQUESTED_REFRESH_RATE = v
+    }
+
+    /** 切换帧率并落盘；返回是否真的变了。 */
+    fun setRate(ctx: android.content.Context, hz: Float): Boolean {
+        if (hz !in ALLOWED_RATES) return false
+        REQUESTED_REFRESH_RATE = hz
+        ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+            .edit().putFloat(KEY, hz).apply()
+        return true
+    }
 }

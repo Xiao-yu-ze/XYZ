@@ -70,6 +70,40 @@ class MainActivity : AppCompatActivity() {
     /** 第 5 页：无尽模式（布阵台，没有虚拟屏）。 */
     const val PAGE_ENDLESS = 4
 
+    /**
+     * 选虚拟屏帧率（30 / 60）。入口就是第 1 页那行「帧率 30 fps（采集 + 游戏）」。
+     *
+     * 原来帧率写死 30（怕 120fps 把系统搞崩），后来查清闪退真因不是帧率，
+     * 于是开放成 30/60 让用户自己权衡；120 仍然不给（那条 1.8GB/s 取帧带宽是实测过的）。
+     */
+    private fun showFpsDialog(act: MainActivity) {
+        val cur = com.pvz2.auto.core.GameFps.REQUESTED_REFRESH_RATE
+        val checked = if (cur <= 30f) 0 else 1
+        androidx.appcompat.app.AlertDialog.Builder(act)
+            .setTitle("虚拟屏帧率（采集 + 游戏，当前 ${cur.toInt()}）")
+            .setSingleChoiceItems(arrayOf("30 帧（省电 / 更稳）", "60 帧（更顺滑）"), checked) { dlg, which ->
+                val hz = if (which == 0) 30f else 60f
+                com.pvz2.auto.core.GameFps.setRate(act, hz)
+                dlg.dismiss()
+                findingsRefreshFps(act)
+                android.widget.Toast.makeText(
+                    act,
+                    "帧率已设为 ${hz.toInt()}，下次重建虚拟屏生效",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 把第 1 页那行帧率文字刷成当前值，并让它可点。 */
+    private fun findingsRefreshFps(act: MainActivity) {
+        act.findViewById<TextView>(R.id.tvGameFps)?.apply {
+            text = "${com.pvz2.auto.core.GameFps.REQUESTED_REFRESH_RATE.toInt()} fps（采集 + 游戏）"
+            setOnClickListener { showFpsDialog(act) }
+        }
+    }
+
     /** 第 2 页实例：别处（如第 5 页应用脚本）改动了脚本目录后要能让它重读。 */
     private var libraryPage: com.pvz2.auto.ui.page.LibraryPage? = null
         /* PAGE_EDITOR / PAGE_DIAG 已移除：前者只读浏览 MaaFramework 节点、
@@ -251,6 +285,8 @@ class MainActivity : AppCompatActivity() {
          */
         com.pvz2.auto.core.ZjsLog.baseDir = getExternalFilesDir(null) ?: filesDir
         setContentView(R.layout.activity_main)
+        // 读回上次选的虚拟屏帧率（30/60），建屏时 GameFps.REQUESTED_REFRESH_RATE 生效
+        com.pvz2.auto.core.GameFps.load(this)
 
         // 预览固定在顶部，功能页在下面用 ViewPager2 左右滑动切换。
         // 预览**不能**放进 pager —— 那样翻页时会重建，画面黑一下、采集要重来。
@@ -362,6 +398,8 @@ class MainActivity : AppCompatActivity() {
          */
         // 切到脚本库就重读一次目录：第 5 页刚生成的脚本要立刻能看到
         if (position == PAGE_SCRIPT) libraryPage?.reload()
+        // 第 1 页那行「帧率 xx fps」就是帧率设置入口
+        if (position == PAGE_SCREEN) findingsRefreshFps(this@MainActivity)
 
         val endless = position == PAGE_ENDLESS
         val gone = if (endless) View.GONE else View.VISIBLE
@@ -607,6 +645,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderVirtualDisplay(state: VirtualDisplaySession.State) {
         val stateView = findViewById<TextView>(R.id.tvVdState)
         val detailView = findViewById<TextView>(R.id.tvVdDetail)
+
         val fpsView = findViewById<TextView>(R.id.tvVdFps)
         val emptyView = findViewById<TextView>(R.id.tvPreviewEmpty)
 
