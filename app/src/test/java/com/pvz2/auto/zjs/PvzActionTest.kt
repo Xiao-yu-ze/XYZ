@@ -98,7 +98,9 @@ class PvzActionTest {
 
     @Test
     fun `使用神器——从神器图标拖到格子`() {
-        val (r, rec) = run("""{"type":"使用神器","pvzRow":"2","pvzCol":"9"}""")
+        val (r, rec) = run(
+            """{"type":"使用神器","pvzArtifact":"bean","pvzRow":"2","pvzCol":"9"}"""
+        )
         assertEquals(0, r.skipped.size)
         assertEquals(listOf("swipe(749,703→1188,275,80ms)"), rec.calls)
     }
@@ -155,5 +157,36 @@ class PvzActionTest {
         assertEquals("4", out.getString("pvzSlot"))
         assertEquals("2", out.getString("pvzRow"))
         assertEquals("7", out.getString("pvzCol"))
+    }
+
+    @Test
+    fun `葫芦按体型选起点`() {
+        val (r, rec) = run(
+            """{"type":"使用神器","pvzArtifact":"gourd_l","pvzRow":"3","pvzCol":"3"}"""
+        )
+        assertEquals(0, r.skipped.size)
+        // 葫芦·大 = (830,577)，格子 3行3列 = (651,368)
+        assertEquals(listOf("swipe(830,577→651,368,80ms)"), rec.calls)
+    }
+
+    @Test
+    fun `神器缺参数要明确说清楚`() {
+        val (r, rec) = run("""{"type":"使用神器","pvzRow":"1","pvzCol":"1"}""")
+        assertEquals(0, rec.calls.size)
+        assertTrue(r.skipped.isNotEmpty())
+        assertTrue(
+            "应提示缺神器参数：${r.skipped[0].reason}",
+            r.skipped[0].reason.contains("神器")
+        )
+    }
+
+    @Test
+    fun `点波可以连点 N 次`() {
+        val (r, rec) = run(
+            """{"type":"点下一波","pvzWaveTimes":"3","pvzWaveInterval":"0"}"""
+        )
+        assertEquals(0, r.skipped.size)
+        assertEquals(3, rec.calls.size)
+        assertEquals(listOf("tap(1225,219)"), rec.calls.distinct())
     }
 }

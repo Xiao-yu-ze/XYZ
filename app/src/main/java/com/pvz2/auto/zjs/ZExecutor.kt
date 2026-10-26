@@ -3260,9 +3260,41 @@ class ZExecutor(
             else -> null
         }
         if (fixed != null) {
-            log("   点「${fixed.second}」(${fixed.first[0]},${fixed.first[1]})")
-            inject.tap(fixed.first[0], fixed.first[1], 0)
+            /*
+             * 点波可以连点：「次数」+「间隔」两个参数。
+             *
+             * 默认 1 次 / 300ms —— 点波是"催一波"，玩家经常连点两三下；
+             * 次数写成 1 时行为和以前完全一致。
+             */
+            val times = (intExtra(action.extra, "pvzWaveTimes") ?: 1).coerceIn(1, 50)
+            val gap = (intExtra(action.extra, "pvzWaveInterval") ?: 300).coerceIn(0, 10_000)
+            for (i in 1..times) {
+                if (stopped) break
+                log(
+                    "   点「${fixed.second}」(${fixed.first[0]},${fixed.first[1]})" +
+                        if (times > 1) " 第 $i/$times 次" else ""
+                )
+                inject.tap(fixed.first[0], fixed.first[1], 0)
+                if (i < times && gap > 0) waitBusy(gap.toLong())
+            }
             return Outcome()
+        }
+
+        // 神器的点按类（相机复制/粘贴）不需要行列，必须放在校验之前
+        if (action.type == Z.ActionType.PVZ_ARTIFACT) {
+            val preset = PvzCoords.artifact(action.extra["pvzArtifact"]?.toString())
+            if (preset == null) {
+                val why = "使用神器缺「神器」参数（可选：" +
+                    PvzCoords.ARTIFACTS.joinToString("、") { it.key } + "）"
+                skipped.add(Result.Skip(index, label, why))
+                log("[跳过] $why")
+                return null
+            }
+            if (preset.use == PvzCoords.Use.TAP) {
+                log("   神器「${preset.label}」点 (${preset.point[0]},${preset.point[1]})")
+                inject.tap(preset.point[0], preset.point[1], 0)
+                return Outcome()
+            }
         }
 
         val row = intExtra(action.extra, "pvzRow")
@@ -3308,8 +3340,21 @@ class ZExecutor(
                 startName = "铲子"
             }
             Z.ActionType.PVZ_ARTIFACT -> {
-                start = PvzCoords.ARTIFACT
-                startName = "神器"
+                val preset = PvzCoords.artifact(action.extra["pvzArtifact"]?.toString())
+                if (preset == null) {
+                    val why = "使用神器缺「神器」参数（可选：" +
+                        PvzCoords.ARTIFACTS.joinToString("、") { it.key } + "）"
+                    skipped.add(Result.Skip(index, label, why))
+                    return null
+                }
+                if (preset.use == PvzCoords.Use.TAP) {
+                    // 点按类（相机复制/粘贴）：直接点，不需要行列
+                    log("   神器「${preset.label}」点 (${preset.point[0]},${preset.point[1]})")
+                    inject.tap(preset.point[0], preset.point[1], 0)
+                    return Outcome()
+                }
+                start = preset.point
+                startName = preset.label
             }
             else -> Unit // 点击格子
         }

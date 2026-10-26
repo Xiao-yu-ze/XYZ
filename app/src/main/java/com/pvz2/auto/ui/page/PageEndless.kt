@@ -70,7 +70,6 @@ class PageEndless(
     private var curChain = PvzChainModel.ONCE
 
     /** 三条链的条目（编辑期数据）。 */
-    private val chains = HashMap<String, MutableList<Z.Action>>()
 
     /** 格子视图（refreshBoard 直接按行列取，不去遍历子 view）。 */
     private val cellViews: Array<Array<LinearLayout?>> =
@@ -90,7 +89,6 @@ class PageEndless(
 
     fun bind() {
         android.util.Log.i("PageEndless", "bind 开始 root=${root.javaClass.simpleName}")
-        PvzChainModel.LABELS.forEach { (k, _) -> chains.getOrPut(k) { ArrayList() } }
         val col = root as LinearLayout
         col.setBackgroundColor(bg)
         col.removeAllViews()
@@ -321,13 +319,36 @@ class PageEndless(
      *
      * 交互：**点一下 = 切到这一阶段**；改上界 / 改名 / 删除走长按菜单。
      */
-    private class Stage(var name: String, var upTo: Int)
+    private class Stage(val id: Int, var name: String, var upTo: Int)
+
+    private var stageSeq = 0
 
     private val stages = mutableListOf(
-        Stage("前期", 30),
-        Stage("中期", 80),
-        Stage("后期", Int.MAX_VALUE)
+        Stage(stageSeq++, "前期", 30),
+        Stage(stageSeq++, "中期", 80),
+        Stage(stageSeq++, "后期", Int.MAX_VALUE)
     )
+
+    /**
+     * **每个阶段自己一套链**。
+     *
+     * 用户原话："前中后期的切换它脚本也要切换，它阶段不同操作也不同" ——
+     * 所以三条链按阶段分开存：切到哪个阶段，棋盘和三链就显示哪个阶段的。
+     */
+    private val stageChains = HashMap<Int, HashMap<String, MutableList<Z.Action>>>()
+
+    private fun chainMap(): HashMap<String, MutableList<Z.Action>> {
+        val id = stages.getOrNull(curStage)?.id ?: 0
+        return stageChains.getOrPut(id) {
+            HashMap<String, MutableList<Z.Action>>().apply {
+                PvzChainModel.LABELS.forEach { (k, _) -> put(k, ArrayList()) }
+            }
+        }
+    }
+
+    /** 当前阶段的链（所有读写都走这里）。 */
+    private val chains: HashMap<String, MutableList<Z.Action>>
+        get() = chainMap()
 
     private var curStage = 0
 
@@ -387,7 +408,7 @@ class PageEndless(
         val prev = if (boundary == Int.MAX_VALUE) {
             (stages.getOrNull(stages.lastIndex - 1)?.upTo ?: level) + 20
         } else boundary + 20
-        stages.add(stages.lastIndex, Stage("阶段${stages.size + 1}", prev))
+        stages.add(stages.lastIndex, Stage(stageSeq++, "阶段${stages.size + 1}", prev))
         curStage = stages.lastIndex - 1
         refreshStages(); refreshHint()
     }
@@ -407,6 +428,7 @@ class PageEndless(
                     0 -> editStageBound(index)
                     1 -> editStageName(index)
                     2 -> {
+                        stageChains.remove(stages[index].id)
                         stages.removeAt(index)
                         if (curStage >= stages.size) curStage = stages.lastIndex
                         refreshStages(); refreshHint()
@@ -770,43 +792,155 @@ class PageEndless(
 
     // ---------------------------------------------------------------- 对外
 
-    /** 当前三链编译出来的动作列表（给「生成脚本」用）。 */
+    /** 每多少个游戏动作自动插一次「识别当前状态」。 */
+    private var checkEvery = 10
+
+    /** 自动识别用的状态文字候选（用户可以改）。 */
+    private val stateChecks = mutableListOf("挑战成功", "继续挑战", "挑战失败")
+
+    /**
+     * 把**所有阶段**编译成一份可运行的脚本。
+     *
+     * 结构：
+     *   设置变量 无尽关卡 = N
+     *   [阶段1] 运行多个动作（条件：关卡落在本阶段）→ 单次链 + 循环链
+     *   [阶段2] 同上
+     *   ...
+     *   收尾链（全局，触发条件由用户设）
+     *
+     * 每 [checkEvery] 个游戏动作插一个「等待候选」节点做状态识别 ——
+     * 这就是用户要的"自动识别"，不需要他自己摆。
+     */
     fun buildActions(): List<Z.Action> {
-        val list = ArrayList<Z.Action>()
-        list.add(
+        val out = ArrayList<Z.Action>()
+        out.add(
             Z.Action(
                 type = Z.ActionType.SET_VARS,
                 common = Z.ActionCommon(delay = "0"),
                 extra = HashMap<String, Any?>().apply {
-                    put(
-                        "vars",
-                        org.json.JSONArray().put(
-                            org.json.JSONObject().apply {
-                                put("name", "无尽关卡")
-                                put(
-                                    "value",
-                                    org.json.JSONObject().apply {
-                                        put("varType", "number")
-                                        put("valueExp", level.toString())
-                                    }
-                                )
-                            }
-                        )
-                    )
+                    put("vars", org.json.JSONArray().put(varJson("无尽关卡", level)))
                 }
             )
         )
-        list.addAll(PvzChainModel.rebuild(emptyList(), chains, chains[PvzChainModel.LOOP]?.size?.let { 0 } ?: 0))
-        endCondition?.let { cond ->
-            // 收尾链的触发条件挂在第一个收尾节点上
-            val i = list.indexOfFirst {
-                PvzChainModel.chainOf(it) == PvzChainModel.END
+
+        var prevBound = 0
+        var pending = 0
+        for (st in stages) {
+            val m = stageChains[st.id]
+            val once = m?.get(PvzChainModel.ONCE).orEmpty()
+            val loop = m?.get(PvzChainModel.LOOP).orEmpty()
+            val bound = st.upTo
+            if (once.isNotEmpty() || loop.isNotEmpty()) {
+                val body = ArrayList<Z.Action>()
+                for (a in once) {
+                    body.add(chained(a, PvzChainModel.ONCE))
+                    if (++pending % checkEvery == 0) body.add(stateCheckNode())
+                }
+                if (loop.isNotEmpty()) {
+                    val kids = ArrayList<Z.Action>()
+                    for (a in loop) {
+                        kids.add(chained(a, PvzChainModel.LOOP))
+                        if (++pending % checkEvery == 0) kids.add(stateCheckNode())
+                    }
+                    body.add(
+                        Z.Action(
+                            type = Z.ActionType.RUN_MULTI,
+                            scriptSet = kids,
+                            common = Z.ActionCommon(repeatCount = 0)
+                        )
+                    )
+                }
+                out.add(
+                    Z.Action(
+                        type = Z.ActionType.RUN_MULTI,
+                        scriptSet = body,
+                        common = Z.ActionCommon(
+                            delay = "0",
+                            condition = rangeCondition(prevBound, bound, st.name)
+                        )
+                    )
+                )
             }
-            if (i >= 0) {
-                val a = list[i]
-                list[i] = a.copy(common = a.common.copy(condition = cond))
-            }
+            prevBound = bound
         }
-        return list
+
+        // 收尾链（最后一个阶段的收尾，挂用户设的触发条件）
+        val lastEnd = stages.lastOrNull()?.let { stageChains[it.id] }
+            ?.get(PvzChainModel.END).orEmpty()
+        for ((i, a) in lastEnd.withIndex()) {
+            val node = chained(a, PvzChainModel.END)
+            out.add(
+                if (i == 0 && endCondition != null) {
+                    node.copy(common = node.common.copy(condition = endCondition))
+                } else node
+            )
+        }
+        return out
+    }
+
+    private fun varJson(name: String, value: Int) = org.json.JSONObject().apply {
+        put("name", name)
+        put(
+            "value",
+            org.json.JSONObject().apply {
+                put("varType", "number")
+                put("valueExp", value.toString())
+            }
+        )
+    }
+
+    /** 「关卡落在这个阶段」的条件。 */
+    private fun rangeCondition(prevBound: Int, bound: Int, name: String): Z.Condition =
+        Z.Condition(
+            type = Z.ConditionType.JS_EXPRESSION,
+            desc = "阶段：$name",
+            extra = HashMap<String, Any?>().apply {
+                val hi = if (bound == Int.MAX_VALUE) "Number.MAX_SAFE_INTEGER" else bound.toString()
+                put(
+                    "expression",
+                    "var L=Number(zdjl.getVar('无尽关卡')||0); L > $prevBound && L <= $hi"
+                )
+            }
+        )
+
+    /**
+     * 「识别当前状态」节点：一个等待候选，候选就是 [stateChecks] 里的文字。
+     *
+     * 用户原话："把所有的识别全部封装到一个节点的候选列表里面" —— 所以
+     * 这里生成的是**同一个形状**的节点，改一处（stateChecks）就全变。
+     */
+    private fun chained(a: Z.Action, chain: String): Z.Action =
+        a.copy(extra = a.extra.toMutableMap().apply { put("pvzChain", chain) })
+
+    private fun stateCheckNode(): Z.Action {
+        // 用 JSON 构造再交给解析器：候选是模型的内部类，直接 new 容易踩可见性；
+        // 走 parse 这条路读文件和落盘用的是同一套逻辑。
+        val cands = org.json.JSONArray()
+        for (t in stateChecks) {
+            cands.put(
+                org.json.JSONObject().apply {
+                    put(
+                        "condition",
+                        org.json.JSONObject().apply {
+                            put("type", "textFount")
+                            put("text", org.json.JSONObject().apply {
+                                put("type", "text")
+                                put("text", t)
+                            })
+                        }
+                    )
+                }
+            )
+        }
+        val o = org.json.JSONObject().apply {
+            put("type", "等待候选")
+            put("delay", "0")
+            put("desc", "状态识别")
+            put("candidates", cands)
+        }
+        return Z.Action.parse(o) ?: Z.Action(
+            type = Z.ActionType.WAIT_CANDIDATES,
+            common = Z.ActionCommon(delay = "0", desc = "状态识别")
+        )
     }
 }

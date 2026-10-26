@@ -42,6 +42,36 @@ object PvzCoords {
     /** 铲子（铲除的起点）。 */
     val SHOVEL = intArrayOf(1222, 674)
 
+    /**
+     * 神器预设：**不同神器用法不同**，所以带上"怎么用"。
+     *
+     * - [Use.SWIPE]：从起点拖到目标格子（魔豆、葫芦）
+     * - [Use.TAP]  ：点一下就生效（相机复制/粘贴）
+     *
+     * 点位取自 coords.json 的 `神器_初始化_*` 与 `葫芦*体型`。
+     */
+    enum class Use { SWIPE, TAP }
+
+    class Artifact(
+        val key: String,
+        val label: String,
+        val use: Use,
+        val point: IntArray
+    )
+
+    val ARTIFACTS: List<Artifact> = listOf(
+        // 拖拽类：起点不同（葫芦按体型算距离，所以分三档）
+        Artifact("bean", "魔豆（拖到格子）", Use.SWIPE, intArrayOf(749, 703)),
+        Artifact("gourd_s", "葫芦·小（拖到格子）", Use.SWIPE, intArrayOf(664, 573)),
+        Artifact("gourd_m", "葫芦·中（拖到格子）", Use.SWIPE, intArrayOf(748, 577)),
+        Artifact("gourd_l", "葫芦·大（拖到格子）", Use.SWIPE, intArrayOf(830, 577)),
+        // 点按类：点固定位置
+        Artifact("camera_copy", "相机·复制（点一下）", Use.TAP, intArrayOf(707, 570)),
+        Artifact("camera_paste", "相机·粘贴（点一下）", Use.TAP, intArrayOf(794, 570))
+    )
+
+    fun artifact(key: String?): Artifact? = ARTIFACTS.firstOrNull { it.key == key }
+
     /** 「下一波」按钮。 */
     val NEXT_WAVE = intArrayOf(1225, 219)
 
