@@ -813,15 +813,33 @@ class ZExecutor(
         for (n in 0 until times) {
             if (stopped) break
             // 「无限重复 + 带条件」：每轮先看条件（取反前）是否已经成立 → 成立就退出
+            /*
+             * 「无限重复 + 取反条件」= 重复**直到**条件不再成立。
+             *
+             * 用户原话："我查找编队节点条件写的是取反，识别 4，识别到 4 以后
+             * 应该才会提示条件失败，然后执行监听里的动作"。
+             *
+             * 所以这里不能当成"重复完成、算成功"，而要按**条件失败**收场：
+             *   记一条跳过 → 跑「条件失败后」（afterConditionFail）监听 →
+             *   监听里的跳转/停止照旧向上传。
+             * 这样"滑到 4 出现 → 点它 → 跳去开始战斗"就是一条自然链。
+             */
             if (repeatWhileCond && n > 0) {
-                val done = evaluate(
-                    action.common.condition!!.copy(runWhenFalse = false),
-                    index,
-                    skipped
-                )
-                if (done) {
-                    log("   条件已成立，结束这条的重复（共 ${n} 次）")
-                    break
+                val cond = action.common.condition!!
+                val pass = evaluate(cond, index, skipped)
+                if (!pass) {
+                    val condName = ZConditionEditor.labelOf(cond.type)
+                    val detail = if (isRecognitionCondition(cond)) matcher.lastReason()
+                    else condDetail(cond)
+                    val msg = "第 ${index + 1} 条「$label」条件不满足（$condName）：" +
+                        (detail ?: "条件不成立") + "（已经重复 $n 次）"
+                    log(msg)
+                    skipped.add(Result.Skip(index, label, msg))
+                    val cbOut = runCallbacks(
+                        action, Z.CallbackSlot.AFTER_CONDITION_FAIL, index, label
+                    )
+                    if (cbOut != null && (cbOut.jumpTo != null || cbOut.stop)) return cbOut
+                    return Outcome(condSkipped = true)
                 }
             }
             if (n > 0) {
@@ -3543,7 +3561,7 @@ class ZExecutor(
         if (callbackDepth >= MAX_CALLBACK_DEPTH) {
             val msg = "监听嵌套超过 $MAX_CALLBACK_DEPTH 层，跳过（疑似自触发死循环）"
             log("第 ${index + 1} 条「$label」 $msg")
-            skipped.add(Result.Skip(index, cbLabel, msg))
+            // runCallbacks 没有 skipped 参数：这里只记日志（够用，原因已经写在上面那行）
             return null
         }
         val cbSkips = ArrayList<Result.Skip>()

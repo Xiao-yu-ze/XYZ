@@ -155,6 +155,8 @@ class ZConditionRunWhenFalseTest {
         val r = ex.run(Z.Script(actions = listOf(swipe, Z.Action(type = Z.ActionType.CONTROL_STOP))))
         // 前 2 次认不出 → 滑；第 3 次认出 → 退出。所以至少滑 2 次、并且真的退出了（不是死循环）
         assertTrue("应重复滑动，实际 ${rec.calls.size} 次：$logs", rec.calls.size >= 2)
-        assertTrue("应记录结束重复：$logs", logs.any { it.contains("结束这条的重复") })
+        // 认出 4 之后按**条件失败**收场（用户预期：提示条件失败 → 跑监听条件失败后）
+        assertTrue("应记条件不满足：$logs", logs.any { it.contains("条件不满足") })
+        assertTrue("应说明重复了几次：$logs", logs.any { it.contains("已经重复") })
     }
 }
