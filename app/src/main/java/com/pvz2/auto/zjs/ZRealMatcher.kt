@@ -109,6 +109,32 @@ class ZRealMatcher(
      */
     var density: Float = DEFAULT_DENSITY
 
+    /**
+     * 短命帧缓存：**同一次判断里的多个候选共用一帧**。
+     *
+     * 「等待候选」以前是逐个候选各抓一帧、各跑一次 OCR —— N 个候选 N 倍耗时。
+     * 加了这个缓存后，120ms 内连续调用的识别复用同一帧：
+     * 一轮候选只抓一次图，OCR 也只对那一帧做。
+     *
+     * TTL 取 120ms：比一轮候选的判断时间（几十毫秒）长，比一个动作的间隔
+     * （≥100ms 的 delay + 注入）短，所以不会把"上一帧"用到下一轮去。
+     */
+    /** 同一帧的复用窗口（毫秒）。 */
+    private val frameTtlMs = 120L
+
+    private var cachedFrame: org.opencv.core.Mat? = null
+    private var cachedFrameAt = 0L
+
+    private fun frameForMatch(): org.opencv.core.Mat? {
+        val now = System.currentTimeMillis()
+        val c = cachedFrame
+        if (c != null && !c.empty() && now - cachedFrameAt <= frameTtlMs) return c
+        val fresh = nextFrame() ?: return null
+        cachedFrame = fresh
+        cachedFrameAt = now
+        return fresh
+    }
+
     private fun nextFrame(): org.opencv.core.Mat? {
         pendingFrame?.release()
         /*
@@ -145,7 +171,7 @@ class ZRealMatcher(
 
         // ★ 走 nextFrame()：直接 frame() 每次漏一块 3.7MB native Mat，
         //   而识别是 200ms 级的循环，漏起来几分钟就能把进程撑爆。
-        val m = nextFrame() ?: run {
+        val m = frameForMatch() ?: run {
             lastUnsupported = "拿不到当前帧"
             return emptyList()
         }
@@ -388,7 +414,7 @@ class ZRealMatcher(
             lastUnsupported = "文字识别缺少 Context（内部错误）"
             return emptyList()
         }
-        val m = nextFrame() ?: run {
+        val m = frameForMatch() ?: run {
             lastUnsupported = "拿不到当前帧"
             return emptyList()
         }
@@ -417,7 +443,7 @@ class ZRealMatcher(
             lastUnsupported = "文字识别缺少 Context（内部错误）"
             return emptyList()
         }
-        val m = nextFrame() ?: run {
+        val m = frameForMatch() ?: run {
             lastUnsupported = "拿不到当前帧"
             return emptyList()
         }
@@ -568,7 +594,7 @@ class ZRealMatcher(
         val g = rgb[1]
         val b = rgb[2]
 
-        val m = nextFrame() ?: run {
+        val m = frameForMatch() ?: run {
             lastUnsupported = "拿不到当前帧"
             return emptyList()
         }
