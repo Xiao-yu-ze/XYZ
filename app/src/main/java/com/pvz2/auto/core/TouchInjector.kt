@@ -15,6 +15,23 @@ interface TouchInjector {
      */
     fun tap(x: Float, y: Float, holdMs: Int) = tap(x, y)
 
+    /**
+     * 目标显示（虚拟屏）现在还在不在。
+     *
+     * ## 为什么需要它
+     *
+     * 用户真机上报"用脚本会重启手机"。查到的实际是：
+     * `system_server` 在 `SystemGesturesPointerEventListener.onPointerEvent` →
+     * `RootWindowContainer.getTopFocusedDisplayContent` 里
+     * `Index 1 out of bounds for length 1` 崩掉（ColorOS 多显示分支的越界），
+     * 内核并没有重启（uptime 24 天）。
+     *
+     * 触发点是一次触摸 DOWN 落在一个"已经不存在的副屏"上。
+     * 所以每次注入前先确认显示还在；不在就**立刻停脚本**，
+     * 绝不能回退到主屏注入 —— 那一下正好喂给这个系统 bug。
+     */
+    fun isDisplayAlive(): Boolean = true
+
     fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long)
 
     /**

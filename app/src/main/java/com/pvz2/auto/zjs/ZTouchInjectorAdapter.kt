@@ -18,7 +18,17 @@ class ZTouchInjectorAdapter(
     private val touch: TouchInjector
 ) : ZExecutor.Injector {
 
+    /** 虚拟屏消失时直接抛 —— 让脚本停下，而不是把点击打到主屏把系统带崩。 */
+    private fun requireDisplay() {
+        if (!touch.isDisplayAlive()) {
+            throw IllegalStateException(
+                "虚拟屏已消失（display 不在了），已停止注入以免把点击打到主屏"
+            )
+        }
+    }
+
     override fun tap(x: Int, y: Int, holdMs: Int) {
+        requireDisplay()
         // holdMs <= 0 = 极速模式；0<hold<=60 走快速 tap；更长的当长按（同点 swipe）
         if (holdMs <= 0) {
             touch.tap(x.toFloat(), y.toFloat(), 0)
@@ -31,6 +41,7 @@ class ZTouchInjectorAdapter(
     }
 
     override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int) {
+        requireDisplay()
         touch.swipe(
             x1.toFloat(), y1.toFloat(),
             x2.toFloat(), y2.toFloat(),
@@ -48,6 +59,7 @@ class ZTouchInjectorAdapter(
         paths: List<Pair<ZPosResolver.Hit, ZPosResolver.Hit>>,
         durationMs: Int
     ) {
+        requireDisplay()
         val flat = paths.map {
             floatArrayOf(
                 it.first.x.toFloat(), it.first.y.toFloat(),

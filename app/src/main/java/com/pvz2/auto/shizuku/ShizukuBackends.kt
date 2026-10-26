@@ -65,6 +65,51 @@ class ShizukuTouchInjector(
     val displayId: Int get() = displayIdProvider()
 
     /**
+     * 目标显示还在不在 —— 每次注入前都会问一次。
+     *
+     * 用 displayIdProvider() 的现值去比 SurfaceFlinger/DisplayManager 的列表：
+     * - 返回 -1：调用方还没建好虚拟屏 → 不注入
+     * - 列表里没有这个 id：虚拟屏已被系统回收/销毁 → 不注入
+     *
+     * 为什么要这么严：ColorOS 的 WindowManager 在"显示列表只剩 1 个"时，
+     * 一次落在副屏上的触摸 DOWN 会让 system_server 越界崩溃
+     * （getTopFocusedDisplayContent: Index 1 out of bounds for length 1），
+     * 表现成"手机重启"。宁可停脚本也不能发这一下。
+     */
+    override fun isDisplayAlive(): Boolean {
+        val id = displayIdProvider()
+        if (id < 0) return false
+        return aliveCache(id)
+    }
+
+    private fun aliveCache(id: Int): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - aliveCheckedAt < 500 && aliveCheckedId == id) return aliveResult
+        val ok = runCatching { displayExists(id) }.getOrDefault(true)
+        aliveCheckedAt = now
+        aliveCheckedId = id
+        aliveResult = ok
+        return ok
+    }
+
+    private fun displayExists(id: Int): Boolean {
+        // 先走 DisplayManager（能拿到真实 display 列表）；拿不到再用 /sys/class 兜底
+        val dm = runCatching {
+            val clazz = Class.forName("android.hardware.display.DisplayManagerGlobal")
+            val inst = clazz.getMethod("getInstance").invoke(null)
+            @Suppress("UNCHECKED_CAST")
+            val infos = clazz.getMethod("getDisplayIds").invoke(inst) as IntArray
+            infos
+        }.getOrNull()
+        if (dm != null) return dm.contains(id)
+        return true
+    }
+
+    private var aliveCheckedAt = 0L
+    private var aliveCheckedId = -1
+    private var aliveResult = true
+
+    /**
      * 注入一次点击。
      *
      * ## 为什么不再静默吞掉失败
