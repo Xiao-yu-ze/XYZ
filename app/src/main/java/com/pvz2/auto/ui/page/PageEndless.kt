@@ -529,7 +529,15 @@ class PageEndless(
                 // 点 = 切换；长按 = 改上界/改名/删除
                 setOnClickListener {
                     curStage = i
-                    refreshStages(); refreshHint(); refreshChains()
+                    /*
+                     * ★ 切阶段必须**重建棋盘索引**。
+                     *
+                     * 棋盘上的贴片是从"当前阶段的链"里推出来的（rebuildBoardIndex），
+                     * 原来只重画链、没重建索引 → board[][] 还是上一个阶段的内容，
+                     * 于是用户看到"切换阶段后棋盘上的操作没消失"。
+                     */
+                    rebuildBoardIndex()
+                    refreshAll()
                 }
                 setOnLongClickListener {
                     stageMenu(i)

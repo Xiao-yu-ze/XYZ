@@ -37,14 +37,6 @@
             android:layout_weight="1"
             android:text="@string/zjs_add_action" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnZjsChain"
-            style="@style/AppButton.Outline"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
-            android:text="@string/zjs_plant_order" />
     </LinearLayout>
 
     <!-- 下潜导航（监听 / 运行多个动作）。
