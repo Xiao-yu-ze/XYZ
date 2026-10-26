@@ -298,7 +298,16 @@ class ZjsEditorPage(
                 .setTitle("「${slot.label}」里要放什么动作")
                 .setItems(labels) { dlg, which ->
                     dlg.dismiss()
-                    val picked = Z.Action(type = sorted[which])
+                    /*
+                     * ★ 必须用 newAction() 而不是裸 Z.Action(type=…)。
+                     *
+                     *   裸构造出来 posData == null，而 ZActionDescriber 的规则是
+                     *   "posData 为空就不出「识别/位置」那一组行" —— 于是监听里的动作
+                     *   **看不到位置/x/y**，用户完全没法配。
+                     *   用户实测：「条件失败后」里放「点击」没有位置行；
+                     *   「动作失败后」里放同样的动作却能看到（那份是从旧脚本带过来的，有 posData）。
+                     */
+                    val picked = newAction(sorted[which])
                     val newCb = LinkedHashMap(owner.callbacks)
                     newCb[slot] = picked
                     // 用路径写回占位动作：depth ≥ 2 时写 "list[actionIndex]" 会改错动作
