@@ -965,7 +965,19 @@ class ZExecutor(
             Z.ActionType.CLICK_TEXT, Z.ActionType.CLICK_COLOR -> {
                 val pos = action.posData
                 if (pos == null) {
-                    skipped.add(Result.Skip(index, label, "缺位置"))
+                    /*
+                     * 这里要按动作类型说清楚缺的是什么 —— 用户真机踩过：
+                     * 监听里配了「点击文字」想点刚认出来的那个「4」，但没填要识别的文字，
+                     * 日志只写"缺位置"，看不出是"没填文字"还是"没填坐标"。
+                     */
+                    val why = when (action.type) {
+                        Z.ActionType.CLICK_TEXT ->
+                            "点击文字缺「要识别的文字」—— 想点固定坐标请改用「点击」"
+                        Z.ActionType.CLICK_IMAGE -> "点击图片缺模板图/位置"
+                        Z.ActionType.CLICK_COLOR -> "点击颜色缺颜色/位置"
+                        else -> "缺位置"
+                    }
+                    skipped.add(Result.Skip(index, label, why))
                     return null
                 }
                 /*
