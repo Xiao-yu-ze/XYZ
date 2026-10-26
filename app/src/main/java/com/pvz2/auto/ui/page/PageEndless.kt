@@ -801,9 +801,6 @@ class PageEndless(
     /** 启用的预置识别（默认三个全开：结算 / 开始战斗 / 补给入口）。 */
     private val usePresets: MutableSet<String> =
         com.pvz2.auto.zjs.PvzRecognizers.PRESETS.map { it.key }.toMutableSet()
-    /** 进关后是否自动点一下加速（用户可关，默认关）。 */
-    private var autoSpeed = false
-
     /**
      * 把布阵台编译成一份能跑的脚本。
      *
@@ -817,7 +814,6 @@ class PageEndless(
      *     命中「补给/BOSS入口」→ 跳 补给
      *     命中「结算·继续挑战」→ 跳 结算
      *   :进关
-     *     （可选）点加速
      *     每个阶段一段（条件：关卡落在本阶段）→ 单次链 + 循环链
      *     跳回 轮询
      *   :补给
@@ -837,15 +833,6 @@ class PageEndless(
         out.add(statePollNode())
         out.add(jumpLabel("进关"))
 
-        if (autoSpeed) {
-            out.add(
-                Z.Action(
-                    type = Z.ActionType.PVZ_SPEED,
-                    common = Z.ActionCommon(delay = "100"),
-                    extra = HashMap<String, Any?>().apply { put("pvzChain", PvzChainModel.ONCE) }
-                )
-            )
-        }
 
         // 每个阶段一段，条件按关卡变量判
         var prevBound = 0
@@ -866,6 +853,16 @@ class PageEndless(
                         kids.add(chained(a, PvzChainModel.LOOP))
                         if (++pending % checkEvery == 0) kids.add(stateCheckNode())
                     }
+                    /*
+                     * 循环 → 收尾 的判定**由程序内建**，不让用户配。
+                     *
+                     * 用户原话："从循环链到收尾链的条件也是我们自己设置，
+                     * 不要用户设置"。逻辑照 MAA：战斗链尾的 next 首项是
+                     * 「识别结算」—— 认出"继续挑战"就跳出循环。
+                     * 我们的等价写法：一个带条件的「跳转到 :收尾」节点，
+                     * 条件不满足时它自己会被跳过，循环继续。
+                     */
+                    kids.add(settleJumpNode())
                     body.add(
                         Z.Action(
                             type = Z.ActionType.RUN_MULTI,
@@ -910,18 +907,26 @@ class PageEndless(
         out.add(jsNode("zdjl.setVar('无尽关卡', Number(zdjl.getVar('无尽关卡')||0) + 1); log('关卡 +1 → ' + zdjl.getVar('无尽关卡'));"))
         out.add(jumpToNode("轮询"))
 
-        // 收尾链：挂在最后（由用户设的触发条件控制）
+        // 收尾段：由循环里的 settleJumpNode() 跳进来
+        out.add(jumpLabel("收尾"))
         val lastEnd = stages.lastOrNull()?.let { stageChains[it.id] }
             ?.get(PvzChainModel.END).orEmpty()
-        for ((i, a) in lastEnd.withIndex()) {
-            val node = chained(a, PvzChainModel.END)
-            out.add(
-                if (i == 0 && endCondition != null) {
-                    node.copy(common = node.common.copy(condition = endCondition))
-                } else node
-            )
-        }
+        for (a in lastEnd) out.add(chained(a, PvzChainModel.END))
         return out
+    }
+
+    /** 循环里的「认到结算就跳收尾」节点（条件不满足会被跳过，循环继续）。 */
+    private fun settleJumpNode(): Z.Action {
+        val settle = com.pvz2.auto.zjs.PvzRecognizers.PRESETS.first { it.key == "settle" }
+        return Z.Action(
+            type = Z.ActionType.CONTROL_JUMP,
+            common = Z.ActionCommon(
+                desc = "结算→收尾",
+                delay = "0",
+                condition = settle.build()
+            ),
+            extra = HashMap<String, Any?>().apply { put("jumpToPosition", "收尾") }
+        )
     }
 
     /** 「状态轮询」：三个预置识别按顺序判，命中就跳到对应段。 */
