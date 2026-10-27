@@ -4,15 +4,15 @@ import android.content.Context
 import android.util.Log
 
 /**
- * 从 assets 里读自动精灵格式的脚本。
+ * 从 assets 里读脚本格式格式的脚本。
  *
- * ## 为什么和 MaaFramework 的脚本分开
+ * ## 为什么和 参考管线 的脚本分开
  *
- * 两套格式完全不通：MaaFramework 一个节点一个 JSON 文件、靠 `next` 连边；
- * 自动精灵一个脚本一个 JSON、是一串线性动作。混在一起读写会让两边的
+ * 两套格式完全不通：参考管线 一个节点一个 JSON 文件、靠 `next` 连边；
+ * 脚本格式一个脚本一个 JSON、是一串线性动作。混在一起读写会让两边的
  * 解析器都变得难懂，而且用户的脚本是哪种格式，界面上一眼就该看出来。
  *
- * 所以：`assets/pipeline/` 是 MaaFramework，`assets/zjs/` 是自动精灵。
+ * 所以：`assets/pipeline/` 是 参考管线，`assets/zjs/` 是脚本格式。
  */
 object ZjsRunner {
 

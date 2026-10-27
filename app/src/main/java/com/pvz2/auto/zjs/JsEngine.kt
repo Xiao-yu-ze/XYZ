@@ -10,9 +10,9 @@ import org.mozilla.javascript.Undefined
 /**
  * 跑「运行JS代码」和「JS 表达式」条件的脚本引擎。
  *
- * ## API 照抄自动精灵
+ * ## API 照抄脚本格式
  *
- * 自动精灵把它的 JS API 以 TypeScript 声明的形式内嵌在产物里
+ * 脚本格式把它的 JS API 以 TypeScript 声明的形式内嵌在产物里
  * （`ren-runarea.pretty.js` 里那段 `declare var zdjl: ZdjlApi`），
  * 脚本里写的就是 `zdjl.getVar('关卡')` 这种形式。所以这里**不自己发明接口**，
  * 而是照那份声明实现同名同参的方法：
@@ -35,7 +35,7 @@ import org.mozilla.javascript.Undefined
  *
  * ## 为什么是 Rhino
  *
- * 自动精灵用 QuickJS。我们没有它的 Android 预编译库；
+ * 脚本格式用 QuickJS。我们没有它的 Android 预编译库；
  * WebView 的 evaluateJavascript 必须主线程且异步，而执行器是一条同步阻塞线程，
  * 接进来只能死等。Rhino 纯 Java、就在调用线程上算，解释模式
  * （`optimizationLevel = -1`）能绕开 Android 上生成字节码的坑。
@@ -129,7 +129,7 @@ object JsEngine {
             }
             ScriptableObject.putProperty(scope, "zdjl", buildZdjl(cx, scope, env))
             ScriptableObject.putProperty(scope, "console", buildConsole(cx, env))
-            // 裸 log(...) 别名：自动精灵只有 console.log，但写成 log 太常见了，
+            // 裸 log(...) 别名：脚本格式只有 console.log，但写成 log 太常见了，
             // 给个便宜的别名，免得报 "log is not defined" 让人摸不着头脑
             ScriptableObject.putProperty(scope, "log", fn(cx, "log") { a ->
                 env.log("   JS log: " + a.joinToString(" ") { jsToString(it) })
@@ -180,7 +180,7 @@ object JsEngine {
         }
     }
 
-    /** 变量名规则：照自动精灵的 checkVarNameValid。 */
+    /** 变量名规则：照checkVarNameValid。 */
     fun isValidVarName(name: String): Boolean {
         if (name.isEmpty()) return false
         if (name[0].isDigit()) return false
@@ -323,7 +323,7 @@ object JsEngine {
         return o
     }
 
-    /** 自动精灵 zdjl 里本机没有对应能力的那些方法。 */
+    /** 脚本格式 zdjl 里本机没有对应能力的那些方法。 */
     private val UNSUPPORTED = listOf(
         "findNode", "findNodeAsync", "findLocation", "findLocationAsync",
         "recognitionScreen", "recognitionScreenAsync", "ocr", "ocrAsync",

@@ -80,7 +80,7 @@ class MainActivity : AppCompatActivity() {
 
     /** 第 2 页实例：别处（如第 5 页应用脚本）改动了脚本目录后要能让它重读。 */
     private var libraryPage: com.pvz2.auto.ui.page.LibraryPage? = null
-        /* PAGE_EDITOR / PAGE_DIAG 已移除：前者只读浏览 MaaFramework 节点、
+        /* PAGE_EDITOR / PAGE_DIAG 已移除：前者只读浏览 参考管线 节点、
            后者是手填坐标的调试工具，对用户没有价值。 */
 
 
@@ -819,7 +819,7 @@ class MainActivity : AppCompatActivity() {
             val r = PreviewTouchMapper.imageRect(overlay.width, overlay.height, iw, ih)
             overlay.setImageRect(r[0], r[1], r[2], r[3])
 
-            // 初始位置：取当前值，没有就画面正中（自动精灵的默认也是 50%/50%）
+            // 初始位置：取当前值，没有就画面正中（默认也是 50%/50%）
             val init = PreviewPicker.crosshair.value
             if (init != null) {
                 // 虚拟屏坐标 → 控件坐标
@@ -1002,7 +1002,7 @@ class MainActivity : AppCompatActivity() {
 
                     // ★ 取点模式优先：不能让取点顺手把游戏点一下。
                     //
-                    //   自动精灵 也是这个模型 —— 武装一个模式后，用户的触摸
+                    //   脚本格式 也是这个模型 —— 武装一个模式后，用户的触摸
                     //   属于"选位置"，不属于"操作游戏"，两者必须互斥。
                     PreviewPicker.mode.value?.let { mode ->
                         val st = VirtualDisplaySession.sharedState.value

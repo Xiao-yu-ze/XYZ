@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 自动精灵脚本模型的解析与回写。
+ * 脚本格式脚本模型的解析与回写。
  *
  * 最要紧的一条是**未知字段必须原样带回去**：本程序只执行安卓上有意义的那部分
  * 动作，但用户导入的脚本里有 Windows 专用字段、加密字段、新版本字段。
@@ -32,7 +32,7 @@ class ZModelTest {
         }
         assertEquals(
             // 24 个协议类型（删掉了本机用不到的打开应用/打开链接）
-            // + 1 个我们自己的（等待候选，等价于 Maa 的 next）。
+            // + 1 个我们自己的（等待候选，等价于 参考管线 的 next）。
             // 断言等于而不是大于：多出一个没登记的类型，说明有人加了节点却没更新这里。
             34, Z.ActionType.entries.size
         )
@@ -92,7 +92,7 @@ class ZModelTest {
 
     @Test
     fun `动作里的未知字段会原样写回`() {
-        // `futureField` 是 自动精灵 未来版本可能加的字段，我们不认识但不能丢
+        // `futureField` 是 脚本格式 未来版本可能加的字段，我们不认识但不能丢
         val json = """
         {"type":"点击","delayUnit":1,"futureField":{"a":1},"posData":{"type":"location","x":"1","y":"2"}}
         """.trimIndent()
@@ -190,7 +190,7 @@ class ZModelTest {
 
     @Test
     fun `__vars 覆盖的字段在落盘时被删除`() {
-        // 自动精灵的规则：字段改用变量后，原字段不落盘，只留 __vars。
+        // 规则：字段改用变量后，原字段不落盘，只留 __vars。
         // 两边都写的话，导出后那个字段会同时存在"固定值"和"变量"。
         val json = """
         {"type":"点击","delayUnit":1,"duration":"100",
@@ -237,7 +237,7 @@ class ZModelTest {
     @Test
     fun `多指手势必须原样写回协议名`() {
         /*
-         * 曾经写成 "多指滑动"（我们自造的名字）。自动精灵的动作注册表里
+         * 曾经写成 "多指滑动"（我们自造的名字）。动作注册表里
          * 没有这个类型，它的构造器遇到未知 type 直接抛异常 ——
          * 结果是**整份脚本打不开**，不是少一条动作。
          */

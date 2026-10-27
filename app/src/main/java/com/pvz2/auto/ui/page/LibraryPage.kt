@@ -269,7 +269,7 @@ class LibraryPage(
                     /*
                      * 「从键盘输入」的变量：点运行先弹窗问值，再真的开跑。
                      *
-                     * 自动精灵就是这个流程（`value.showInput` → 运行前输入页，
+                     * 脚本格式就是这个流程（`value.showInput` → 运行前输入页，
                      * 预填上次记住的值；留空且非必填 = 删掉这个变量）。
                      * 没有这类变量时直接开跑，不多一次点击。
                      */
@@ -339,7 +339,7 @@ class LibraryPage(
      * 运行前问「从键盘输入」的那些变量。
      *
      * 每个变量一个输入框，预填「上次记住的值」或脚本里配的值；
-     * 必填留空就不让开跑（自动精灵的 mustInput 默认是 true）。
+     * 必填留空就不让开跑（mustInput 默认是 true）。
      */
     private fun promptRunInputs(path: String, items: List<ZjsInputs.Item>) {
         val prefs = host.getSharedPreferences("zjs_input_memory", android.content.Context.MODE_PRIVATE)

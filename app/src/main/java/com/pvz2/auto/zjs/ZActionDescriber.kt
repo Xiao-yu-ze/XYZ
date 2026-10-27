@@ -174,7 +174,7 @@ object ZActionDescriber {
         // ## 为什么必须显示
         //
         // 一个挂了监听的动作用户展开后如果什么都看不到，他会以为没挂 ——
-        // 而那些监听在自动精灵里是会真的跑的。这里每个槽位一行，
+        // 而那些监听在脚本格式里是会真的跑的。这里每个槽位一行，
         // 显示槽位名 + 里面那个动作的标签，至少让用户知道"这里有事"。
         if (action.callbacks.isNotEmpty()) {
             // 按固定顺序列，不按 Map 的遍历顺序 —— 用户要能对照着看
@@ -295,7 +295,7 @@ object ZActionDescriber {
         if (action.type == Z.ActionType.MULTI_SWIPE) {
             // ★ 三种情况分开说，不能只认我们自己的 fingers。
             //
-            //   自动精灵原生的「多指手势」轨迹在 `gestureActions`（一个完整动作
+            //   脚本格式原生的「多指手势」轨迹在 `gestureActions`（一个完整动作
             //   数组，FIELDS.md:470）里，而它现在是**强类型字段**（ZModel.HANDLED
             //   收着它）—— 所以它既不会出现在 extra 只读兜底里，这里原来也不读它。
             //   导入这种脚本时界面显示"（还没有手指，点击添加）"，用户会以为数据
@@ -306,7 +306,7 @@ object ZActionDescriber {
             val text = when {
                 action.fingers.isNotEmpty() -> "共 ${action.fingers.size} 根，点击管理"
                 nativeCount > 0 ->
-                    "共 $nativeCount 个子动作（自动精灵原生轨迹，本机按 fingers 执行）" +
+                    "共 $nativeCount 个子动作（脚本格式原生轨迹，本机按 fingers 执行）" +
                         (if (action.gestureRaw.isEmpty()) ""
                         else "；其中 ${action.gestureRaw.size} 项格式不认识，已原样保留")
                 else -> "（还没有手指，点击添加）"
@@ -344,7 +344,7 @@ object ZActionDescriber {
             finger.endPos?.let { emit("手指$n 终点", it) }
         }
 
-        // ---- 等待候选（我们自己的节点，等价于 Maa 的 next）
+        // ---- 等待候选（我们自己的节点，等价于 参考管线 的 next）
         //
         // 候选本身不在这里编辑 —— 它们的条件就是各自的位置对象，
         // 在动作列表里逐条配更顺手。这里只把「等谁、等多久」摊开，
@@ -412,7 +412,7 @@ object ZActionDescriber {
                 (action.waitIntervalMs ?: 200).toString(),
                 Kind.NUMBER, field = "waitIntervalMs"
             )
-            // 超时去哪 —— 对应 Maa 的 on_error
+            // 超时去哪 —— 对应 参考管线 的 on_error
             /*
              * ★ 判"跳到标识"要看**键在不在**，不能看值非空。
              *
@@ -440,7 +440,7 @@ object ZActionDescriber {
 
         // ---- 14 个通用字段，**缺省也显示**
         //
-        // ## 顺序照抄自动精灵
+        // ## 顺序照抄脚本格式
         //
         // 取自 SPEC.md 第 181 行（基类 m26622 的属性声明顺序，也就是 UI 绑定的顺序）：
         //
@@ -695,7 +695,7 @@ object ZActionDescriber {
                 /*
                  * ★ 这个字段运行时不读（ZExecutor/ZRealMatcher 零引用）：
                  *   本机只有一套本地 OCR，local_v2 / local / online 三个值
-                 *   跑起来完全一样。值照样存取（导给自动精灵还要用），
+                 *   跑起来完全一样。值照样存取（导给脚本格式还要用），
                  *   但名字里标出来，别让人以为换了引擎。
                  */
                 oth += Row(
@@ -724,9 +724,9 @@ object ZActionDescriber {
 
         Z.PosType.COLOR -> {
             /*
-             * 颜色范围（从 Maa 的 lower/upper 来的）。
+             * 颜色范围（从 参考管线 的 lower/upper 来的）。
              *
-             * Maa 的颜色判定是"每通道落在 [lower,upper]"——范围，不是某个精确色。
+             * 参考管线 的颜色判定是"每通道落在 [lower,upper]"——范围，不是某个精确色。
              * 编辑器原来只显示 color 一个值（范围中点），用户会以为判定就靠它，
              * 于是把相似度往 100 调，反而认不出来。把真实依据摊出来。
              */
@@ -874,7 +874,7 @@ return PosGroup(rec, par, oth)
             /*
              * 极速点击（协议 10.1）。现在**真的生效**了：
              * 注入层不再等 `MODE_WAIT_FOR_FINISH`，按下/抬起间隔压到 1ms。
-             * 代价照自动精灵的原文写出来 —— 连点会少量丢点，用户得知道。
+             * 代价照原文写出来 —— 连点会少量丢点，用户得知道。
              */
             rows += Row(
                 "极速点击模式",
@@ -1188,7 +1188,7 @@ return PosGroup(rec, par, oth)
             )
             rows += Row(
                 "可用变量/函数",
-                "zdjl.getVar/setVar（同自动精灵）；console.log 写脚本日志",
+                "zdjl.getVar/setVar（同脚本格式）；console.log 写脚本日志",
                 Kind.READONLY
             )
         }
@@ -1368,8 +1368,8 @@ return PosGroup(rec, par, oth)
             else -> Unit
         }
         /*
-         * 识别后等待：Maa 的 pre_delay 真正的位置（识别 → 等待 → 动作）。
-         * 我们的 delay 在识别之前，补上这一段才能和 Maa 对齐。
+         * 识别后等待：参考管线 的 pre_delay 真正的位置（识别 → 等待 → 动作）。
+         * 我们的 delay 在识别之前，补上这一段才能和 参考管线 对齐。
          */
         if (action.type in CLICK_FAMILY) {
             rows += Row(

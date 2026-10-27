@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Maa pipeline → .zjs 转换器（针对无尽塔香蕉那套写法）。
+参考管线 pipeline → .zjs 转换器（针对无尽塔香蕉那套写法）。
 
-## Maa 那套是怎么跑的
+## 参考管线 那套是怎么跑的
 
 - 每个节点 = 「识别 + 动作」，识别结果决定「这个节点现在能不能进」；
 - `next` 是**候选列表**：父节点每轮按顺序扫，第一个识别成功的就走进去；
@@ -14,7 +14,7 @@ Maa pipeline → .zjs 转换器（针对无尽塔香蕉那套写法）。
 
 ## 映射到我们这边
 
-| Maa | 我们 |
+| 参考管线 | 我们 |
 |---|---|
 | 节点的识别（OCR/ColorMatch） | 条件 `textFount` / `colorFound`（范围、阈值、上下界都带过去） |
 | `next: [A, B, C]` | 「等待候选」节点，三个候选各带条件 + `jumpTo` |
@@ -35,7 +35,7 @@ import json
 import os
 import sys
 
-ROOT = r"C:\Users\29374\Desktop\MaaPVZ-v0.5.1-beta.2-win-x86_64\resource\pipeline"
+ROOT = r"C:\Users\29374\Desktop\参考管线-v0.5.1-beta.2-win-x86_64\resource\pipeline"
 SLOT = os.path.join(ROOT, r"General_action\Plant_planting_Initialize_slot_General_Swipe.json")
 GRID = os.path.join(ROOT, r"General_action\Plant_planting_Initialize_Grid_General_Swipe.json")
 # 被这三个文件引用、但定义在别处的节点（比如"补给识别"）从这里补进来。
@@ -57,7 +57,7 @@ BASE = {
 
 
 def load_jsonc(path):
-    """读 Maa 的 pipeline：允许 // 注释和尾逗号（标准 json 不认）。"""
+    """读 参考管线 的 pipeline：允许 // 注释和尾逗号（标准 json 不认）。"""
     import re
     with open(path, encoding="utf-8") as f:
         txt = f.read()
@@ -108,7 +108,7 @@ def load_points():
 
 
 def area(roi):
-    """Maa 的 [x,y,w,h] → 我们的 '左 上 右 下'。"""
+    """参考管线 的 [x,y,w,h] → 我们的 '左 上 右 下'。"""
     if not roi:
         return None
     x, y, w, h = roi
@@ -146,7 +146,7 @@ def condition_of(node):
         pos = {
             "type": "text",
             "text": expected,
-            # Maa 的 threshold 是文字相似度，默认 0.3；我们缺省 90(%)，按 0~100 传
+            # 参考管线 的 threshold 是文字相似度，默认 0.3；我们缺省 90(%)，按 0~100 传
             "similarPercent": int(round(float(thr) * 100)) if thr is not None else 90,
         }
         a = area(node.get("roi") or param.get("roi"))
@@ -196,7 +196,7 @@ DEFAULT_DELAY = 200
 
 # 连点的间隔。
 #
-# Maa 里每次重复都要重新截图 + 识别（DirectHit 也要一帧），实测一次 30~70ms，
+# 参考管线 里每次重复都要重新截图 + 识别（DirectHit 也要一帧），实测一次 30~70ms，
 # 所以脚本里写 `repeat_delay: 0` 实际并不是 0ms。我们是直接注入，
 # 一次点击只要 5~15ms —— 想贴近原来的节拍就传 --repeat-gap-ms 30。
 REPEAT_GAP_MS = 0
@@ -223,7 +223,7 @@ def next_names(node):
         elif isinstance(item, dict):
             name = item.get("name")
             if item.get("anchor"):
-                # Maa 的 `anchor: true` 等价于 [Anchor]名字 写法
+                # 参考管线 的 `anchor: true` 等价于 [Anchor]名字 写法
                 out.append("[Anchor]" + str(name))
             else:
                 out.append(name)
@@ -234,7 +234,7 @@ def common(node, after_locate=False):
     """
     通用字段：延迟、重复、jumpId。
 
-    ★ Maa 的顺序是「识别 → pre_delay → 动作」，中间没有别的识别。
+    ★ 参考管线 的顺序是「识别 → pre_delay → 动作」，中间没有别的识别。
       我们这条链上，识别发生在**动作节点内部**（点击文字/颜色会自己找），
       所以 pre_delay 必须放到「识别后等待」而不是「等待」——
       否则语义变成"先等一会儿再认"，画面刚出现时就会认错。
@@ -248,7 +248,7 @@ def common(node, after_locate=False):
         rc = int(node["repeat"])
         c["repeatCount"] = rc
         if rc > 1:
-            # ★ Maa 的 repeat 是「**识别一次**、动作重复 N 次」（不是每轮重认）。
+            # ★ 参考管线 的 repeat 是「**识别一次**、动作重复 N 次」（不是每轮重认）。
             #   我们对应的正是 fastRepeatMode：首轮算出坐标，后面几轮直接重放。
             #   不开这个，点击文字/颜色会每轮重跑一次 OCR —— 比原来慢 N 倍。
             c["fastRepeatMode"] = True
@@ -258,7 +258,7 @@ def common(node, after_locate=False):
 
 
 def zjs_action(atype, act_param, node, pts, jump_id):
-    """一个 Maa 节点 → 我们的动作 dict（不含 next 路由）。"""
+    """一个 参考管线 节点 → 我们的动作 dict（不含 next 路由）。"""
     cond = condition_of(node)
     # 这个动作会不会自己识别：点击文字/点击颜色 = 会（识别在动作内部）
     will_locate = False
@@ -275,7 +275,7 @@ def zjs_action(atype, act_param, node, pts, jump_id):
         if cond:
             d["condition"] = cond
         d.update({"jumpId": jump_id})
-        d["desc"] = "路由（Maa: DoNothing）"
+        d["desc"] = "路由（参考管线: DoNothing）"
         return d
 
     if atype == "Click":
@@ -312,7 +312,7 @@ def zjs_action(atype, act_param, node, pts, jump_id):
     # 这套脚本里没出现过的动作类型：生成一个"明确跳过"的提示节点
     d = {"type": "控制执行", "controlRunType": "waitDelay", "delay": "0", "delayUnit": 0}
     d["jumpId"] = jump_id
-    d["desc"] = "未转换的 Maa 动作：%s" % atype
+    d["desc"] = "未转换的 参考管线 动作：%s" % atype
     return d
 
 
@@ -375,7 +375,7 @@ def build(files, pts):
         节点名，或 `[Anchor]名字`（→ 声明该 anchor 的节点）。
 
         ★ 同一个 anchor 名可能被**多个文件**声明（"下一个动作"在这套资源里就有 3 处：
-          塔香蕉一个、无尽框架两个）。Maa 是按任务加载的，实际生效的是**本次任务那份**。
+          塔香蕉一个、无尽框架两个）。参考管线 是按任务加载的，实际生效的是**本次任务那份**。
           所以这里按作用域挑，而不是"谁先入表用谁"：
             1) 声明者在本任务的脚本文件里 → 优先（这才是调用方）；
             2) 否则声明者与被引用节点同文件；
@@ -409,7 +409,7 @@ def build(files, pts):
               % (aname, len(cands), "、".join(c[0] for c in cands)))
         return cands[0][1]
 
-    # Maa 用 `next: [种植物_初始化_植物位置]` 把点位表串进来（只是为了让
+    # 参考管线 用 `next: [种植物_初始化_植物位置]` 把点位表串进来（只是为了让
     # begin/end 的名字能解析）。真正入口是 anchor 里那个名字 —— 直接取它，
     # 否则脚本会先去把 61 个点走一遍。
     entry_skip = set()
@@ -423,7 +423,7 @@ def build(files, pts):
         atype, act_param = grep_action(node)
         out.append(zjs_action(atype, act_param, node, pts, name))
 
-        # post_delay：Maa 是"动作后等多久"，我们插一个等待节点
+        # post_delay：参考管线 是"动作后等多久"，我们插一个等待节点
         post = int_field(node, "post_delay", DEFAULT_DELAY)
         if post > 0:
             out.append({
@@ -443,7 +443,7 @@ def build(files, pts):
                 out.append({
                     "type": "控制执行", "controlRunType": "jumpTo",
                     "jumpToPosition": ":" + target,
-                    "desc": "入口 → %s（Maa anchor 初始化）" % target,
+                    "desc": "入口 → %s（参考管线 anchor 初始化）" % target,
                 })
             continue
         if isinstance(nxt, str):
@@ -498,7 +498,7 @@ def build(files, pts):
         waiter["waitIntervalMs"] = interval
         out.append(waiter)
 
-        # ★ Maa：next 扫到超时 = 这个节点失败 → 走 on_error；on_error 空 = 任务失败。
+        # ★ 参考管线：next 扫到超时 = 这个节点失败 → 走 on_error；on_error 空 = 任务失败。
         #   绝不能"继续执行文件里的下一条"（会跑飞到无关节点）。
         on_error = next_names({"next": node.get("on_error")}) if node.get("on_error") else []
         resolved = [resolve_ref(x, from_node=name) for x in on_error]
@@ -509,7 +509,7 @@ def build(files, pts):
         else:
             out.append({
                 "type": "控制执行", "controlRunType": "stop",
-                "desc": "%s 的 next 等满 %dms 没命中 → 结束（Maa 语义：任务失败）" % (name, timeout),
+                "desc": "%s 的 next 等满 %dms 没命中 → 结束（参考管线 语义：任务失败）" % (name, timeout),
             })
 
     return out
@@ -548,7 +548,7 @@ def main():
     # 三个文件合成一条完整脚本（它们本身就是同一条链）
     nodes = build(SRC, pts)
     write(os.path.join(outdir, "塔香蕉_无尽.zjs"), nodes,
-          "无尽塔香蕉（由 Maa pipeline TowerBanana_1/2/3 转换）")
+          "无尽塔香蕉（由 参考管线 pipeline TowerBanana_1/2/3 转换）")
 
     # 也各自单独出一份，方便对着原文件看
     for i, src in enumerate(SRC, 1):

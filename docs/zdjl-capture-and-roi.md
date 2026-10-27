@@ -1,4 +1,4 @@
-# 自动精灵怎么截图、怎么框 ROI
+# 脚本格式怎么截图、怎么框 ROI
 
 来源：`_probe/zdjl-re/extracted/dist-js/` 里反编译出的渲染层 bundle
 （`renderer-xm`、`renderer-home`、`renderer-script-run-area`）。
@@ -103,9 +103,9 @@ const I = setInterval(w, 300)
 
 ---
 
-## 五、对我们（PVZ2 自动精灵兼容层）的结论
+## 五、对我们（PVZ2 脚本格式兼容层）的结论
 
-| 自动精灵的做法 | 我们的对应 | 状态 |
+| 做法 | 我们的对应 | 状态 |
 |---|---|---|
 | 实时画面上取点 | `PreviewPicker` POINT + 准星 | ✅ 已实现 |
 | 实时画面上框 ROI | `PreviewPicker` RECT → 百分比 | ✅ 已实现 |
@@ -118,5 +118,5 @@ const I = setInterval(w, 300)
 有权限和遮挡问题）；我们自己持有虚拟屏的 `Surface`，
 `ImageReader` 直接拿帧，30fps，没有授权弹窗，也不会有别的东西盖住。
 
-模板数据的落盘格式两边一致，因为都按 `.zjs` 走 —— 我们在自动精灵里
+模板数据的落盘格式两边一致，因为都按 `.zjs` 走 —— 我们在脚本格式里
 存过的模板能读回来，反之亦然。

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Maa pipeline → .zjs（条件内联风格，和手写脚本一样紧凑）。
+参考管线 pipeline → .zjs（条件内联风格，和手写脚本一样紧凑）。
 
 ## 为什么要重写这一版
 
-第一版把 Maa 的每个节点拆成「动作节点 + 收尾等待 + 跳转/等待候选 + 停止」，
+第一版把 参考管线 的每个节点拆成「动作节点 + 收尾等待 + 跳转/等待候选 + 停止」，
 181 个节点、149 条跳转。用户指出：本来一个节点能做完的事被拆成了四个，
 而且「控制执行·等待」这个节点和动作自带的等待字段完全重复。
 
@@ -28,9 +28,9 @@ Maa pipeline → .zjs（条件内联风格，和手写脚本一样紧凑）。
   （引擎的 locate 本来就带重试），仍是**一个节点**；
 - 真正分叉（next 有多个候选）：才用「等待候选」，且超时用 onTimeoutStop / onTimeoutJump
   表达，不再塞一个「停止」节点；
-- post_delay 累加进**下一个节点**的 delay（delay 在识别之前，与 Maa 的
+- post_delay 累加进**下一个节点**的 delay（delay 在识别之前，与 参考管线 的
   「动作后 → 下一个节点识别前」等价），不再生成等待节点；
-- 纯 DoNothing 且只有一个后继（Maa 用来串流程的空节点）**直接丢掉**。
+- 纯 DoNothing 且只有一个后继（参考管线 用来串流程的空节点）**直接丢掉**。
 
 ## 用法
 
@@ -40,7 +40,7 @@ import json
 import os
 import sys
 
-ROOT = r"C:\Users\29374\Desktop\MaaPVZ-v0.5.1-beta.2-win-x86_64\resource\pipeline"
+ROOT = r"C:\Users\29374\Desktop\参考管线-v0.5.1-beta.2-win-x86_64\resource\pipeline"
 SLOT = os.path.join(ROOT, r"General_action\Plant_planting_Initialize_slot_General_Swipe.json")
 GRID = os.path.join(ROOT, r"General_action\Plant_planting_Initialize_Grid_General_Swipe.json")
 POOLS = [
@@ -68,13 +68,13 @@ DEFAULT_RATE_LIMIT = 1000
 DEFAULT_TIMEOUT = 20000
 DEFAULT_DELAY = 200
 
-# 连点间隔：Maa 的 repeat 是"识别一次、动作重复 N 次"，我们对应 fastRepeatMode。
-# 一次注入 5~15ms；想贴近 Maa 的实际节拍就传 --repeat-gap-ms 30。
+# 连点间隔：参考管线 的 repeat 是"识别一次、动作重复 N 次"，我们对应 fastRepeatMode。
+# 一次注入 5~15ms；想贴近 参考管线 的实际节拍就传 --repeat-gap-ms 30。
 REPEAT_GAP_MS = 0
 
 
 def load_jsonc(path):
-    """读 Maa 的 pipeline：允许 // 注释和尾逗号（标准 json 不认）。"""
+    """读 参考管线 的 pipeline：允许 // 注释和尾逗号（标准 json 不认）。"""
     import re
     with open(path, encoding="utf-8") as f:
         txt = f.read()
@@ -119,7 +119,7 @@ def load_points():
 
 
 def to_pct(v, total):
-    """Maa 是绝对像素；手写脚本用的是百分比。我们用绝对像素更不容易错，
+    """参考管线 是绝对像素；手写脚本用的是百分比。我们用绝对像素更不容易错，
     但为了让编辑器显示一致，这里统一写像素字符串。"""
     return str(int(v))
 
@@ -153,7 +153,7 @@ def hex_of(rgb):
 
 
 def recognition_of(node):
-    """Maa 识别 → (posData, 其它)。返回 None 表示无识别。"""
+    """参考管线 识别 → (posData, 其它)。返回 None 表示无识别。"""
     rec = node.get("recognition")
     if rec is None:
         return None
@@ -186,14 +186,14 @@ def recognition_of(node):
         roi = node.get("roi") or param.get("roi")
         mid = [(float(lower[i]) + float(upper[i])) / 2 for i in range(3)]
 
-        # ★ 这里有三件事必须和 Maa 一致，写错过一次：
+        # ★ 这里有三件事必须和 参考管线 一致，写错过一次：
 
-        # 1. Maa 的颜色判定是「每个通道落在 [lower, upper] 里」的**范围**判定，
+        # 1. 参考管线 的颜色判定是「每个通道落在 [lower, upper] 里」的**范围**判定，
         # 不是 100% 精确匹配。写成 similarPercent=100 等于要求像素完全等于某色 ——
         # 在游戏画面里基本必然识别不到。
         # 2. 所以相似度按范围的**半宽**折算：半宽 10/255 ≈ 4% → 96。
         # 这样即使有人把上下界删掉，容差仍接近原来的范围。
-        # 3. 不能只判 roi 中心一个像素（limitPosX/Y）：Maa 是在整个 roi 里找，
+        # 3. 不能只判 roi 中心一个像素（limitPosX/Y）：参考管线 是在整个 roi 里找，
         # 只判中心会把"颜色稍有偏移/被遮挡"的情况全判错。
 
         half = max(float(upper[i]) - float(lower[i]) for i in range(3)) / 2.0
@@ -280,7 +280,7 @@ class Conv:
                             for r in next_names(node.get("next"))) if x]
 
     def action_of(self, name, node, pts):
-        """一个 Maa 节点 → 我们的动作 dict（识别内联成条件或 posData）。"""
+        """一个 参考管线 节点 → 我们的动作 dict（识别内联成条件或 posData）。"""
         act = node.get("action")
         if isinstance(act, str):
             atype, aparam = act, node
@@ -329,7 +329,7 @@ class Conv:
                 pt = self.pts_of(target) if target is not None else (640, 360)
                 d = {"type": "点击",
                      "posData": {"type": "location", "x": str(pt[0]), "y": str(pt[1])},
-                     # Maa 的 Click 是"点一下"，没有按住时长；缺省给 10ms。
+                     # 参考管线 的 Click 是"点一下"，没有按住时长；缺省给 10ms。
                      # 写 100（界面默认）会让 35 连点变成 3.5 秒，
                      # 而手写脚本里的点波就是 duration 5~20ms。
                      "duration": str(int(node.get("duration") or 10))}
@@ -347,9 +347,9 @@ class Conv:
         else:
             return {"type": "控制执行", "controlRunType": "waitDelay",
                     "delay": "0", "delayUnit": 0,
-                    "desc": "未转换的 Maa 动作：%s" % atype}
+                    "desc": "未转换的 参考管线 动作：%s" % atype}
 
-        # 重复：Maa 是"识别一次、动作重复 N 次" → fastRepeatMode
+        # 重复：参考管线 是"识别一次、动作重复 N 次" → fastRepeatMode
         rc = node.get("repeat")
         if rc and int(rc) > 1:
             d["repeatCount"] = int(rc)
@@ -358,18 +358,18 @@ class Conv:
             # ★ 重复间隔必须**显式写**，不能留给默认值。
 
             # 引擎的重复间隔缺省会回落到动作 delay，而 delay 缺省是 200ms ——
-            # 于是 Maa 里「repeat:250, pre_delay:0, post_delay:0, duration:1」
+            # 于是 参考管线 里「repeat:250, pre_delay:0, post_delay:0, duration:1」
             # 的划飞弹（250 次快速滑动）在我们这儿变成 250 × 208ms ≈ 52 秒，
             # 真机日志里 52 号节点就是这么来的。
 
-            # 按 Maa 的原意：轮间间隔取 pre_delay/post_delay 的较大者（这里都是 0），
+            # 按 参考管线 的原意：轮间间隔取 pre_delay/post_delay 的较大者（这里都是 0），
             # --repeat-gap-ms 只作为下限（注入太快会被游戏合并时才需要）。
 
             #
             # 只用工装下限，**不要**把 pre_delay/post_delay 当轮间隔：
             #   它们是"整个节点执行之前/之后各等一次"，引擎已经把 pre_delay
             #   放在重复循环之外了。若把它们塞进轮间隔，点波2（pre_delay 2000、
-            #   repeat 60）会变成 60×2s = 120 秒，而 Maa 的原意是"等 2 秒，然后连点 60 下"。
+            #   repeat 60）会变成 60×2s = 120 秒，而 参考管线 的原意是"等 2 秒，然后连点 60 下"。
             gap_src = REPEAT_GAP_MS
             d["repeatDelayValue"] = str(gap_src)
             d["repeatDelayUnit"] = MS
@@ -532,7 +532,7 @@ def main():
     conv = Conv(SRC, pts)
     nodes = conv.build(entry_hint="Tower_Banana_Entry")
     write(os.path.join(outdir, "塔香蕉_无尽.zjs"), nodes,
-          "无尽塔香蕉（Maa pipeline 转换，条件内联）")
+          "无尽塔香蕉（参考管线 pipeline 转换，条件内联）")
 
     for i, src in enumerate(SRC, 1):
         c = Conv([src], pts)

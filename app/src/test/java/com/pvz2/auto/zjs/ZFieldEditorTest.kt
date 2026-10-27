@@ -149,7 +149,7 @@ class ZFieldEditorTest {
     @Test
     fun `写模板图会带上全部尺寸字段`() {
         // 只写 base64、不写 imageWidth/Left/screenWidth 的话，
-        // 自动精灵打开这张图位置是错的 —— 而这些字段界面上看不到。
+        // 脚本格式打开这张图位置是错的 —— 而这些字段界面上看不到。
         val a = action(
             """{"type":"点击图片","delayUnit":0,
                 "posData":{"type":"image","imageData":{"data":"AA"}}}"""

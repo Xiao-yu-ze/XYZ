@@ -107,7 +107,7 @@ class Recognizer(private val context: Context) {
     ): Hit? {
         if (recognition.templates.isEmpty()) return null
 
-        // 多个模板时按顺序尝试，任一命中即返回（对应 Maa 的 template 数组语义）。
+        // 多个模板时按顺序尝试，任一命中即返回（对应 参考管线 的 template 数组语义）。
         var best: Hit? = null
         for (path in recognition.templates) {
             val hit = matchOne(frame, path, recognition, current) ?: continue
@@ -293,7 +293,7 @@ class Recognizer(private val context: Context) {
             //   每帧每个模板多一次全矩阵 clone + minMaxLoc（最坏 4.8 MB 拷贝）。
             //   识别速度是第一优先级，不能这么换。
             //
-            //   对照 MaaFramework 的 TemplateMatcher.cpp 后确认：它**不做**这件事。
+            //   对照 参考管线 的 TemplateMatcher.cpp 后确认：它**不做**这件事。
             //   它的做法是 matchTemplate → 单趟扫出所有 ≥0.5 的结果 →
             //   NMS(IoU 0.2) 去重 → 按阈值过滤，防误判完全交给
             //   **ROI 缩小搜索区** 和阈值。
@@ -389,7 +389,7 @@ class Recognizer(private val context: Context) {
                 mask
             )
             val count = Core.countNonZero(mask)
-            // ★ count 是 Maa 的"像素个数下限"，标定在 720p 上。
+            // ★ count 是 参考管线 的"像素个数下限"，标定在 720p 上。
             //   但这里拿到的是**物理像素**数，而 ROI 的物理面积随 scale² 变化。
             //   720p 下 scale=1，两者恰好相等，所以一直看不出来；
             //   1080p（scale=1.5）同一 ROI 的像素数是 2.25 倍 ——
@@ -404,7 +404,7 @@ class Recognizer(private val context: Context) {
                 (roi.x + roi.width / 2.0).toFloat(),
                 (roi.y + roi.height / 2.0).toFloat()
             )
-            // 命中框 = 整个 ROI（与 MaaFramework 语义一致）。
+            // 命中框 = 整个 ROI（与 参考管线 语义一致）。
             //
             // 之前这里不给 box，默认空 Rect() —— 于是 `target_offset` 在空框上
             // 做偏移，直接算出屏幕外坐标。注意 ColorMatch 的"中心"是 ROI 中心
@@ -472,7 +472,7 @@ class Recognizer(private val context: Context) {
             val lines = engine.recognize(region, recognition.threshold)
             if (lines.isEmpty()) return null
 
-            // expected 里每项都是正则；为空表示"任意文字"（MaaPVZ 用它做
+            // expected 里每项都是正则；为空表示"任意文字"（参考管线 用它做
             // "这个区域里有没有字"的判断，例如无尽_切换编队序号）。
             val wanted = recognition.expected
             val candidates = if (wanted.isEmpty()) {
@@ -615,7 +615,7 @@ class Recognizer(private val context: Context) {
         /** 找到足够好的匹配就不再尝试同节点的其它模板。 */
         private const val TEMPLATE_SHORT_CIRCUIT = 0.95
 
-        /** MaaPVZ 的 ColorMatch method=40 表示 BGR2HSV。 */
+        /** 参考管线 的 ColorMatch method=40 表示 BGR2HSV。 */
         const val COLOR_METHOD_HSV = 40
 
         

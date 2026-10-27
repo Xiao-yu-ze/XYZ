@@ -24,7 +24,7 @@ object ZConditionEditor {
      *
      * ## AROUND 不在这里（故意的）
      *
-     * `AroundCondition` 是协议里的第 13 种，但自动精灵**自己的类型下拉里也没有它**：
+     * `AroundCondition` 是协议里的第 13 种，但脚本格式**自己的类型下拉里也没有它**：
      *
      * ```js
      * // m72957：BF = 下拉用的列表
@@ -32,8 +32,8 @@ object ZConditionEditor {
      * ```
      *
      * 它只被 `posData.filterByAroundConditionSet`（找位置的"周围条件"）使用。
-     * 放进下拉的后果：用户能选出一个**自动精灵自己都不会生成**的条件，
-     * 导出的脚本在自动精灵里行为不可预期（它按 type 查表，查不到就当条件恒 false）。
+     * 放进下拉的后果：用户能选出一个**脚本格式自己都不会生成**的条件，
+     * 导出的脚本在脚本格式里行为不可预期（它按 type 查表，查不到就当条件恒 false）。
      *
      * [create] 仍然保留 AROUND 分支 —— 旧脚本里可能已经有，得能显示、能编辑。
      */
@@ -64,7 +64,7 @@ object ZConditionEditor {
     //
     // 协议里存英文标识，界面上要显示中文。两边都得收：用户看到中文点下去是中文，
     // 导入的脚本里是英文。写回时不还原成英文的话，文件里会出现中文枚举，
-    // 自动精灵读不懂，条件静默失效。
+    // 脚本格式读不懂，条件静默失效。
 
     private val RESET_TIME = listOf(
         "afterFinish" to "跑完后", "onLoad" to "载入时", "afterRepeat" to "每次重复后"
@@ -294,7 +294,7 @@ private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
             Z.ConditionType.AI_CLOUD -> {
                 /*
                  * ★ AI 云识别本机跑不了（要云端接口）。下面这几个字段存得进文件，
-                 *   但**不会被求值** —— 从自动精灵导入的脚本里可能带着这条条件，
+                 *   但**不会被求值** —— 从脚本格式导入的脚本里可能带着这条条件，
                  *   所以字段保留可编辑，顶上先说清楚。
                  */
                 rows += Row(
@@ -321,7 +321,7 @@ private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
                  * 子条件：`conditionSet.conditions` 是一串条件（FIELDS.md:277）。
                  *
                  * 以前这里只出「匹配方式 / 匹配数量 / 多线程检查」三行 ——
-                 * 子条件本身**看不见也删不掉**。用户在自动精灵里做的
+                 * 子条件本身**看不见也删不掉**。用户在脚本格式里做的
                  * 「同时满足：A 且 B 且 C」导进来后只剩一行「全部满足」，
                  * 他既不知道里面有几个条件，也没法改，改完保存还可能把它们带坏。
                  *
@@ -369,7 +369,7 @@ private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
         // 「识别次数」和「识别间隔」始终显示，而且**始终显示真实数字**。
         //
         // 以前只在开启"反复检查"时才出现，用户第一眼看不到，就会以为
-        // 自动精灵有的字段我们没做。默认关着但看得见，比藏起来好。
+        // 脚本格式有的字段我们没做。默认关着但看得见，比藏起来好。
         //
         // ## 显示"—"是错的
         //
@@ -474,7 +474,7 @@ private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
      * 动作侧的 `ZFieldEditor.parsePercent` 已经按协议夹 50~100，条件侧还留在 0~100 ——
      * 同一个字段两条入口行为不同：在动作卡片里拖到 30 会被抬成 50，
      * 在条件弹窗里填 30 却原样写进文件。
-     * 而 0~49 在自动精灵那边不是合法阈值，匹配会退化成"几乎总能命中"，
+     * 而 0~49 在脚本格式那边不是合法阈值，匹配会退化成"几乎总能命中"，
      * 用户只会看到"明明没那个东西也点" —— 完全看不出是阈值被写坏了。
      */
     private fun clampPercent(value: String): Int? {

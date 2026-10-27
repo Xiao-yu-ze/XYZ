@@ -15,7 +15,7 @@ import java.util.Base64
  * - **图片匹配**：OpenCV matchTemplate，模板来自脚本里的 base64
  * - **文字**：PP-OCR（assets/ocr 的 det/rec 模型），按"包含"匹配
  * - **颜色**：RGB 容差，相似度换算成每通道允许的差值
- * - **节点**：做不到 —— 那是自动精灵自己应用里的的 UI 树，我们在虚拟屏上看不到
+ * - **节点**：做不到 —— 那是脚本格式自己应用里的的 UI 树，我们在虚拟屏上看不到
  *
  * 不支持时返回**空列表**，执行器会记一条"没有匹配到目标"。
  * 这和"匹配了但没找到"在用户看来一样，但日志里会区分（见 [lastUnsupported]）。
@@ -58,7 +58,7 @@ class ZRealMatcher(
     override fun lastDetail(): String? = detailText
 
     /**
-     * 存失败现场（对应 Maa 的 debug/on_error）。
+     * 存失败现场（对应 参考管线 的 debug/on_error）。
      *
      * 用当前帧直接写 PNG；写不出来就返回 null（不影响脚本继续跑）。
      */
@@ -694,7 +694,7 @@ class ZRealMatcher(
                 region, bgr, org.opencv.imgproc.Imgproc.COLOR_RGBA2BGR
             )
             /*
-             * ★ 优先用脚本里的逐通道上下界（lower/upper），这是 Maa 的原始语义。
+             * ★ 优先用脚本里的逐通道上下界（lower/upper），这是 参考管线 的原始语义。
              *
              *   之前我把 lower/upper 压成"中心色 + 容差"，再拿它去比 —— 丢了两件事：
              *   上下界本来是非对称的（比如 R 237~255 而 G 202~229），
@@ -736,7 +736,7 @@ class ZRealMatcher(
              *   只会把正常闸门卡死（实测过：要求一半像素，直接把"是否进入关内"
              *   这种正常判断判成不成立）。
              *
-             * Maa 的 ColorMatch 默认 `count: 1`，语义就是"这个区域里有没有这个颜色"。
+             * 参考管线 的 ColorMatch 默认 `count: 1`，语义就是"这个区域里有没有这个颜色"。
              * 抗"冷却后残留像素"要靠 lower/upper 逐通道上下界（见上面那段），
              * 不是靠收紧像素数量。下面的 ratio 只作诊断（进 lastScore 与日志）。
              */
@@ -753,7 +753,7 @@ class ZRealMatcher(
             "颜色 命中 $nonzero 个像素 / 扫描 $total 个 范围(${roi.joinToString(",")}) " +
                 "容差${pos.similarPercent ?: 100}%"
         )
-            // Maa 语义：至少一个像素（count = 1）
+            // 参考管线 语义：至少一个像素（count = 1）
             val ok = nonzero > 0
             if (!ok) {
                 // 顺带报出这一块的平均色：只说"没找到"，用户只能猜一个颜色再试。
@@ -943,7 +943,7 @@ class ZRealMatcher(
      * `dpi` 缩放档。
      *
      * 协议原文是 `imageWidth * (1 / screenDpi)`，它得到的是**物理尺寸（dp）**，
-     * 而不是像素。只有在"当前屏密度 = 1"（PC / 1x 模拟器，正是自动精灵的主力
+     * 而不是像素。只有在"当前屏密度 = 1"（PC / 1x 模拟器，正是主力
      * 环境）时，dp 才数值上等于像素，所以协议敢这么写。
      *
      * 我们的帧是虚拟屏的物理像素（1280x720，密度 1.5），要还原成"本帧里应有的
@@ -1396,7 +1396,7 @@ class ZRealMatcher(
         /**
      * 颜色判定要求的最小命中像素比例。
      *
-     * ★ 必须是 0：Maa 的 ColorMatch 默认 `count: 1`，**只要有一个像素
+     * ★ 必须是 0：参考管线 的 ColorMatch 默认 `count: 1`，**只要有一个像素
      *   落在 lower~upper 之间就算命中**。我一度改成"要求一半像素"，
      *   直接把「是否进入关内」这种正常闸门卡死了 —— 那是改坏了语义。
      *
@@ -1437,7 +1437,7 @@ class ZRealMatcher(
     /**
      * 节点查找：**做不到，而且不是没时间做**。
      *
-     * 自动精灵的「节点」是它自己那个应用的内部 UI 树（它自己跑在无障碍里，
+     * 「节点」是它自己那个应用的内部 UI 树（它自己跑在无障碍里，
      * 拿得到目标 App 的节点）。我们跑在虚拟屏上，画面是一张图，
      * 没有节点树可查。硬用一个假命中顶上只会让脚本点错地方。
      *

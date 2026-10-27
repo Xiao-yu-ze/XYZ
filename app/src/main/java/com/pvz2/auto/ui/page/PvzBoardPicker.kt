@@ -19,7 +19,7 @@ import com.pvz2.auto.zjs.PvzCoords
  * - [buildGrid]：只给一个网格 View，「种植顺序」面板会把棋盘嵌在自己的界面里。
  *
  * 布局照游戏内视角：**行 1-5 从上到下、列 1-9 从左到右**，
- * 表头显示 R1-R5 / C1-C9，和 MaaPVZ 的棋盘一致。
+ * 表头显示 R1-R5 / C1-C9，和 参考管线 的棋盘一致。
  */
 object PvzBoardPicker {
 

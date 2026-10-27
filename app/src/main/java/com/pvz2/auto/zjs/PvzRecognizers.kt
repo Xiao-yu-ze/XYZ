@@ -1,7 +1,7 @@
 package com.pvz2.auto.zjs
 
 /**
- * 预置「状态识别」—— 从 MAA pipeline 抄来的判据。
+ * 预置「状态识别」—— 从 参考管线 pipeline 抄来的判据。
  *
  * ## 坐标换算（很重要）
  *
@@ -36,7 +36,7 @@ object PvzRecognizers {
      * 开始战斗模板图文件、（可选）补给界面的其它按钮。
      */
 
-    /** MAA 那套 ROI 的基准宽度（我们的是 1280，比例 2/3）。 */
+    /** 参考管线 那套 ROI 的基准宽度（我们的是 1280，比例 2/3）。 */
     private const val SRC_W = 1920
     private const val SRC_H = 1080
 
@@ -111,7 +111,7 @@ object PvzRecognizers {
     /**
      * 「开始战斗」的**模板优先 + OCR 兜底**条件。
      *
-     * 用户要求：MAA 用的是模板图 `xinta/开始战斗.png`，认不出再退 OCR。
+     * 用户要求：参考管线 用的是模板图 `xinta/开始战斗.png`，认不出再退 OCR。
      * 我们把 PNG 读成 base64 内嵌进条件（协议里图片位置就是内嵌 base64，
      * 运行时由 ZRealMatcher 落成临时文件再匹配），然后用 conditionSet 的 OR 组合：
      * 模板命中就用模板（对艺术字/缩放更稳），否则用文字。

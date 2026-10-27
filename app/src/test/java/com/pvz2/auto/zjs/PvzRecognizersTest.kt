@@ -5,10 +5,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 三个预置「状态识别」（从 MAA pipeline 抄的判据）。
+ * 三个预置「状态识别」（从 参考管线 pipeline 抄的判据）。
  *
  * 重点钉住两件容易出错的事：
- *  - MAA 那套 ROI 是 1920×1080，我们虚拟屏 1280×720，必须 ×2/3；
+ *  - 参考管线 那套 ROI 是 1920×1080，我们虚拟屏 1280×720，必须 ×2/3；
  *  - 生成的 Condition 能落盘、能再被解析回来（否则生成脚本里是坏节点）。
  */
 class PvzRecognizersTest {

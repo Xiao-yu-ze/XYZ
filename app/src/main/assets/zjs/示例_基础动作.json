@@ -6,7 +6,7 @@
     "pauseOnFail": true,
     "screenWidth": 1280,
     "screenHeight": 720,
-    "description": "示例：验证自动精灵格式的读写与编辑"
+    "description": "示例：验证脚本格式格式的读写与编辑"
   },
   "actions": [
     {

@@ -1,6 +1,6 @@
-# 自动精灵（Android 版）架构侦察
+# 脚本格式（Android 版）架构侦察
 
-对象：`C:\Users\29374\Desktop\Android自动精灵\base.apk`（40.8 MB）
+对象：`C:\Users\29374\Desktop\Android脚本格式\base.apk`（40.8 MB）
 目的：在"识别速度"和"注入实现"两件事上，用**已跑通的商业实现**对照我们的方案，
 而不是靠猜。
 
@@ -46,7 +46,7 @@ proto     36476 次
 
 ## 三、它自己的脚本就是这么写的（可直接照抄）
 
-统计我们 assets 里那批**来自自动精灵的真实 pipeline**：
+统计我们 assets 里那批**来自真实 pipeline**：
 
 ```
 01_Endless_plant_ref.json         TemplateMatch=2   roi=5
@@ -84,7 +84,7 @@ Endless_out.json                  TemplateMatch=1   roi=5
 
 ## 六、OCR 选择对照
 
-| | 自动精灵 | 我们 |
+| | 脚本格式 | 我们 |
 |---|---|---|
 | 引擎 | Google ML Kit（`libmlkit_google_ocr_pipeline.so` + tflite 模型） | PaddleOCR + ONNX Runtime |
 
@@ -95,7 +95,7 @@ Endless_out.json                  TemplateMatch=1   roi=5
 
 ## 结论（按可执行性排序）
 
-1. **给所有识别节点配 roi** —— 自动精灵自己也这么做，12/12。这是识别提速的唯一主要手段。
+1. **给所有识别节点配 roi** —— 脚本格式自己也这么做，12/12。这是识别提速的唯一主要手段。
 2. **不抄神经网络方案** —— 依赖 63.5 MB 引擎 + 训练数据，我们场景用不上。
 3. **注入架构保持不变** —— 和商业实现同构（独立 ELF / app_process）。
 4. **OCR 保持不变** —— PaddleOCR 对中文够用。

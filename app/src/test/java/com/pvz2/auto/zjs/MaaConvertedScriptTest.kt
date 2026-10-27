@@ -6,7 +6,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * 转换出来的 Maa 脚本必须能解析、并且结构与手写脚本一致。
+ * 转换出来的 参考管线 脚本必须能解析、并且结构与手写脚本一致。
  *
  * 手写脚本（常规四脚僵王无尽）的做法是：**动作自己带条件 + 反复检查**，
  * 一个节点干完，不额外开路由/等待/跳转节点。第一版转换器把每个节点拆成四个，
@@ -69,7 +69,7 @@ class MaaConvertedScriptTest {
         assertTrue("这些分支超时后没有去处：${bad.size} 个", bad.isEmpty())
     }
 
-    /** 颜色必须写成真实可显示的值，并且上下界要保留（Maa 的判定依据）。 */
+    /** 颜色必须写成真实可显示的值，并且上下界要保留（参考管线 的判定依据）。 */
     @Test
     fun `颜色写成十六进制且保留下界上界`() {
         val s = many()
@@ -84,12 +84,12 @@ class MaaConvertedScriptTest {
         val c = pd.color.orEmpty()
         assertTrue("颜色应当写成 #rrggbb，实际：$c", c.startsWith("#"))
         /*
-         * Maa 的颜色判定是「每通道落在 [lower,upper]」的范围判定。
+         * 参考管线 的颜色判定是「每通道落在 [lower,upper]」的范围判定。
          * 写 similarPercent=100 等于要求像素完全等于某个值 —— 游戏画面里基本必然认不出。
          * （用户指出：调到 100% 就识别不出来。）
          */
         assertTrue("相似度不该是 100：${pd.similarPercent}", (pd.similarPercent ?: 0) < 100)
-        // 也不能只判 roi 中心一个像素：Maa 是整个 roi 里找
+        // 也不能只判 roi 中心一个像素：参考管线 是整个 roi 里找
         assertTrue("不该合成单像素判定", !extra.containsKey("limitPosX"))
         assertTrue("应当保留 roi 作为搜索范围", pd.limitArea != null)
     }
@@ -113,7 +113,7 @@ class MaaConvertedScriptTest {
     /**
      * 重复节点的**轮间隔必须是显式 0**（而不是回落到 200ms 默认值）。
      *
-     * Maa 里划飞弹是 `repeat:250, pre_delay:0, post_delay:0, duration:1`
+     * 参考管线 里划飞弹是 `repeat:250, pre_delay:0, post_delay:0, duration:1`
      * —— 250 次几乎零间隔的快速滑动。轮间隔回落到 200ms 的话，
      * 这一条就会跑 250×208ms ≈ 52 秒（真机日志里 52 号节点就是这样）。
      */

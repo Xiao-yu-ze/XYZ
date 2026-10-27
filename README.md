@@ -28,7 +28,7 @@ App 自己读另一块空的，预览永远是黑的。
 
 ## 脚本格式
 
-跑的是自动精灵的 `.zjs`（NDJSON，CRLF）。第一行是 baseInfo，其余每行一个动作。
+跑的是`.zjs`（NDJSON，CRLF）。第一行是 baseInfo，其余每行一个动作。
 除了协议自带动作，另有一批 PVZ 专用节点：种植物 / 喂豆 / 铲除 / 点击格子 / 点下一波 /
 切换编队 / 切换形态 / 使用神器 / 选补给 / 开始战斗 / 进关判定 / 识别结算 / 等待候选。
 
@@ -46,7 +46,7 @@ App 自己读另一块空的，预览永远是黑的。
 | [docs/YS_REPLICATION_SPEC.md](docs/YS_REPLICATION_SPEC.md) | YS 复刻规格 |
 | [docs/KNOWN_ISSUE_device_reboot.md](docs/KNOWN_ISSUE_device_reboot.md) | 虚拟屏崩溃排查记录 |
 | [tools/shizuku/README.md](tools/shizuku/README.md) | Shizuku 服务端启动与坑 |
-| [tools/maa2zjs/README.md](tools/maa2zjs/README.md) | Maa 管线转 .zjs |
+| [tools/maa2zjs/README.md](tools/maa2zjs/README.md) | 参考管线 管线转 .zjs |
 
 ## 构建
 

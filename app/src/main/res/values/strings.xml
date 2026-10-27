@@ -142,7 +142,7 @@
     <string name="label_game_fps">帧率</string>
     <string name="hint_game_fps">固定 30fps，游戏和采集同速。实测游戏在虚拟屏上跑 120fps 会让系统服务崩溃导致平板重启，所以不开放更高帧率。</string>
     <string name="label_game_fps_fixed">60 fps</string>
-    <string name="zjs_editor_title">脚本动作（自动精灵格式）</string>
+    <string name="zjs_editor_title">脚本动作（脚本格式格式）</string>
     <string name="zjs_loading">正在读取…</string>
     <string name="zjs_save">保存</string>
     <string name="zjs_save_as">另存为</string>

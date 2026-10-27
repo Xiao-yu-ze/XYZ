@@ -11,8 +11,8 @@ import kotlin.math.max
  *
  * ## 缩放（这部分一直是对的）
  *
- * MaaPVZ 的 `interface.json` 里写着 `"display_short_side": 720`，即
- * **MaaFramework 把截图短边归一到 720** 再做识别。横屏下短边就是高，
+ * 参考管线 的 `interface.json` 里写着 `"display_short_side": 720`，即
+ * **参考管线 把截图短边归一到 720** 再做识别。横屏下短边就是高，
  * 所以逻辑画布的高度恒为 720、宽度随设备比例浮动：
  *
  *     scale = screenHeight / 720

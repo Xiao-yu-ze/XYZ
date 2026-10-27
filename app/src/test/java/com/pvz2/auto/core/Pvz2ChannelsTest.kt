@@ -16,8 +16,8 @@ import org.junit.Test
 class Pvz2ChannelsTest {
 
     @Test
-    fun `包名清单与 MaaPVZ 的 jobset 一致`() {
-        // 逐条对照 MaaPVZ 里 StartApp 的 package 字段。
+    fun `包名清单与 参考管线 的 jobset 一致`() {
+        // 逐条对照 参考管线 里 StartApp 的 package 字段。
         val expected = mapOf(
             "com.popcap.pvz2cthdhwct" to "华为",
             "com.popcap.pvz2cthdlx" to "联想",

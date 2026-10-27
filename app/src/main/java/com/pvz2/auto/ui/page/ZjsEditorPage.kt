@@ -28,12 +28,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 自动精灵格式的动作浏览器。
+ * 脚本格式格式的动作浏览器。
  *
  * ## 和 [EditorPage] 的关系
  *
- * [EditorPage] 看的是 MaaFramework 格式（一个节点一个文件、靠 next 连边）。
- * 这里是自动精灵格式（一个脚本一串动作）。两套格式完全不通，
+ * [EditorPage] 看的是 参考管线 格式（一个节点一个文件、靠 next 连边）。
+ * 这里是脚本格式格式（一个脚本一串动作）。两套格式完全不通，
  * 混在一个列表里会让人分不清手上这个脚本到底是哪种。
  *
  * 所以这一页单独存在，由界面上的脚本来源决定进哪一个。
@@ -538,7 +538,7 @@ class ZjsEditorPage(
      * 长按某一条：插入 / 复制 / 删除。
      *
      * 原来长按只能删除 —— 用户想在中间插一条就只能从头重做。
-     * 自动精灵这类工具的做法是长按出菜单、让你在这条之前/之后插，
+     * 脚本格式这类工具的做法是长按出菜单、让你在这条之前/之后插，
      * 这里按同样的思路给四个动作。
      */
     private fun onRowMenu(index: Int) {
@@ -732,7 +732,7 @@ class ZjsEditorPage(
              *
              * 这一行作用在**位置对象**上，不是动作级条件：它用来
              * "过滤掉周围信息不满足条件的点位"（FIELDS.md:278 的 AroundCondition，
-             * 自动精灵的界面里叫「位置周围条件」）。
+             * 界面里叫「位置周围条件」）。
              *
              * 以前这里没有分支 —— ZActionDescriber 出了行、界面却不认这一行，
              * 点了完全没反应（和「条件类型」是同一类"看得见点不动"）。
@@ -760,7 +760,7 @@ class ZjsEditorPage(
                             return
                         }
                         // 未设置：直接建一个 AroundCondition。
-                        // 它的类型只有一种（自动精灵那边 conditionTypesForSwitch
+                        // 它的类型只有一种（脚本格式那边 conditionTypesForSwitch
                         // 也只给它这一个），不需要再弹一次类型选择。
                         target.write(ZConditionEditor.create(Z.ConditionType.AROUND))
                     }
@@ -1316,7 +1316,7 @@ class ZjsEditorPage(
      * 读某个位置的「周围条件」。
      *
      * 协议：`posData.filterByAroundConditionSet` 是一个 **AroundCondition** 对象
-     * （不是条件数组）；自动精灵读它时会先校验 type：
+     * （不是条件数组）；脚本格式读它时会先校验 type：
      *
      * ```js
      * // m14040
@@ -1389,7 +1389,7 @@ class ZjsEditorPage(
     /**
      * 把「周围条件」写回位置对象。`next == null` = 清空（把键删掉）。
      *
-     * 自动精灵的 setter 也是"传 undefined 就删键"
+     * setter 也是"传 undefined 就删键"
      * （`set filterByAroundConditionSet(e){ this.json.filterByAroundConditionSet = e?.json || void 0 }`），
      * 所以清空时删键才是对的，写一个空对象会让它以为设置了但内容为空。
      */
@@ -1552,10 +1552,10 @@ class ZjsEditorPage(
             /*
              * 「位置周围条件」的类型被协议钉死，不给换。
              *
-             * 自动精灵读 `filterByAroundConditionSet` 时会先校验
+             * 脚本格式读 `filterByAroundConditionSet` 时会先校验
              * `e?.type === "AroundCondition"`，不是就**当作没设置**（m14040）。
              * 让用户在这里改成"出现图片"，文件里会留下一个 type=image 的对象，
-             * 自动精灵静默忽略它 —— 用户以为配了过滤，其实什么都没生效。
+             * 脚本格式静默忽略它 —— 用户以为配了过滤，其实什么都没生效。
              */
             if (t.isAround) {
                 toast("位置周围条件的类型固定是「位置周围条件」，不能改成别的")
@@ -2106,7 +2106,7 @@ class ZjsEditorPage(
          *   原来 `expectedPosType(SWIPE)` 返回 LOCATION（非空），于是新建的滑动
          *   同时带 posData + startPos + endPos —— 界面按协议不显示 posData，
          *   但 toJson 照写，文件里就多出一个用户既看不见也删不掉的字段，
-         *   到自动精灵里是垃圾数据。
+         *   到脚本格式里是垃圾数据。
          */
         val isSwipe = type == Z.ActionType.SWIPE
         val end = if (!isSwipe) null else Z.PosData(
@@ -2448,7 +2448,7 @@ class ZjsEditorPage(
                     /*
                      * 把"识别了几次"直接摆在节点上。
                      *
-                     * 一条识别等上 392 次、27 秒是常态（Maa 的 timeout + rate_limit），
+                     * 一条识别等上 392 次、27 秒是常态（参考管线 的 timeout + rate_limit），
                      * 界面上如果只有"1.4s"在跳，用户分不清它是在拼命识别还是卡死。
                      */
                     tvRunCount.text = when {
@@ -2549,7 +2549,7 @@ class ZjsEditorPage(
      * 预览就是虚拟屏的实时画面，本身就是"要点的东西"。让用户在弹窗里
      * 看着缩略图猜坐标是不可行的；在实时画面上拖准星才是自然操作。
      *
-     * 这和 自动精灵 一致 —— 它也是让用户在"脚本运行区域"上完成选择。
+     * 这和 脚本格式 一致 —— 它也是让用户在"脚本运行区域"上完成选择。
      */
     // ------------------------------------------------------------ 多指滑动的手指
 
@@ -2567,7 +2567,7 @@ class ZjsEditorPage(
      * 预览画面在第 1 页。用户点完这个按钮还停在第 3 页，就永远看不到
      * 结果 —— 那比不给这个按钮更糟：他以为坏了。
      *
-     * 这和 自动精灵 一致：它也是让你"在运行区域上"选择/预览，
+     * 这和 脚本格式 一致：它也是让你"在运行区域上"选择/预览，
      * 用的是一个专门的实时画面，而不是脚本编辑列表。
      */
     private fun onPreviewResults(action: Z.Action, prefix: String) {
@@ -2812,7 +2812,7 @@ class ZjsEditorPage(
      *
      * ## 为什么框选而不用四个数字框
      *
-     * 自动精灵 两种都有：四个数字输入框（左/右/上/下）+ 画面上拖框
+     * 脚本格式 两种都有：四个数字输入框（左/右/上/下）+ 画面上拖框
      * （见反编译的 `renderer-xm` 里 `defaultArea` 那个组件）。
      *
      * 但用户在实时画面上根本判断不出"左边该填 320 还是 340"。
@@ -2896,7 +2896,7 @@ class ZjsEditorPage(
      *
      * 协议里 `imageData` 除了 base64 还有 imageWidth/Height/Left/Top 和
      * screenWidth/Height —— 它们用来在别的分辨率下按比例还原位置。
-     * 只写 base64 的话，自动精灵打开这张图位置是错的。
+     * 只写 base64 的话，脚本格式打开这张图位置是错的。
      */
     private fun onPickTemplate(field: String, actionIndex: Int) {
         val action = currentActions().getOrNull(actionIndex) ?: return

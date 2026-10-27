@@ -221,7 +221,7 @@ object ZFieldEditor {
             /*
              * 相似度是**唯一的容差旋钮**。
              *
-             * 从 Maa 转来的颜色带 colorLower/colorUpper（逐通道区间，可能是非对称的）。
+             * 从 参考管线 转来的颜色带 colorLower/colorUpper（逐通道区间，可能是非对称的）。
              * 如果只改 similarPercent 而区间不动，用户调旋钮就毫无反应 ——
              * 表现就是"调了没用"。所以这里同步把区间按新容差重算：
              * 容差 = (100 - 相似度)% × 255，围绕 `color` 对称展开。
@@ -288,7 +288,7 @@ object ZFieldEditor {
      * "90%" / "90" → 90，并夹到协议允许的 **50~100**。空串 → null 表示清空。
      *
      * ★ 原坑：夹到 0~100。0~49 在协议里不是合法阈值（FIELDS.md 3.2/3.4 都写 50–100），
-     *   写进脚本后 自动精灵 那边也读不了；阈值 0 更会让匹配"永远命中"。
+     *   写进脚本后 脚本格式 那边也读不了；阈值 0 更会让匹配"永远命中"。
      */
     /** `#rrggbb` → [r,g,b]；不带 # 也认。解析不了返回 null。 */
     private fun parseHex(raw: String): IntArray? {
@@ -351,7 +351,7 @@ object ZFieldEditor {
      * const S = { 点击: location, 点击图片: image, 点击文字: text, ... }
      * ```
      *
-     * 自动精灵在 `set posData` 时若发现不匹配，会**自动改 type**。
+     * 脚本格式在 `set posData` 时若发现不匹配，会**自动改 type**。
      * 我们也一样：换类型的同一时刻位置对象跟着换，否则存出来就是一个
      * 自相矛盾的动作 —— 「点击图片」带着一个 location 位置，
      * 执行器按 image 去找会永远匹配不到，而用户完全看不出哪里错了。
@@ -374,7 +374,7 @@ object ZFieldEditor {
                 //
                 //   原坑：这里只 copy(type)，**旧 posData 原样留着** ——
                 //   于是「点击」改成「按键」后，脚本里会出现一条带 posData 的
-                //   按键动作。自动精灵按 type 取字段，多出来的 posData 是垃圾；
+                //   按键动作。脚本格式按 type 取字段，多出来的 posData 是垃圾；
                 //   而我们的界面还会继续显示"位置 X/Y"，用户以为自己改错了。
                 type = newType,
                 // 换类型必须清掉它，否则 toJson 会优先写回旧的原串：
@@ -544,7 +544,7 @@ object ZFieldEditor {
         "jsCode", "filePath", "promptTitle",
         // 设置变量的交互弹窗（FIELDS 576-580）
         "dialogTitle", "dialogOKText", "dialogCancelText", "dialogAutoClickBtn",
-        // 识别后等待（Maa 的 pre_delay 位置）
+        // 识别后等待（参考管线 的 pre_delay 位置）
         "delayAfterLocate"
     )
 
@@ -717,7 +717,7 @@ object ZFieldEditor {
      *   而用户拿到的手写/别家工具生成的脚本里可能有 `continueParentExecute`
      *   这种变体。不清的话会出现两条同义键：
      *     · 我们在界面上写的是正确大小写的那条 → 执行器读得到，行为对；
-     *     · 旧变体留在文件里 → 界面上多一行灰色只读、自动精灵那边读哪个不确定。
+     *     · 旧变体留在文件里 → 界面上多一行灰色只读、脚本格式那边读哪个不确定。
      *   所以只要写的键和某个已有键"仅大小写不同"，就以这次写入为准，把变体删掉。
      *   （只删变体，不动其它键 —— 用户的不认识字段必须原样保留。）
      */

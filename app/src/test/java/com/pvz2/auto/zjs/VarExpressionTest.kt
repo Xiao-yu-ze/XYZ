@@ -7,7 +7,7 @@ import org.junit.Test
 /**
  * `__vars` 里 **expression / random** 类型的求值。
  *
- * 自动精灵把"字段改成变量"时会把原字段删掉，值放在 `__vars` 里：
+ * 脚本格式把"字段改成变量"时会把原字段删掉，值放在 `__vars` 里：
  * ```
  * "delay": 不存在
  * "__vars": {"delay": {"varType":"expression","valueExp":"100+50"}}

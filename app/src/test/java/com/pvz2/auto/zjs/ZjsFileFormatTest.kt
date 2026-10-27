@@ -10,7 +10,7 @@ import org.junit.Test
 /**
  * `.zjs` 的真实文件格式（NDJSON + CRLF + baseInfo 注入字段）。
  *
- * 依据 SPEC.md:670-717。格式错了我们导出的文件自动精灵打不开，
+ * 依据 SPEC.md:670-717。格式错了我们导出的文件脚本格式打不开，
  * 而用户要到导出之后、在另一个程序里才发现。
  */
 class ZjsFileFormatTest {
@@ -69,7 +69,7 @@ class ZjsFileFormatTest {
 
     @Test
     fun `没给屏幕尺寸就不写，而不是写 0`() {
-        // 写 0 会让自动精灵以为屏幕是 0×0，坐标换算全错
+        // 写 0 会让脚本格式以为屏幕是 0×0，坐标换算全错
         val s = script("""{"baseInfo":{},"actions":[]}""")
         val first = JSONObject(ZjsFileFormat.stringify(s).split("\r\n").first())
         assertTrue(!first.has("lastSaveScreenWidth"))

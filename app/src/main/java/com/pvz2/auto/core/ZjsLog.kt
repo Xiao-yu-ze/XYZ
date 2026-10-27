@@ -53,7 +53,7 @@ object ZjsLog {
     // ------------------------------------------------------------ 落盘
     //
     // 环形缓冲只在内存里，进程一死就没了。用户要"把这次运行发给我"时
-    // 需要一份文件 —— 参照 Maa：一次运行一个文件，失败帧单独存。
+    // 需要一份文件 —— 参照 参考管线：一次运行一个文件，失败帧单独存。
 
     private val fullFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
     private var runFile: java.io.File? = null
@@ -66,7 +66,7 @@ object ZjsLog {
     /** `<baseDir>/zjs_logs`。 */
     fun runsDir(): java.io.File = java.io.File(baseDir, "zjs_logs").apply { mkdirs() }
 
-    /** 失败截图目录，对应 Maa 的 `debug/on_error`。 */
+    /** 失败截图目录，对应 参考管线 的 `debug/on_error`。 */
     fun shotDir(): java.io.File = java.io.File(runsDir(), "on_error").apply { mkdirs() }
 
     /** 当前/最近一次运行的日志文件。 */

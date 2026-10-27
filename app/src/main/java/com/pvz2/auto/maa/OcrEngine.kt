@@ -34,7 +34,7 @@ data class OcrLine(
 /**
  * PaddleOCR PP-OCRv5 mobile 推理（det 检测 + rec 识别）。
  *
- * 模型来自 MaaPVZ 的 `resource/model/ocr/`，见 assets/ocr/README.md：
+ * 模型来自 参考管线 的 `resource/model/ocr/`，见 assets/ocr/README.md：
  *   det.onnx  PP-OCRv5_mobile_det
  *   rec.onnx  PP-OCRv5_mobile_rec
  *   keys.txt  rec 的 CTC 字典，18383 行
@@ -287,7 +287,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
         /*
          * ★ 按**短边**放大到 [DET_LIMIT]，不是按长边。
          *
-         *   这是自动精灵（worker-ocr-bundle.js）的实际参数：
+         *   这是脚本格式（worker-ocr-bundle.js）的实际参数：
          *     { limitSideLen: 960, unclipRadio: 1.6 }
          *   而 limit_side_len 在 PaddleOCR 里配的是 limit_type='min' ——
          *   短边不足 960 就放大到 960。
@@ -369,7 +369,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
      *
      * 简化实现：用形态学膨胀把同一行的字连起来，再取连通域外接矩形。
      * 相比完整 DB 后处理（轮廓 + 分数筛选 + unclip），这里少了 unclip 膨胀，
-     * 对"按钮上的一行短文字"这种场景足够，也是 MaaPVZ 实际用到的全部情形。
+     * 对"按钮上的一行短文字"这种场景足够，也是 参考管线 实际用到的全部情形。
      */
     private fun findBoxes(mask: Mat, srcW: Int, srcH: Int, ratio: Double): List<TextBox> {
         val scaled = Mat()
@@ -627,7 +627,7 @@ class OcrEngine(private val context: Context) : AutoCloseable {
          * 二值化后要么框错位、要么只检出一个大框 —— 表现是"识别到 1 行"，
          * 且识别结果是乱码（实测把按钮读成「2」「HN」）。
          *
-         * 依据：MaaFramework 自带的 fastdeploy_ppocr_maa.dll 里，
+         * 依据：参考管线 自带的 fastdeploy_ppocr_maa.dll 里，
          * 0.485/0.456/0.406 与 0.229/0.224/0.225 各以 float32 出现 3 次；
          * PaddleOCR 的 det 管线也是这一套（rec 才是 0.5/0.5）。
          */
@@ -697,7 +697,7 @@ internal object MatToTensor {
      * 二值化后要么框错位、要么只检出一个大框 —— 表现就是"识别到 1 行"，
      * 而且识别出来的是乱码（实测把按钮读成「2」「HN」）。
      *
-     * 这条常量是从 MaaFramework 自带的 fastdeploy_ppocr_maa.dll 里核对的：
+     * 这条常量是从 参考管线 自带的 fastdeploy_ppocr_maa.dll 里核对的：
      * 0.485/0.456/0.406 与 0.229/0.224/0.225 各自以 float32 出现 3 次。
      */
     fun nchw(src: Mat, means: FloatArray, stds: FloatArray): FloatArray {

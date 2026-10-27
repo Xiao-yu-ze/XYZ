@@ -3,9 +3,9 @@ package com.pvz2.auto.zjs
 /**
  * 「设置变量」里标了 `showInput` 的那些变量 —— 点运行时要先问用户。
  *
- * ## 照自动精灵的实现来的
+ * ## 照实现来的
  *
- * 自动精灵的 `VarValue` 有一组 `showInput*` 字段（FIELDS.md §8.2）：
+ * `VarValue` 有一组 `showInput*` 字段（FIELDS.md §8.2）：
  *
  * ```
  * showInput            「配置手动输入弹窗」—— 打勾就是"从键盘输入"

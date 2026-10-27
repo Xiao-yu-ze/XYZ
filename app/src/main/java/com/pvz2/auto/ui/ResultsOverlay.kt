@@ -18,7 +18,7 @@ import android.view.View
  * 没有这层的话，用户每改一次阈值就得运行一次脚本、等它跑到那一条、
  * 再去看游戏里点没点中 —— 一次三十秒，而他要试十几次。
  *
- * 自动精灵 也是这么做的：`previewResultBounds` 把命中框和相似度
+ * 脚本格式 也是这么做的：`previewResultBounds` 把命中框和相似度
  * 直接画回实时画面，每 300ms 刷一次（见 `docs/zdjl-capture-and-roi.md`）。
  *
  * ## 坐标换算

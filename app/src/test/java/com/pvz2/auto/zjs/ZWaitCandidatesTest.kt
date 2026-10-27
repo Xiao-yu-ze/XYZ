@@ -8,9 +8,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 「等待候选」—— 我们自己的动作类型，等价于 Maa 的 `next`。
+ * 「等待候选」—— 我们自己的动作类型，等价于 参考管线 的 `next`。
  *
- * 单独测它是因为它是**跨项目翻译的唯一落点**：Maa 的候选链、优先级、
+ * 单独测它是因为它是**跨项目翻译的唯一落点**：参考管线 的候选链、优先级、
  * 超时全压在这一个节点上。它序列化错了，转出来的脚本就会静默跑错流程 ——
  * 不报错，只是走错分支，那种最难查。
  */
@@ -33,7 +33,7 @@ class ZWaitCandidatesTest {
             type = Z.ActionType.WAIT_CANDIDATES,
             common = Z.ActionCommon(desc = "等结算或继续"),
             candidates = listOf(
-                // 第一个有识别条件 —— 对应 Maa 里排在前面、按优先级试的候选
+                // 第一个有识别条件 —— 对应 参考管线 里排在前面、按优先级试的候选
                 Z.Action.Candidate(condition = imageCond(), jumpTo = "结算"),
                 // 第二个无条件 —— 对应 DirectHit 兜底
                 Z.Action.Candidate(condition = null, jumpTo = "继续")

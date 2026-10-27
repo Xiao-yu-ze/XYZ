@@ -6,7 +6,7 @@ package com.pvz2.auto.script
  * 用 C 的话说：这个文件就是一堆 `struct` 定义，没有任何逻辑。
  * 真正的「读文件填 struct」在 ScriptJson.kt，「消费 struct 干活」在后面的执行器。
  *
- * 结构对照自动精灵：
+ * 结构对照脚本格式：
  *   脚本 = 线性动作列表（可跳转）
  *          每个动作挂 0~N 个条件、4 个监听动作
  *
@@ -78,7 +78,7 @@ enum class ConditionType(val wire: String) {
 /**
  * 一个条件。挂在动作上，全部满足动作才运行。
  *
- * `invert` 对应自动精灵的「条件反相」——勾上之后「不满足才算满足」。
+ * `invert` 对应「条件反相」——勾上之后「不满足才算满足」。
  * 这一个开关能省掉一半的条件类型：不用为「没出现结算」单独造一种条件。
  */
 data class Condition(
@@ -132,7 +132,7 @@ data class Action(
     /** 子动作。只有 [ActionType.组合动作] 用得到 —— 这就是你说的"放组合里面"。 */
     val children: List<Action> = emptyList(),
 
-    // 四个监听动作，对应自动精灵的「动作开始运行前 / 成功后 / 失败后 / 结束后」。
+    // 四个监听动作，对应「动作开始运行前 / 成功后 / 失败后 / 结束后」。
     // 它们是在**这个动作**之后额外跑的一段动作，不是条件。
     val onBefore: List<Action> = emptyList(),
     val onSuccess: List<Action> = emptyList(),
@@ -209,7 +209,7 @@ enum class VarType(val wire: String) {
     }
 }
 
-/** 变量作用域，对应自动精灵的「当前脚本 / 全局」。 */
+/** 变量作用域，对应「当前脚本 / 全局」。 */
 enum class VarScope(val wire: String) {
     当前脚本("script"),
     全局("global"),
@@ -244,7 +244,7 @@ data class Script(
     val desc: String = "",
     val author: String = "",
 
-    /** 整份脚本跑完之后是否从头再来 —— 对应自动精灵的「脚本每次循环后」。 */
+    /** 整份脚本跑完之后是否从头再来 —— 对应「脚本每次循环后」。 */
     val loopEnabled: Boolean = false,
     /** 每轮循环之间的间隔，毫秒。 */
     val loopIntervalMs: IntRange? = null,

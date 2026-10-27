@@ -4,19 +4,19 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * 自动精灵的脚本模型。
+ * 脚本模型。
  *
  * 字段清单来自 `_probe/zdjl-re/FIELDS.md`（从 `app.asar` 逐模块还原的反编译结果），
- * 不是照 MaaFramework 猜的 —— 两套协议完全不同。
+ * 不是照 参考管线 猜的 —— 两套协议完全不同。
  *
  * ## 铁律：未知字段必须原样保留
  *
  * 每个对象都带一个 [extra]，装下我们不认识的 key，序列化时写回去。
  *
  * 为什么这不是"锦上添花"：本程序只执行安卓上有意义的那部分动作，
- * 但用户导入的脚本来自 自动精灵，里面有 Windows 专用的、加密的、
+ * 但用户导入的脚本来自 脚本格式，里面有 Windows 专用的、加密的、
  * 未来版本新增的字段。**丢掉它们等于把用户的脚本改坏了**，
- * 而且用户是在导出之后、在 自动精灵 里跑的时候才发现 --- 那时已经晚了。
+ * 而且用户是在导出之后、在 脚本格式 里跑的时候才发现 --- 那时已经晚了。
  *
  * 所以这里的策略是：认识的字段解析成强类型，不认识的整个塞进 extra 带走。
  */
@@ -82,7 +82,7 @@ object Z {
          * 或者两套尺寸键名混用（`imageWidth` 与 `width` 都在）。
          *
          * 记下来是因为这类输入以前是**静默吞掉一个键**：界面上看不出任何异常，
-         * 要到自动精灵那边发现模板/尺寸不对。[com.pvz2.auto.zjs.ZScriptIO.validate]
+         * 要到脚本格式那边发现模板/尺寸不对。[com.pvz2.auto.zjs.ZScriptIO.validate]
          * 会把它报成问题条目（ZModel 侧不引 android.util.Log，保持模型可单测）。
          */
         val droppedKeys: List<String> = emptyList(),
@@ -179,7 +179,7 @@ object Z {
          *
          * FIELDS.md:203 允许 `text` 是正则对象。旧实现 `put("text", text)` 按
          * **字符串**写回，于是导出的文件里正则对象变成了它自己的 JSON 文本
-         * （`"{\"type\":\"RegExp\",...}"`）—— 自动精灵不再当正则解析，
+         * （`"{\"type\":\"RegExp\",...}"`）—— 脚本格式不再当正则解析，
          * 这条"出现文字"就永远匹配不到。运行时我们还能认出来（见 [text]），
          * 但**文件已经被改坏了**，用户存一次就丢一次。
          *
@@ -196,9 +196,9 @@ object Z {
         val extra: MutableMap<String, Any?> = LinkedHashMap()
     ) {
         /*
-         * 颜色的逐通道上下界（Maa 的 lower/upper）。
+         * 颜色的逐通道上下界（参考管线 的 lower/upper）。
          *
-         * Maa 的 ColorMatch 就是这对上下界，而且**是非对称的**
+         * 参考管线 的 ColorMatch 就是这对上下界，而且**是非对称的**
          * （例如 R 237~255 但 G 202~229）。压成"中心色 + 容差"会改变判定范围，
          * 实测后果：植物种下后卡槽进入冷却、颜色已经变了，闸门却仍然通过。
          */
@@ -212,7 +212,7 @@ object Z {
          *
          * ★ 踩过的坑：原来只写 `as? List<*>`，而脚本解析出来的是
          *   org.json.JSONArray（不是 Kotlin List），于是**永远返回 null** ——
-         *   Maa 的"颜色范围"判定从来没生效过，一直退化成"单色 + 相似度"。
+         *   参考管线 的"颜色范围"判定从来没生效过，一直退化成"单色 + 相似度"。
          *   症状：范围写对了也认不出，用户只会去调相似度。
          */
         private fun rgbList(v: Any?): List<Int>? {
@@ -392,12 +392,12 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          * ## wire 必须是 `"多指手势"`（原坑）
          *
          * 我们曾把它改名成「多指滑动」并落盘。但**协议里只有「多指手势」**
-         * （FIELDS.md:77 / SPEC.md:79，实现 m35408），自动精灵的反序列化
+         * （FIELDS.md:77 / SPEC.md:79，实现 m35408），反序列化
          * `P8()` 遇到未知 `type` 会直接 `throw new Error("未知动作类型")`
          * （SPEC.md:118）—— 不是跳过那一条，而是**整份脚本打不开**。
          *
          * 也就是说：只要用户的脚本里有这个动作，我们存一次，他就再也
-         * 无法在自动精灵里打开了。所以 wire 必须回到协议原名。
+         * 无法在脚本格式里打开了。所以 wire 必须回到协议原名。
          *
          * 我们自己的 `multiSwipe`（每根手指的起终点）只是**附加私有字段**，
          * 不顶替协议的 `gestureActions`（见 [Action.gestureActions]）。
@@ -445,13 +445,13 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          *
          * ## 为什么必须是一等公民
          *
-         * Maa 的 `next` 是一条候选链：每轮从当前节点出发按顺序逐个识别，
+         * 参考管线 的 `next` 是一条候选链：每轮从当前节点出发按顺序逐个识别，
          * 第一个成功的被进入；都不成功就继续等，直到超时。
          *
          * 用「条件 + 跳转」拼能凑出近似的分支，但凑不出**等待**：
          * 条件不满足就跳过，没有任何地方表示"我在这里再等一会儿"。
-         * 从 Maa 转过来的脚本就会一路冲过去，而不是等画面出现 ——
-         * 这正是「Maa 能做到的我们也得能做到」差的那一块。
+         * 从 参考管线 转过来的脚本就会一路冲过去，而不是等画面出现 ——
+         * 这正是「参考管线 能做到的我们也得能做到」差的那一块。
          *
          * 语义：
          * ```
@@ -459,7 +459,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          *   按顺序试每个候选：条件成立（或没有条件）→ 跳到它的 jumpTo
          *   睡 intervalMs
          * } 直到超过 timeoutMs（0 = 一直等）
-         * 超时仍没命中 → 往下走（等价于 Maa 里 timeout 到点）
+         * 超时仍没命中 → 往下走（等价于 参考管线 里 timeout 到点）
          * ```
          */
         WAIT_CANDIDATES("等待候选", executable = true),
@@ -467,20 +467,20 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
     /*
      * ---------------- 我们自己的「游戏动作」----------------
      *
-     * 协议里没有这些类型：自动精灵那 22 种是通用图像脚本原语，
+     * 协议里没有这些类型：脚本格式那 22 种是通用图像脚本原语，
      * 而 PVZ2 玩家脑子里想的是"把 3 号卡槽的植物种到第 2 行第 5 列"。
      * 用坐标画布表达这件事门槛太高（要自己量 45 个格子点），
      * 所以这里包一层：参数只有「卡槽 / 行 / 列」，执行时查 [PvzCoords]。
      *
      * 落盘写法是 `"type":"种植物"` + `pvzSlot` / `pvzRow` / `pvzCol`，
-     * 自动精灵读不懂这几种（它那里没有），所以导出给别人的脚本要避免用。
+     * 脚本格式读不懂这几种（它那里没有），所以导出给别人的脚本要避免用。
      */
     PVZ_PLANT("种植物", executable = true),
     PVZ_FEED("喂豆", executable = true),
     PVZ_SHOVEL("铲除", executable = true),
     PVZ_TAP_CELL("点击格子", executable = true),
     PVZ_ARTIFACT("使用神器", executable = true),
-    /* 点波 / 点加速：坐标固定，不需要选格子。原 MaaPVZ 的「下一波」「加速」。 */
+    /* 点波 / 点加速：坐标固定，不需要选格子。原 参考管线 的「下一波」「加速」。 */
     PVZ_WAVE("点下一波", executable = true),
     PVZ_SPEED("点加速", executable = true),
     /* 切换编队：先认后滑、6 次反向、循环，直到认出目标编队并点它。 */
@@ -542,7 +542,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          *
          * ## 这个机制很容易漏，漏了会丢数据
          *
-         * 自动精灵允许把任意字段改成"运行时求值"。落盘时，
+         * 脚本格式允许把任意字段改成"运行时求值"。落盘时，
          * **被变量化的原字段会被删除**（避免污染），只留 `__vars`。
          *
          * 所以序列化时反过来也要做同样的处理：`__vars` 里出现了哪些字段，
@@ -648,7 +648,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          * 用户文件里一个 "循环执行" 之类的新控制动作就被我们改成了"等待"。
          *
          * 运行期仍按"等待"处理（本机不认识的指令不动，代价只是这一步不生效），
-         * 但文件里的语义原样保留，用户拿去自动精灵跑还是对的。
+         * 但文件里的语义原样保留，用户拿去脚本格式跑还是对的。
          */
         val rawControlRunType: String? = null,
         /**
@@ -669,7 +669,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          *
          * 扔进 extra 的话 JSON 结构不会坏（`JSONObject.toString()` 照样输出），
          * 但**用户在编辑器里看不到它** —— 一个挂了 7 段监听的动作展开后
-         * 干干净净，用户会以为没挂监听，而那些监听在自动精灵里是会真的跑的。
+         * 干干净净，用户会以为没挂监听，而那些监听在脚本格式里是会真的跑的。
          *
          * 空 map 视为"未设置"（FIELDS.md:303 `hasValue()`），落盘时不写。
          */
@@ -682,14 +682,14 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          * `parseCallbacks` 里是 `CallbackSlot.of(key) ?: continue` —— 直接丢，
          * 而注释写的是"跳过之后它会落进 extra 被保留"。事实是
          * `scriptCallbacks` 整个键在 HANDLED 里，根本不会进 extra，
-         * 于是那个槽位的动作**静默消失**（在自动精灵里它是要跑的）。
+         * 于是那个槽位的动作**静默消失**（在脚本格式里它是要跑的）。
          * 现在原样收进来，回写时和已知槽位一起写进同一个 `scriptCallbacks`。
          */
         val extraCallbacks: Map<String, JSONObject> = emptyMap(),
         /**
          * 多指滑动的每根手指。
          *
-         * ## 这是本项目自己的节点，不是自动精灵的东西
+         * ## 这是本项目自己的节点，不是东西
          *
          * 协议里只有一个「多指手势」（`gestureActions` 装的是**完整动作数组**），
          * 那套结构没法表达"多根手指同时滑、共用同一组时长和曲线"。
@@ -704,13 +704,13 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          * 多指手势的语义本来就是"同时"，每根手指各有时长是讲不通的。
          *
          * 落盘时写成 `multiSwipe: [{startPos, endPos}, ...]`。
-         * 自动精灵读到会当成未知字段跳过（不崩），我们自己读得回来。
+         * 脚本格式读到会当成未知字段跳过（不崩），我们自己读得回来。
          */
         val fingers: List<Finger> = emptyList(),
         /**
          * 「等待候选」的候选列表（我们自己的节点，见 [ActionType.WAIT_CANDIDATES]）。
          *
-         * 顺序就是优先级：Maa 的 `next` 是"按顺序试，第一个命中就进"，
+         * 顺序就是优先级：参考管线 的 `next` 是"按顺序试，第一个命中就进"，
          * 所以这里**不能排序、不能去重**。
          */
         val candidates: List<Candidate> = emptyList(),
@@ -746,7 +746,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
         /**
          * 「等待候选」里的一个候选。
          *
-         * `condition == null` 表示无条件 —— Maa 里对应 `DirectHit` 的候选：
+         * `condition == null` 表示无条件 —— 参考管线 里对应 `DirectHit` 的候选：
          * 试到它就一定命中，所以它天然适合放到列表末尾当兜底。
          */
         data class Candidate(
@@ -797,7 +797,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
             waitIntervalMs?.let { put("waitIntervalMs", it) }
 
             // 多指滑动的手指列表。空列表不写 —— 空数组在协议里没有含义，
-            // 而自动精灵读到未知字段会跳过，写一个空数组只会让文件变乱。
+            // 而脚本格式读到未知字段会跳过，写一个空数组只会让文件变乱。
             if (fingers.isNotEmpty()) {
                 put("multiSwipe", org.json.JSONArray().apply {
                     fingers.forEach { put(it.toJson()) }
@@ -835,7 +835,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
 
             // ★ __vars 必须在最后处理，而且要把被变量化的字段从顶层删掉。
             //
-            //   自动精灵的规则：某个字段改用变量后，原字段不落盘 ——
+            //   规则：某个字段改用变量后，原字段不落盘 ——
             //   只留 __vars 里那一份。两边都写的话，导出后那个字段会同时
             //   存在"固定值"和"变量"，行为不确定，用户还看不出来。
             if (common.vars.isNotEmpty()) {
@@ -868,7 +868,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
              * 就会从「原样保留」退化成「静默删除」——用户存一次就永久丢动作。
              *
              * 非对象的元素（字符串/数字）无法原样保留，直接跳过：那种元素
-             * 本身就是坏数据，自动精灵也解析不了。
+             * 本身就是坏数据，脚本格式也解析不了。
              */
             private fun parseActionArray(
                 arr: JSONArray?,
@@ -1056,7 +1056,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
                 // ## 写错不报错，但条件会静默失效
                 //
                 // 键名错了 JSON 结构依然合法，导出的文件也不报任何异常。
-                // 但自动精灵按 type 去取对应的键，取不到就当作**条件恒为 false**
+                // 但脚本格式按 type 去取对应的键，取不到就当作**条件恒为 false**
                 // （SPEC.md:1031-1035：条件异常被吞掉、按不成立处理）。
                 //
                 // 用户看到的是"这条动作本来有颜色条件，导出后条件没了"，

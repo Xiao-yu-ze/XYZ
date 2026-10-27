@@ -1,5 +1,5 @@
 """
-在 PC 上复用 MaaPVZ 的模板，对真实游戏截图算 TM_CCOEFF_NORMED 分数。
+在 PC 上复用 参考管线 的模板，对真实游戏截图算 TM_CCOEFF_NORMED 分数。
 
 为什么要在 PC 上做：Android 那边触发识别自检需要点 App 里的按钮，一点就抢前台，
 screencap 截到的是 App 自己 —— 之前那些低分就是这么来的。用 adb 直接

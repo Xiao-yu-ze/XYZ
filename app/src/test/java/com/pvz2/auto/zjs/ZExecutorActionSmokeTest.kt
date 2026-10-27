@@ -129,7 +129,7 @@ class ZExecutorActionSmokeTest {
             ).joinToString("\r\n") + "\r\n"
         ).script!!
         ex.run(script)
-        // 这条日志必须在点击**之前**出现（Maa 的 pre_delay 位置）
+        // 这条日志必须在点击**之前**出现（参考管线 的 pre_delay 位置）
         val iLog = logs.indexOfFirst { it.contains("识别后等待") }
         assertTrue("应当有识别后等待的日志：$logs", iLog >= 0)
         assertEquals(listOf("tap(100,200,100)"), rec.calls)

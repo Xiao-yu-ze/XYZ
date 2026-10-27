@@ -32,7 +32,7 @@ import org.json.JSONObject
  *
  * ## 为什么这件事必须做对
  *
- * 写错的话，我们导出的文件**自动精灵打不开**。而用户是在导出之后、
+ * 写错的话，我们导出的文件**脚本格式打不开**。而用户是在导出之后、
  * 在另一个程序里才发现 —— 那时已经晚了。
  */
 object ZjsFileFormat {
@@ -51,7 +51,7 @@ object ZjsFileFormat {
      *
      * @param script    要保存的脚本
      * @param screenWidth / screenHeight / screenDpi 保存时的屏幕参数，
-     *        自动精灵靠它判断坐标是否需要换算。传 0 表示未知。
+     *        脚本格式靠它判断坐标是否需要换算。传 0 表示未知。
      */
     fun stringify(
         script: Z.Script,
@@ -84,14 +84,14 @@ object ZjsFileFormat {
      * baseInfo + 注入字段。
      *
      * `count` 是**递归**统计的：监听里的动作也算（SPEC.md:702
-     * `e.getActionsCount()`）。数少了自动精灵可能判定文件损坏。
+     * `e.getActionsCount()`）。数少了脚本格式可能判定文件损坏。
      *
      * ## 脚本级的未知字段并进这一行
      *
      * NDJSON 里只有第 1 行能承载"脚本级"信息（第 2 行起全是动作）。
      * 所以 `Z.Script.extra` 里我们不认识的键必须并进 baseInfo ——
      * 否则它们会**静默消失**，而用户的脚本里可能有 `fromStore`、
-     * `encrypt` 这类我们没建模但自动精灵要用的字段。
+     * `encrypt` 这类我们没建模但脚本格式要用的字段。
      */
     private fun buildBaseInfo(
         script: Z.Script,
@@ -147,7 +147,7 @@ object ZjsFileFormat {
      * 旧实现只递归 `scriptCallbacks`，漏了两处内嵌动作：
      *  - `baseInfo.globalCallbacks` 的 9 个全局槽位（FIELDS.md:305-317）
      *  - `action.scriptSet`（「运行多个动作」的子动作数组，FIELDS.md:530）
-     * 数少了自动精灵可能判定文件损坏。
+     * 数少了脚本格式可能判定文件损坏。
      *
      * ## 两条路并存，但同一个动作只走一条
      *

@@ -234,7 +234,7 @@ object ZPosResolver {
         if ('i' in flags) options.add(RegexOption.IGNORE_CASE)
         if ('m' in flags) options.add(RegexOption.MULTILINE)
         if ('s' in flags) options.add(RegexOption.DOT_MATCHES_ALL)
-        // 非法正则（用户在自动精灵里写错了）→ 当"不是正则"，退回包含匹配；
+        // 非法正则（用户在脚本格式里写错了）→ 当"不是正则"，退回包含匹配；
         // 不能让一条写错的正则把整条动作炸掉。
         return runCatching { Regex(source, options) }.getOrNull()
     }

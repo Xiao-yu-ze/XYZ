@@ -53,7 +53,7 @@ class ZConditionEditorTest {
 
     @Test
     fun `位置类条件带对应类型的空位置`() {
-        // 键名必须和类型匹配，否则落盘后自动精灵取不到（FIELDS.md:266-269）
+        // 键名必须和类型匹配，否则落盘后脚本格式取不到（FIELDS.md:266-269）
         val img = ZConditionEditor.create(Z.ConditionType.IMAGE)
         assertEquals(Z.PosType.IMAGE, img.posData!!.type)
 

@@ -4,13 +4,13 @@ import android.graphics.Rect
 import org.opencv.core.Mat
 import org.opencv.imgproc.Imgproc
 
-/** 识别方式。只实现 MaaPVZ 无尽挑战流程实际用到的几种。 */
+/** 识别方式。只实现 参考管线 无尽挑战流程实际用到的几种。 */
 sealed interface Recognition {
 
     /** 区域 `[x, y, w, h]`，720p 逻辑坐标；null 表示全屏。 */
     val roi: IntArray?
 
-    /** 模板匹配。对应 MaaFramework 的 `TemplateMatch`。 */
+    /** 模板匹配。对应 参考管线 的 `TemplateMatch`。 */
     data class Template(
         val templates: List<String>,
         override val roi: IntArray? = null,
@@ -23,7 +23,7 @@ sealed interface Recognition {
 
     /**
      * 纯色区域匹配。对应 `ColorMatch`，用于"找一段纯红色"这类判断。
-     * method 40 = BGR2HSV（MaaPVZ 用它做纯红检测）。
+     * method 40 = BGR2HSV（参考管线 用它做纯红检测）。
      */
     data class Color(
         override val roi: IntArray? = null,
@@ -66,7 +66,7 @@ data class Hit(
 /**
  * 识别结果 -> 用于点击的目标点。
  *
- * MaaFramework 的语义：
+ * 参考管线 的语义：
  *   `roi`     在哪里找
  *   `box`     找到了哪里
  *   `target`  点哪里，默认 = box 的中心
@@ -99,7 +99,7 @@ object Targets {
 }
 
 /**
- * 坐标 / 矩形工具。MaaFramework 的 ROI 是 `[x, y, w, h]`（左上角 + 宽高），
+ * 坐标 / 矩形工具。参考管线 的 ROI 是 `[x, y, w, h]`（左上角 + 宽高），
  * 和 Android 的 [Rect]（left, top, right, bottom）语义不同，两者混用极易出错，
  * 所以统一在这里转换。
  */

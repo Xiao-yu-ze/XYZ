@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  自动精灵动作卡片。
+  脚本格式动作卡片。
 
-  一行折叠、点开看全部字段 —— 和 MaaFramework 那套一致。
+  一行折叠、点开看全部字段 —— 和 参考管线 那套一致。
   真实脚本上百个动作，全展开的话一屏放不下两个。
 -->
 <com.google.android.material.card.MaterialCardView

@@ -1,7 +1,7 @@
 package com.pvz2.auto.zjs
 
 /**
- * 执行自动精灵脚本。
+ * 执行脚本格式脚本。
  *
  * ## 只做能做的，剩下的明确跳过
  *
@@ -81,7 +81,7 @@ class ZExecutor(
     /**
      * 点运行时用户在弹窗里填的值（对应变量的 `value.showInput`）。
      *
-     * 自动精灵的语义：勾了"从键盘输入"的变量，值来自这个弹窗；
+     * 语义：勾了"从键盘输入"的变量，值来自这个弹窗；
      * 弹窗里留空且不是必填 → **变量被删掉**（`zdjl.VAR_DELETE_MARK`）。
      */
     var initialInputs: Map<String, String> = emptyMap()
@@ -191,7 +191,7 @@ class ZExecutor(
         fun lastDetail(): String? = null
 
         /**
-         * 把当前画面存成 PNG（失败现场，对应 Maa 的 debug/on_error）。
+         * 把当前画面存成 PNG（失败现场，对应 参考管线 的 debug/on_error）。
          * @return 存下来的路径；不支持返回 null。
          */
         fun saveFrame(dir: String, baseName: String): String? = null
@@ -233,15 +233,15 @@ class ZExecutor(
      *   可见性，JIT 甚至可以把 `while (!stopped)` 的读提到循环外 ——
      *   表现就是"点了停止没反应，只能杀进程"。
      */
-    /** Maa 的 pre_delay / post_delay 默认值：没写 delay 时按这个走。 */
+    /** 参考管线 的 pre_delay / post_delay 默认值：没写 delay 时按这个走。 */
     /**
      * 动作没写 `delay` 时的缺省等待。
      *
-     * 取 **100ms**：这是 自动精灵 的默认节奏（手写脚本里几乎每条都是
+     * 取 **100ms**：这是 脚本格式 的默认节奏（手写脚本里几乎每条都是
      * `"delay":"100","delayUnit":0`）。原来是 200，于是"没写等待"的动作
      * 比作者预期慢一倍 —— 用户实测反馈"等待缺省 100ms 没生效"。
      *
-     * 注意：Maa 转换过来的节点自带 pre_delay/post_delay（Maa 自己的缺省是 200），
+     * 注意：参考管线 转换过来的节点自带 pre_delay/post_delay（参考管线 自己的缺省是 200），
      * 那些是**显式**写进文件的，不受这里影响。
      */
     private val DEFAULT_DELAY_MS = 100
@@ -319,7 +319,7 @@ class ZExecutor(
 
     private val AROUND_KEY = "filterByAroundConditionSet"
 
-    /** 周围条件里允许出现的子条件类型（自动精灵 getSupportItemConditionTypes()）。 */
+    /** 周围条件里允许出现的子条件类型（脚本格式 getSupportItemConditionTypes()）。 */
     private val AROUND_SUB_TYPES = setOf(
         Z.ConditionType.IMAGE, Z.ConditionType.TEXT,
         Z.ConditionType.COLOR
@@ -350,7 +350,7 @@ class ZExecutor(
         var steps = 0
         // 「设置变量」写入的运行时变量：每次 run 从空开始（协议里变量属于一次运行）
         scriptVars.clear()
-        // 弹窗里填的值就是这些变量的初值（自动精灵里"从键盘输入"就是这个意思）
+        // 弹窗里填的值就是这些变量的初值（脚本格式里"从键盘输入"就是这个意思）
         initialInputs.forEach { (k, v) -> if (v.isNotEmpty()) scriptVars[k] = v }
         runStartedAt = System.currentTimeMillis()
         runActions = actions
@@ -438,7 +438,7 @@ class ZExecutor(
                 log("── [${pc + 1}/${actions.size}] ${rawAction.type.wire} · $label")
 
                 /*
-                 * ★ __vars：字段被变量化时，自动精灵落盘会**把原字段删掉**
+                 * ★ __vars：字段被变量化时，脚本格式落盘会**把原字段删掉**
                  *   （FIELDS.md:127-133）。所以我们读到的"字段不存在"有两种完全
                  *   不同的含义：用户没写 / 它是变量。
                  *
@@ -506,7 +506,7 @@ class ZExecutor(
                 com.pvz2.auto.core.ScriptRunState.finishAction(pc)
 
                 /*
-                 * ★ 识别不到 → 任务结束（Maa 语义）。
+                 * ★ 识别不到 → 任务结束（参考管线 语义）。
                  *
                  *   不是"跳过这一条继续"：那会让整条脚本在几秒内被冲完，
                  *   界面上还显示"跑完了 N 条"，实际一步都没做。
@@ -608,7 +608,7 @@ class ZExecutor(
     /**
      * 收尾：失败现场存图 + 一行汇总。
      *
-     * Maa 的做法是每次 on_error 都把当时那一帧存成
+     * 参考管线 的做法是每次 on_error 都把当时那一帧存成
      * `debug/on_error/时间_任务_节点.png`；我们至少要有一张 ——
      * 用户说"它卡住了"的时候，图比文字有用得多。
      */
@@ -663,7 +663,7 @@ class ZExecutor(
         /**
          * 非 null = **整条任务就此结束**。
          *
-         * Maa 的语义：一个节点识别不到、又没有失败跳转（on_error / interrupt），
+         * 参考管线 的语义：一个节点识别不到、又没有失败跳转（on_error / interrupt），
          * 任务就到此为止 —— 不是"跳过这一条继续下一条"。
          *
          * 我们原来是后者。后果很直观：识别全都失败时，整条链会在几秒内被一路跳过，
@@ -690,7 +690,7 @@ class ZExecutor(
      *   该等的不等、不该点的照点，属于跑错，不是少功能。
      *
      * @param abortOnRecognitionFail 识别类条件不成立时是否结束整条任务。
-     *        顶层动作为 true（Maa 语义：节点进不去就停）；
+     *        顶层动作为 true（参考管线 语义：节点进不去就停）；
      *        子动作/监听里为 false —— 只跳过这一条，不牵连外层。
      */
     private fun executeWithRepeat(
@@ -942,7 +942,7 @@ class ZExecutor(
         /*
          * 「极速点击模式」（协议 10.1 `highSpeedTap`）。
          *
-         * 自动精灵的原话：「开启后，会忽略默认的额外点击结束等待（5~30ms），
+         * 原话：「开启后，会忽略默认的额外点击结束等待（5~30ms），
          * 但是会导致连续极速点击动作中少部分点击失效」。
          *
          * 我们这边对应的是注入层 `MODE_WAIT_FOR_FINISH`：等事件真的进管线才返回。
@@ -956,9 +956,9 @@ class ZExecutor(
         val fast = clickFamily && boolExtra(action, "highSpeedTap")
         val hold = if (fast) 0 else holdRaw
         /*
-         * 「识别后等待」（Maa 的 pre_delay 真正的位置）。
+         * 「识别后等待」（参考管线 的 pre_delay 真正的位置）。
          *
-         * Maa 的顺序是：**识别 → pre_delay → 动作**。
+         * 参考管线 的顺序是：**识别 → pre_delay → 动作**。
          * 我们原来只有一个 delay，而它在识别**之前**（前置阶段里就睡了），
          * 于是"等画面稳定再认"变成了"等一会儿再认"，语义不同。
          *
@@ -1009,7 +1009,7 @@ class ZExecutor(
 
                 // indexNum 可能选出**多个**点（"1,3,4" = 这几个都点），所以是列表
                 /*
-                 * 识别细节进运行日志（Maa 的日志也是这个粒度）：
+                 * 识别细节进运行日志（参考管线 的日志也是这个粒度）：
                  * 找的是什么、范围多大、命中几个、最佳分、首点在哪、花了多久。
                  * 没有这几项，用户只看到"没找到"，分不清是没画面、范围不对还是阈值太高。
                  */
@@ -1062,7 +1062,7 @@ class ZExecutor(
                     val b = ends.getOrNull(i) ?: lastEnd
                     log("   滑动 (${a.x},${a.y})→(${b.x},${b.y}) 用时 ${hold}ms")
                     inject.swipe(a.x, a.y, b.x, b.y, hold)
-                // post_delay：动作执行完再等这么久（MAA 的 post_delay 语义）
+                // post_delay：动作执行完再等这么久（参考管线 的 post_delay 语义）
                 intExtra(action.extra, "pvzPostMs")?.let { if (it > 0) waitBusy(it.toLong()) }
                     /*
                      * 滑动的 duration 也要真的占时间。
@@ -1085,7 +1085,7 @@ class ZExecutor(
              *   使用神器 = 神器   → 格子点
              *   点击格子 = 只点格子（原实现：没有起点就是 click）
              *
-             * 语义抄自 MaaPVZ 的 compile.py:174-213 —— 那边五种动作的唯一
+             * 语义抄自 参考管线 的 compile.py:174-213 —— 那边五种动作的唯一
              * 区别就是起点，终点都是格子点。
              */
             Z.ActionType.PVZ_PLANT, Z.ActionType.PVZ_FEED, Z.ActionType.PVZ_SHOVEL,
@@ -1109,7 +1109,7 @@ class ZExecutor(
             Z.ActionType.MULTI_SWIPE -> {
                 /*
                  * ★ 协议里多指手势的轨迹在 `gestureActions`（FIELDS.md 10.9），
-                 *   而 `fingers` 是我们自己的私有扩展。从自动精灵导入的脚本
+                 *   而 `fingers` 是我们自己的私有扩展。从脚本格式导入的脚本
                  *   只有 gestureActions，于是以前一律判「没有手指」被跳过 ——
                  *   缩放/双指类脚本必然跑不动，界面上却看不出问题。
                  *
@@ -1401,7 +1401,7 @@ class ZExecutor(
 
             // ---- 运行JS代码（10.25 m23689）：jsCode 直接跑在沙箱里
             //
-            // 自动精灵那边是 QuickJS；我们用 Rhino（纯 Java、解释模式），
+            // 脚本格式那边是 QuickJS；我们用 Rhino（纯 Java、解释模式），
             // 差别集中在 ES6 语法（箭头函数/let/模板串）—— 用到时会明确报语法错误。
             // 变量和执行器的运行时变量是同一份：全局名直接读写，
             // 也可以 get('名字') / set('名字', 值)。
@@ -1439,7 +1439,7 @@ class ZExecutor(
                 /*
                  * 交互弹窗（协议 10.24）。
                  *
-                 * 自动精灵里「设置变量」可以是一条**问用户的对话框**：
+                 * 脚本格式里「设置变量」可以是一条**问用户的对话框**：
                  * 确定 → 变量按配置赋值；取消 → 执行 `dialogCancelAction`
                  * 那条动作、并且**不赋值**。`dialogShowOnce` 表示只问一次。
                  *
@@ -1511,7 +1511,7 @@ class ZExecutor(
                      * 勾了「从键盘输入」(`showInput`) 的变量：值来自运行前的弹窗。
                      *  - 弹窗给了值        → 用弹窗的值（覆盖配置值）
                      *  - 留空 && 必填      → 记一条跳过原因（界面本该拦住，兜一下）
-                     *  - 留空 && 不必填    → **删掉这个变量**（自动精灵的 VAR_DELETE_MARK）
+                     *  - 留空 && 不必填    → **删掉这个变量**（VAR_DELETE_MARK）
                      */
                     if (def != null && def.optBoolean("showInput", false)) {
                         val typed = initialInputs[name]
@@ -1585,18 +1585,18 @@ class ZExecutor(
             }
 
             /*
-             * 等候选 —— Maa 的 next 语义。
+             * 等候选 —— 参考管线 的 next 语义。
              *
-             * Maa 的每个节点都有一条候选链：每轮按顺序逐个识别，第一个成功的
+             * 参考管线 的每个节点都有一条候选链：每轮按顺序逐个识别，第一个成功的
              * 被进入；都不成功就继续等，直到超时。
              *
              * 这里就是那条循环。几个必须讲清楚的点：
              *
              * 1. **顺序即优先级**。不能排序、不能去重 —— 用户排的顺序就是语义。
-             * 2. **每轮都从头试**。Maa 也是每轮重新识别，不是记住上一轮结果。
+             * 2. **每轮都从头试**。参考管线 也是每轮重新识别，不是记住上一轮结果。
              * 3. **睡的时候分片**，否则「停止」要等整段间隔才生效，
              *    用户会以为卡死了。
-             * 4. **超时不是错误**。Maa 里 timeout 到点是"这条没等到"，
+             * 4. **超时不是错误**。参考管线 里 timeout 到点是"这条没等到"，
              *    继续往下走；记一条跳过原因，但不按失败处理。
              */
             Z.ActionType.WAIT_CANDIDATES -> {
@@ -1659,9 +1659,9 @@ class ZExecutor(
                     }
                     if (timeout > 0 && System.currentTimeMillis() - startedAt >= timeout) {
                         /*
-                         * 超时去哪 —— 对应 Maa 的 `on_error`。
+                         * 超时去哪 —— 对应 参考管线 的 `on_error`。
                          *
-                         * Maa：next 扫到 timeout = 这个节点失败，走 on_error（空 = 任务失败）。
+                         * 参考管线：next 扫到 timeout = 这个节点失败，走 on_error（空 = 任务失败）。
                          * 我们：`onTimeoutJump`（本机新增字段）写了 jumpId 就跳过去；
                          *      没写则维持老行为 —— 记一条跳过、继续往下。
                          *
@@ -1670,13 +1670,13 @@ class ZExecutor(
                          */
                         val to = (action.extra["onTimeoutJump"] as? String)?.trim().orEmpty()
                 if (to.isEmpty() && boolExtra(action, "onTimeoutStop")) {
-                    val why = "等待候选超时（${timeout}ms），按 Maa 语义结束任务"
+                    val why = "等待候选超时（${timeout}ms），按 参考管线 语义结束任务"
                     skipped.add(Result.Skip(index, label, why))
                     log("[等待候选] $why")
                     return Outcome(abort = why)
                 }
                         if (to.isNotEmpty()) {
-                            log("[等待候选] 等了 ${timeout}ms 没命中 → 超时跳转 $to（Maa on_error）")
+                            log("[等待候选] 等了 ${timeout}ms 没命中 → 超时跳转 $to（参考管线 on_error）")
                             skipped.add(Result.Skip(index, label, "超时（${timeout}ms）转 on_error：$to"))
                             return Outcome(jumpTo = to)
                         }
@@ -1759,10 +1759,10 @@ class ZExecutor(
     /**
      * 解析点击位置。
      *
-     * ## 找不到时会重试（Maa 的 timeout 语义）
+     * ## 找不到时会重试（参考管线 的 timeout 语义）
      *
-     * Maa 的节点识别不到会一直等到超时，我们原来是一失败就跳过 ——
-     * 从 Maa 转过来的脚本因此会"一路冲过去"，不等画面。
+     * 参考管线 的节点识别不到会一直等到超时，我们原来是一失败就跳过 ——
+     * 从 参考管线 转过来的脚本因此会"一路冲过去"，不等画面。
      *
      * ★ 关键区别：重试的是**识别**，不是动作。
      *   用 repeatCount 重试整个动作的话，找到之后剩下的次数会继续点下去
@@ -1775,7 +1775,7 @@ class ZExecutor(
     /**
      * 「位置周围条件」（`posData.filterByAroundConditionSet`）。
      *
-     * ## 语义来自自动精灵自己的帮助文案
+     * ## 语义来自脚本格式自己的帮助文案
      *
      * 反编译产物里（renderer-script-run-area-bundle.js）：
      * ```
@@ -1907,11 +1907,11 @@ class ZExecutor(
         val rect = ZPosResolver.searchRect(pos, screen)
         var hits = searchPos(pos, rect)
 
-        // 找不到就按间隔重试，直到超时（Maa 的 timeout）。
+        // 找不到就按间隔重试，直到超时（参考管线 的 timeout）。
         //
         // ★ 三态语义，必须分清：
         //      timeoutMs > 0  → 等到这个时长为止
-        //      timeoutMs < 0  → **一直等**（Maa 的 timeout:-1），只有「停止」能结束
+        //      timeoutMs < 0  → **一直等**（参考管线 的 timeout:-1），只有「停止」能结束
         //      timeoutMs = 0  → 只试一次
         //
         //   之前只处理了 >0，于是 timeout:-1 被转成 0 之后变成"只试一次"，
@@ -1953,7 +1953,7 @@ class ZExecutor(
             val msg = "${prefix}没有匹配到目标" + (why?.let { "：$it" } ?: "")
             skipped.add(Result.Skip(index, label, msg))
             log("[动作 $index] $label — $msg")
-            // 识别不到 → 按 Maa 的语义整个任务结束（这条没有失败跳转可走）
+            // 识别不到 → 按 参考管线 的语义整个任务结束（这条没有失败跳转可走）
             abortReason = "第 ${index + 1} 条「$label」$msg"
             return null
         }
@@ -2023,7 +2023,7 @@ class ZExecutor(
      *
      * 协议（SPEC.md:447-460）里跳转有四种写法，而真实脚本**最常用的是第一种**：
      *
-     *      ":A"     → 跳到 jumpId 为 A 的动作（自动精灵原生的无限循环就这么写）
+     *      ":A"     → 跳到 jumpId 为 A 的动作（脚本格式原生的无限循环就这么写）
      *      "2"      → 跳到第 2 条（**1 基**）
      *      "+2"/"-1" → 相对当前前进/后退
      *      "&1"     → 子列表，未支持
@@ -2257,7 +2257,7 @@ class ZExecutor(
         /*
          * ★ limit 是"**额外**重复检查的次数"，不是总次数。
          *
-         *   协议原实现（自动精灵 m4506.js）：
+         *   协议原实现（脚本格式 m4506.js）：
          *       const t = LimitTimes || 0; let o = 1;
          *       for (; (0 == t || o <= t) && (... r = await n(), !r);) o++
          *   循环体先检查再 o++，o 从 1 走到 t —— 即第 1 次之外**再做 t 次**。
@@ -2455,7 +2455,7 @@ class ZExecutor(
                 /*
                  * ★ ignoreInitPass 的语义是"**首次条件检查不满足**"。
                  *
-                 *   自动精灵（91969.js）:
+                 *   脚本格式（91969.js）:
                  *     if (null == lastConditionPassTime)
                  *         return this.lastConditionPassTime = Date.now(), !this.condition.ignoreInitPass;
                  *
@@ -2592,7 +2592,7 @@ class ZExecutor(
      *
      * [defaultMs]：没写 delay 时用多少毫秒。
      *
-     * Maa 的 pre_delay / post_delay 默认都是 200ms，所以「真的去操作画面」的动作
+     * 参考管线 的 pre_delay / post_delay 默认都是 200ms，所以「真的去操作画面」的动作
      * 走默认 100ms；控制流动作（跳转、等待候选）传 0 —— 否则「无限循环 + 每步等待」
      * 的脚本会在死循环保护生效前爬几小时，测试里那个死循环用例直接跑不完。
      */
@@ -2641,7 +2641,7 @@ class ZExecutor(
      * - **「等待」动作**（controlRun:`waitDelay`）：1000ms。协议里 `delay` 是这个
      *   动作唯一的时长来源（FIELDS.md:559），没有它"等待"就是空操作 ——
      *   以前传 0，用户放一条"等 2 秒"完全不生效。
-     * - **有位置/起终点的交互动作**：200ms（Maa 的 pre_delay 默认值）。
+     * - **有位置/起终点的交互动作**：200ms（参考管线 的 pre_delay 默认值）。
      * - **其余控制流**（跳转、等待候选、停止…）：0 —— 否则「无限循环 + 每步 200ms」
      *   会让死循环保护形同虚设（测试里那个死循环用例会跑几小时）。
      */
@@ -2710,7 +2710,7 @@ class ZExecutor(
         afterLocateMs: Int = 0
     ) {
         if (afterLocateMs > 0) {
-            log("   识别后等待 ${afterLocateMs}ms 再点（Maa pre_delay 位置）")
+            log("   识别后等待 ${afterLocateMs}ms 再点（参考管线 pre_delay 位置）")
             waitDelay(afterLocateMs.toString(), Z.TimeUnit.MILLISECONDS, afterLocateMs)
             if (stopped) return
         }
@@ -2789,7 +2789,7 @@ class ZExecutor(
      *    拿它去改外层 pc 会跳到完全无关的地方。记 log 后忽略。
      *  - **停止按协议出去**：`ContinueParentExecute=false`（默认）就是全停；
      *    只有 `true` 才只结束本列表（那一条在 [executeOnce] 里已经折成 breakShell）。
-     *  - **识别失败不出去**：只有顶层动作识别失败才按 Maa 语义终止任务。
+     *  - **识别失败不出去**：只有顶层动作识别失败才按 参考管线 语义终止任务。
      */
     /**
      * 跑一串动作（手势轨迹 `gestureActions` 用）。
@@ -3010,7 +3010,7 @@ class ZExecutor(
      * 「限制运行次数」的计数。
      *
      * ★ 键必须是**条件实例**，不能是动作下标：
-     *   自动精灵把计数存在 `WeakMap`、以条件对象为键（6005.js），
+     *   脚本格式把计数存在 `WeakMap`、以条件对象为键（6005.js），
      *   每个条件各算各的。用下标的话，同一个 `conditionSet` 里两个
      *   限制条件会共用一格、每轮各 +1（等于「只跑 N 次」变成「跑 N/2 次」），
      *   子动作又会复用父动作的下标。
@@ -3117,7 +3117,7 @@ class ZExecutor(
             /*
              * ★ `+HH:MM:SS` 的基准是**这个条件第一次被检查的时刻**，不是脚本开始时刻。
              *
-             *   自动精灵（10426.js）：`parsedTime = Date.now() + offset`，
+             *   脚本格式（10426.js）：`parsedTime = Date.now() + offset`，
              *   首次算出来后缓存（`null==parsedTime || "+"!==t[0]` 才重算）。
              *   用脚本开始时刻做基准的话，脚本跑了 10 分钟才走到这一条，
              *   `+00:00:05` 会立刻成立 —— 而作者要的是"到这里再等 5 秒"。
@@ -3258,7 +3258,7 @@ class ZExecutor(
     /**
      * `__vars` 的**字面量**代换。
      *
-     * 自动精灵允许把任意字段改成"运行时求值"，落盘时原字段会被**删掉**
+     * 脚本格式允许把任意字段改成"运行时求值"，落盘时原字段会被**删掉**
      * （FIELDS.md:127-133）。所以我们读到的"字段不存在"有两种完全不同的含义：
      * 用户没写 / 它是变量。以前一律按前者处理 —— `delay` 是变量就按 200ms 跑、
      * `duration` 是变量就按 100ms，脚本节奏全错，而界面上一切正常。
@@ -3493,7 +3493,7 @@ class ZExecutor(
      * 「选补给」组合动作：一个节点跑完整条补给链。
      *
      * 用户问："为什么不把选补给做成组合动作" —— 对，摊成 12 个节点既难改也难读。
-     * 这里把 MAA `Supply.json` 的整条链收进一个动作里，编译时只出一个节点。
+     * 这里把 参考管线 `Supply.json` 的整条链收进一个动作里，编译时只出一个节点。
      *
      * 顺序与延迟 1:1 照抄（见 PvzSupplyChain 的注释）：
      *   查看(2000) → 判断(1000) → 分类候选 → 兜底(颜色条件) → 确定1(0)
@@ -3523,7 +3523,7 @@ class ZExecutor(
          * ① 先确认**在补给界面**，再往下走。
          *
          *   用户："开始应该是判断当前是否在补给界面，确定在补给界面了再接着往下走"。
-         *   判据用 MAA Supply.json 那个 `补给` 节点本身（色块 roi[1085,84,26,33]）。
+         *   判据用 参考管线 Supply.json 那个 `补给` 节点本身（色块 roi[1085,84,26,33]）。
          *   等不到就整条跳过 —— 绝不在别的界面上瞎点「查看」。
          */
         val uiRoi = PvzSupplyChain.SUPPLY_UI_ROI
@@ -3573,7 +3573,7 @@ class ZExecutor(
             }
         }
         if (picked == null) {
-            // 兜底：MAA `buji_补给` 点第一个卡片
+            // 兜底：参考管线 `buji_补给` 点第一个卡片
             log("   选补给：一个分类都没认出 → 兜底点第一个卡片")
             tapPt(PvzSupplyChain.FALLBACK_FIRST_CARD)
         }
@@ -4085,7 +4085,7 @@ class ZExecutor(
      *
      * ## 为什么只给这两个类型开口子
      *
-     * 自动精灵的 `VarValue` 里 `expression` 和 `random` 的 `valueExp` 就是一段
+     * `VarValue` 里 `expression` 和 `random` 的 `valueExp` 就是一段
      * **JS 表达式**（`100+50`、`Math.floor(Math.random()*200+100)`），
      * 我们手上已经有 Rhino，直接求值最省事也不会猜错语义。
      *

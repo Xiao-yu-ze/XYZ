@@ -11,7 +11,7 @@ import org.junit.Test
 /**
  * 颜色的「一个旋钮」语义。
  *
- * 背景：Maa 的颜色判定是逐通道区间 [lower, upper]。它一直被两个问题坑着：
+ * 背景：参考管线 的颜色判定是逐通道区间 [lower, upper]。它一直被两个问题坑着：
  *  1. `colorLower` 的 getter 只认 Kotlin List，而脚本解析出来是 JSONArray
  *     → 永远返回 null，区间判定从未生效；
  *  2. 界面上只有「相似度」一个旋钮，可区间是独立存的 → 调了毫无反应。

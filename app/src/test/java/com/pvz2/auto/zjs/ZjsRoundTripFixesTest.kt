@@ -10,7 +10,7 @@ import org.junit.Test
 /**
  * 钉死这一轮修复的四处「读写会丢内容 / 会改坏用户文件」的行为。
  *
- * 这些坑的共同点是**不报错**：文件能存，界面正常，要到导入自动精灵之后
+ * 这些坑的共同点是**不报错**：文件能存，界面正常，要到导入脚本格式之后
  * 或者跑起来点错位置才发现。所以每条都断言"原文还在"。
  */
 class ZjsRoundTripFixesTest {
@@ -164,7 +164,7 @@ class ZjsRoundTripFixesTest {
 
         val back = p.toJson()
         // ★ 关键：落盘必须是对象。旧实现按 String 写，正则变成它自己的 JSON 文本，
-        //   自动精灵不再当正则解析 → 这条"出现文字"永远匹配不到。
+        //   脚本格式不再当正则解析 → 这条"出现文字"永远匹配不到。
         val obj = back.optJSONObject("text")
         assertNotNull("text 必须是对象，不能摊成字符串", obj)
         assertEquals("RegExp", obj!!.getString("type"))
@@ -189,7 +189,7 @@ class ZjsRoundTripFixesTest {
     fun `多指手势写回协议原名而不是我们自己改的名字`() {
         val a = Z.Action.parse(JSONObject("""{"type":"多指手势","delayUnit":1}"""))!!
         assertEquals(Z.ActionType.MULTI_SWIPE, a.type)
-        // ★ 关键：自动精灵没有"多指滑动"这个类型，遇到未知 type 会让整份文件打不开
+        // ★ 关键：脚本格式没有"多指滑动"这个类型，遇到未知 type 会让整份文件打不开
         assertEquals("多指手势", a.toJson().getString("type"))
     }
 

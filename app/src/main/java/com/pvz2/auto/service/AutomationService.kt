@@ -85,7 +85,7 @@ class AutomationService : Service() {
     private var capturer: ScreenCapturer? = null
     private var injector: TouchInjector? = null
 
-    /** 正在跑的自动精灵执行器。停止时用它打断 sleep。 */
+    /** 正在跑的脚本格式执行器。停止时用它打断 sleep。 */
     private var zjsExecutor: com.pvz2.auto.zjs.ZExecutor? = null
 
     /** 注入器就绪/销毁时同步到静态引用，供预览手势使用。 */
@@ -192,7 +192,7 @@ class AutomationService : Service() {
             //   节点解析和图执行都写好了，但没有任何地方会启动它。
 
 
-            // ---- 自动精灵格式
+            // ---- 脚本格式格式
             ACTION_ZJS_RUN -> {
                 Log.i(TAG, "[zjs] 收到运行请求")
                 startForegroundCompat()
@@ -533,7 +533,7 @@ class AutomationService : Service() {
      * 流程：绑定 Shizuku → 准备采集器/注入器 → 建 Recognizer → 交给 PipelineRunner。
      */
     /**
-     * 跑一个自动精灵脚本。
+     * 跑一个脚本格式脚本。
      *
      * ## 为什么在 Dispatchers.IO 之外还要自己起线程
      *
@@ -1001,12 +1001,12 @@ class AutomationService : Service() {
 
 
         /**
-         * 运行一个**自动精灵格式**的脚本。
+         * 运行一个**脚本格式格式**的脚本。
          *
          * ## 为什么和 [scriptRun] 分开
          *
-         * 那条路径跑的是 MaaFramework 格式（一个节点一个文件、靠 next 连边）。
-         * 自动精灵是一串线性动作，执行模型完全不同，混在一起两边都难懂。
+         * 那条路径跑的是 参考管线 格式（一个节点一个文件、靠 next 连边）。
+         * 脚本格式是一串线性动作，执行模型完全不同，混在一起两边都难懂。
          *
          * @param path   `.zjs` 文件路径
          */
@@ -1017,7 +1017,7 @@ class AutomationService : Service() {
         /**
          * 运行脚本，并带上「从键盘输入」那些变量的值。
          *
-         * 这些值对应 `value.showInput=true` 的变量 —— 自动精灵的做法是
+         * 这些值对应 `value.showInput=true` 的变量 —— 做法是
          * 点运行时弹窗问用户，确认后再跑（见 ZjsInputs 的注释）。
          */
         fun zjsRun(context: Context, path: String, jsInputs: Map<String, String>) {
@@ -1032,7 +1032,7 @@ class AutomationService : Service() {
             ContextCompat.startForegroundService(context, i)
         }
 
-        /** 停止自动精灵脚本。 */
+        /** 停止脚本格式脚本。 */
         fun zjsStop(context: Context) {
             ContextCompat.startForegroundService(context, intent(context, ACTION_ZJS_STOP))
         }
