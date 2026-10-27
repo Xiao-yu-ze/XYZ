@@ -1018,7 +1018,18 @@ return PosGroup(rec, par, oth)
                     })"
                 )
             }
-            if (action.type == Z.ActionType.PVZ_PLANT) {
+            /*
+             * 「位置」这一组（行 / 列 / 落点 / 在棋盘上选格子）是**所有要点格子**的
+             * 游戏动作共用的：种植物、铲除、喂豆、点击格子。
+             *
+             * 原来只给种植物显示 —— 于是「铲除」在界面上根本选不了铲哪一格，
+             * 只能手改脚本。用户明确要求："铲除节点加一个选位置的字段"。
+             */
+            if (action.type == Z.ActionType.PVZ_PLANT ||
+                action.type == Z.ActionType.PVZ_SHOVEL ||
+                action.type == Z.ActionType.PVZ_FEED ||
+                action.type == Z.ActionType.PVZ_TAP_CELL
+            ) {
                 val rowNo = e["pvzRow"]?.toString().orEmpty()
             val colNo = e["pvzCol"]?.toString().orEmpty()
             rows += Row(
