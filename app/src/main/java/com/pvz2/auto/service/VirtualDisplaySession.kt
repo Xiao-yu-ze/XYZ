@@ -1785,9 +1785,9 @@ if (displayId <= 0) {
 
      */
 
-    /** 预览复用的小图与 Bitmap（避免每帧新建 720p Bitmap 造成 GC 抖动）。 */
+    /** 预览复用位图的串行化锁（并发进 publishPreview 会踩踏）。 */
 
-    private var previewSmall: Mat? = null
+    private val previewLock = Any()
 
     private var previewBmp: Bitmap? = null
 
@@ -1853,35 +1853,39 @@ if (displayId <= 0) {
 
          */
 
-        val sw = (frame.width() / PREVIEW_DOWNSCALE).coerceAtLeast(1)
+        /*
 
-        val sh = (frame.height() / PREVIEW_DOWNSCALE).coerceAtLeast(1)
+         * 全分辨率预览，复用同一张 Bitmap —— 但**必须加锁**。
+
+         *
+
+         *   上一版不加锁就复用，ImageReader 回调线程与轮询协程并发进这里
+
+         *   一边写一边读 → SIGSEGV（publishPreview+0）。
+
+         *   降到 1/3 又嫌糊（用户反馈"画面好糊"）。
+
+         *   所以：保持原分辨率 + 只分配一次 + 用锁串行化。
+
+         */
 
         val bitmap = runCatching {
 
-            val small = Mat()
+            synchronized(previewLock) {
 
-            try {
+                var bmp = previewBmp
 
-                org.opencv.imgproc.Imgproc.resize(
+                if (bmp == null || bmp.width != frame.width() || bmp.height != frame.height()) {
 
-                    frame, small, org.opencv.core.Size(sw.toDouble(), sh.toDouble()),
+                    bmp = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888)
 
-                    0.0, 0.0, org.opencv.imgproc.Imgproc.INTER_AREA
+                    previewBmp = bmp
 
-                )
+                }
 
-                if (small.empty()) return@runCatching null
-
-                val bmp = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
-
-                Utils.matToBitmap(small, bmp)
+                Utils.matToBitmap(frame, bmp)
 
                 bmp
-
-            } finally {
-
-                runCatching { small.release() }
 
             }
 
