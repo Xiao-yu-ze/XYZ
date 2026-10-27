@@ -3436,6 +3436,21 @@ class ZExecutor(
         inject.tap(PvzCoords.DECK_ENTRY[0], PvzCoords.DECK_ENTRY[1], 0)
         waitBusy(1200)
 
+        /*
+         * ★ 编队 1 特殊处理：不识别，直接点死点。
+         *
+         *   用户实测："编队1 识别的不准，改成如果选的编队1就不识别了，
+         *   点到编队界面等 2 秒就点 (157,231)，这个坐标是没有滑动时的编队1的坐标"。
+         *   原因是数字「1」容易和别的字符混淆（日志里认出过 2/3/4/5 和「A」，就是没有 1）。
+         */
+        if (deck == 1) {
+            log("   切换编队：目标编队 1 → 不识别，等 ${PvzCoords.DECK_1_WAIT_MS}ms 直接点 (${PvzCoords.DECK_1_POINT[0]},${PvzCoords.DECK_1_POINT[1]})")
+            waitBusy(PvzCoords.DECK_1_WAIT_MS)
+            inject.tap(PvzCoords.DECK_1_POINT[0], PvzCoords.DECK_1_POINT[1], 0)
+            intExtra(action.extra, "pvzPostMs")?.let { if (it > 0) waitBusy(it.toLong()) }
+            return Outcome()
+        }
+
         val rect = PvzCoords.DECK_AREA
         var forward = true          // true = 往上翻（露出后面的编队）
         var sinceReverse = 0
