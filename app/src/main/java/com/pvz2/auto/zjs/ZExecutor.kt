@@ -3640,18 +3640,6 @@ class ZExecutor(
             var lastNative = -1L
             var lastFrames = -1L
             var lastDrops = -1L
-            /*
-             * ★ 先取一次基准，否则**第一行采样必然是 0.0fps**。
-             *
-             *   自检 30 秒打一行，而脚本常常只跑 35 秒 —— 用户只会看到唯一那行，
-             *   却写着 0.0fps，被误读成"画面没动"。这里在循环前打好基准，
-             *   第一行打印就是真实帧率。
-             */
-            runCatching {
-                lastFrames = com.pvz2.auto.service.VirtualDisplaySession.frameCountProvider()
-                lastFramesAt = System.currentTimeMillis()
-                lastDrops = com.pvz2.auto.shizuku.NativeCapture.droppedFrames()
-            }
             var lastFramesAt = 0L
             while (!stopped) {
                 try {
