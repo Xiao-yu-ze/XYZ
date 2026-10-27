@@ -170,6 +170,41 @@ class PvzActionTest {
         assertEquals(listOf("tap(749,703)", "tap(830,577)"), rec.calls)
     }
 
+    /*
+     * 新字段（神器=key + 子字段）—— 这一组是补漏的回归测试。
+     *
+     * 之前只测了旧值 gourd_l，而旧值恰好被老分支接住，所以测试全绿；
+     * 但用新字段（gourd + 体型）时压根没进新实现，真机上"连神器位置都不点"。
+     */
+    @Test
+    fun `葫芦·新字段——点图标再点大号点位`() {
+        val (r, rec) = run(
+            """{"type":"使用神器","pvzArtifact":"gourd","pvzGourdSize":"大"}"""
+        )
+        assertEquals(0, r.skipped.size)
+        assertEquals(listOf("tap(749,703)", "tap(830,577)"), rec.calls)
+    }
+
+    @Test
+    fun `相机·新字段——点图标再点粘贴点位`() {
+        val (r, rec) = run(
+            """{"type":"使用神器","pvzArtifact":"camera","pvzCameraMode":"粘贴"}"""
+        )
+        assertEquals(0, r.skipped.size)
+        assertEquals(listOf("tap(749,703)", "tap(794,570)"), rec.calls)
+    }
+
+    @Test
+    fun `保龄球和棱镜塔——只点神器位置一下`() {
+        val (r1, rec1) = run("""{"type":"使用神器","pvzArtifact":"bowling"}""")
+        assertEquals(0, r1.skipped.size)
+        assertEquals(listOf("tap(749,703)"), rec1.calls)
+
+        val (r2, rec2) = run("""{"type":"使用神器","pvzArtifact":"prism"}""")
+        assertEquals(0, r2.skipped.size)
+        assertEquals(listOf("tap(749,703)"), rec2.calls)
+    }
+
     @Test
     fun `神器缺参数要明确说清楚`() {
         val (r, rec) = run("""{"type":"使用神器","pvzRow":"1","pvzCol":"1"}""")

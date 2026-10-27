@@ -3844,6 +3844,18 @@ class ZExecutor(
                     "当前屏幕 ${screen.width}×${screen.height}，点下去可能偏"
             )
         }
+        /*
+         * 使用神器：**必须在最前面分派**。
+         *
+         *   原来插在函数下部（旧 when 判据之后），于是先被旧分支拦下 ——
+         *   日志里那句"使用神器缺「神器」参数（可选：bean、gourd_s…）"就是旧判据，
+         *   新写的 gourd/bowling/bean/prism/camera 全都不认，除了偶然对上的 bean，
+         *   其它神器一个位置都不点、200ms 就结束。
+         */
+        if (action.type == Z.ActionType.PVZ_ARTIFACT) {
+            return runPvzArtifact(action, index, label, skipped)
+        }
+
         // 切换编队：先认后滑、6 次反向、循环，直到认出目标编队并点它
         if (action.type == Z.ActionType.PVZ_SWITCH_DECK) {
             return switchDeck(action, index, label, skipped)
@@ -3947,23 +3959,6 @@ class ZExecutor(
                 start = PvzCoords.SHOVEL
                 startName = "铲子"
             }
-            Z.ActionType.PVZ_ARTIFACT -> {
-                val preset = PvzCoords.artifact(action.extra["pvzArtifact"]?.toString())
-                if (preset == null) {
-                    val why = "使用神器缺「神器」参数（可选：" +
-                        PvzCoords.ARTIFACTS.joinToString("、") { it.key } + "）"
-                    skipped.add(Result.Skip(index, label, why))
-                    return null
-                }
-                if (preset.use == PvzCoords.Use.TAP) {
-                    // 点按类（相机复制/粘贴）：直接点，不需要行列
-                    log("   神器「${preset.label}」点 (${preset.point[0]},${preset.point[1]})")
-                    inject.tap(preset.point[0], preset.point[1], 0)
-                    return Outcome()
-                }
-                start = preset.point
-                startName = preset.label
-            }
             else -> Unit // 点击格子
         }
 
@@ -4004,11 +3999,6 @@ class ZExecutor(
                 }
                 log("   条件色带命中，执行")
             }
-        }
-
-        // 使用神器：独立实现（点神器位 → 等 500ms → 按种类点第二下）
-        if (action.type == Z.ActionType.PVZ_ARTIFACT) {
-            return runPvzArtifact(action, index, label, skipped)
         }
 
         val swipeMsRaw = intExtra(action.extra, "pvzSwipeMs")
