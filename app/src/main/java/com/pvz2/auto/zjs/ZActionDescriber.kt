@@ -460,7 +460,14 @@ object ZActionDescriber {
         rows += Row("备注", c.desc.orEmpty(), editKind("desc", c), field = "desc")
         rows += Row("跳转标识", c.jumpId.orEmpty(), editKind("jumpId", c), field = "jumpId")
         rows += section("时机")
-        rows += Row("持续(ms)", c.duration.orEmpty(), numberKind("duration", c), field = "duration")
+        /*
+         * 「持续」只对点击族（按住时长）和普通滑动（默认时长）有意义。
+         * 游戏节点的点击固定 hold=0、滑动走 pvzSwipeMs，所以这一行填了也没用 ——
+         * 用户要求"不生效的全部删掉"，这里对游戏节点不显示。
+         */
+        if (action.type !in PVZ_TYPES) {
+            rows += Row("持续(ms)", c.duration.orEmpty(), numberKind("duration", c), field = "duration")
+        }
 
         // 等待时间：**值 和 单位 必须分成两行**。
         //
@@ -512,10 +519,13 @@ object ZActionDescriber {
         )
 
         // 布尔值用开关，不用弹窗：一次点击 vs 三次点击，而且状态一直可见。
-        rows += Row(
-            "快速重复", if (c.fastRepeatMode) "是" else "否", Kind.SWITCH,
-            field = "fastRepeatMode"
-        )
+        // 游戏节点不显示：它对 PVZ 动作没有实现（见 ZExecutor 的分派）。
+        if (action.type !in PVZ_TYPES) {
+            rows += Row(
+                "快速重复", if (c.fastRepeatMode) "是" else "否", Kind.SWITCH,
+                field = "fastRepeatMode"
+            )
+        }
         rows += Row(
             "禁用", if (c.disabled) "是" else "否", Kind.SWITCH,
             field = "disabled"
