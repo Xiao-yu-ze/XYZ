@@ -35,7 +35,14 @@ object ZjsInputs {
         /** 预填值：脚本里配的那个值（纯字面量时才有意义） */
         val defaultValue: String,
         /** 变量说明（varDesc），弹窗里当副标题 */
-        val desc: String = ""
+        val desc: String = "",
+        /**
+         * 下拉选项（`value.inputOptions`）。
+         *
+         * 非空 → 运行前弹窗这一行变成**单选下拉**，用户不用手打；
+         * 空 → 保持原来的文本框（兼容旧脚本）。
+         */
+        val options: List<String> = emptyList()
     )
 
     /** 从整份脚本里收集（含「运行多个动作」的子动作）。 */
@@ -49,6 +56,19 @@ object ZjsInputs {
         }
         walk(script.actions)
         return out.values.toList()
+    }
+
+    /** 读 `value.inputOptions`：支持 JSON 数组，也支持逗号分隔字符串。 */
+    private fun optionsOf(v: org.json.JSONObject): List<String> {
+        val arr = v.optJSONArray("inputOptions")
+        if (arr != null) {
+            return (0 until arr.length()).mapNotNull {
+                arr.optString(it).trim().takeIf { s -> s.isNotEmpty() }
+            }
+        }
+        val raw = v.optString("inputOptions").trim()
+        if (raw.isEmpty()) return emptyList()
+        return raw.split(",", "，").map { it.trim() }.filter { it.isNotEmpty() }
     }
 
     private fun collectFromAction(action: Z.Action, out: MutableMap<String, Item>) {
@@ -74,7 +94,8 @@ object ZjsInputs {
                 mustInput = if (v.has("mustInput")) v.optBoolean("mustInput") else true,
                 remember = v.optBoolean("rememberInputValue", false),
                 defaultValue = literalOf(v.optString("valueExp")),
-                desc = o.optString("varDesc").trim()
+                desc = o.optString("varDesc").trim(),
+                options = optionsOf(v)
             )
         }
     }

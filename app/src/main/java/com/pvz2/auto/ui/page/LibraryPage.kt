@@ -348,7 +348,8 @@ class LibraryPage(
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), 0)
         }
-        val edits = ArrayList<Pair<ZjsInputs.Item, android.widget.EditText>>()
+        // 每行可能是文本框，也可能是下拉 —— 用"取值函数"统一收集
+        val readers = ArrayList<Pair<ZjsInputs.Item, () -> String>>()
         for (item in items) {
             box.addView(
                 android.widget.TextView(host).apply {
@@ -365,14 +366,31 @@ class LibraryPage(
                     }
                 )
             }
-            val et = android.widget.EditText(host).apply {
-                setSingleLine(true)
-                hint = item.defaultValue
+            if (item.options.isNotEmpty()) {
+                /*
+                 * 下拉：脚本里给了 inputOptions（心塔的"起始关卡/喂豆间隔"这类）。
+                 * 默认选中"记住的值"或 defaultValue，都没有就第一项。
+                 */
                 val remembered = if (item.remember) prefs.getString(item.name, null) else null
-                setText(remembered ?: item.defaultValue)
+                val sp = android.widget.Spinner(host)
+                sp.adapter = android.widget.ArrayAdapter(
+                    host, android.R.layout.simple_spinner_item, item.options
+                ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+                val want = remembered ?: item.defaultValue
+                val idx = item.options.indexOfFirst { it == want }.coerceAtLeast(0)
+                sp.setSelection(idx, false)
+                box.addView(sp)
+                readers.add(item to { sp.selectedItem?.toString().orEmpty() })
+            } else {
+                val et = android.widget.EditText(host).apply {
+                    setSingleLine(true)
+                    hint = item.defaultValue
+                    val remembered = if (item.remember) prefs.getString(item.name, null) else null
+                    setText(remembered ?: item.defaultValue)
+                }
+                box.addView(et)
+                readers.add(item to { et.text.toString().trim() })
             }
-            box.addView(et)
-            edits.add(item to et)
         }
         val dlg = androidx.appcompat.app.AlertDialog.Builder(host)
             .setTitle("运行前设置变量")
@@ -383,11 +401,12 @@ class LibraryPage(
         dlg.setOnShowListener {
             dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val values = LinkedHashMap<String, String>()
-                for ((item, et) in edits) {
-                    val v = et.text.toString().trim()
+                for ((item, read) in readers) {
+                    val v = read()
                     if (v.isEmpty() && item.mustInput) {
-                        et.error = "必填"
-                        et.requestFocus()
+                        android.widget.Toast.makeText(
+                            host, "「${item.label}」还没选", android.widget.Toast.LENGTH_SHORT
+                        ).show()
                         return@setOnClickListener
                     }
                     values[item.name] = v

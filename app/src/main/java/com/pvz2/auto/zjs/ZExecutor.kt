@@ -3519,6 +3519,40 @@ class ZExecutor(
             )
         )
 
+        /*
+         * ① 先确认**在补给界面**，再往下走。
+         *
+         *   用户："开始应该是判断当前是否在补给界面，确定在补给界面了再接着往下走"。
+         *   判据用 MAA Supply.json 那个 `补给` 节点本身（色块 roi[1085,84,26,33]）。
+         *   等不到就整条跳过 —— 绝不在别的界面上瞎点「查看」。
+         */
+        val uiRoi = PvzSupplyChain.SUPPLY_UI_ROI
+        val uiPos = Z.PosData(
+            type = Z.PosType.COLOR, color = PvzSupplyChain.SUPPLY_UI_COLOR,
+            similarPercent = 85,
+            limitArea = ZArea.fromPxRect(
+                uiRoi[0], uiRoi[1], uiRoi[2] - uiRoi[0], uiRoi[3] - uiRoi[1],
+                PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
+            )
+        )
+        log("   选补给：先确认在补给界面（最多等 ${PvzSupplyChain.SUPPLY_UI_WAIT_MS}ms）")
+        val uiDeadline = System.currentTimeMillis() + PvzSupplyChain.SUPPLY_UI_WAIT_MS
+        var onSupplyUi = false
+        while (!stopped && System.currentTimeMillis() < uiDeadline) {
+            if (matcher.findColor(uiPos, uiRoi).isNotEmpty()) {
+                onSupplyUi = true
+                break
+            }
+            waitBusy(200)
+        }
+        if (!onSupplyUi) {
+            val why = "选补给：没认出补给界面（色块未出现），不点「查看」"
+            skipped.add(Result.Skip(index, label, why))
+            log("[跳过] $why")
+            return null
+        }
+        log("   选补给：确认在补给界面")
+
         // 查看
         log("   选补给：点「查看」(${PvzSupplyChain.VIEW[0]},${PvzSupplyChain.VIEW[1]})")
         tapPt(PvzSupplyChain.VIEW)
