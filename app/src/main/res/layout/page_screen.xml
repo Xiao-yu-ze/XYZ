@@ -149,12 +149,13 @@
                 android:layout_height="wrap_content"
                 android:text="@string/label_game_fps" />
 
-            <Spinner
-                android:id="@+id/spFps"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1" />
+            <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="@string/label_game_fps_fixed"
+            android:textSize="14sp" />
         </LinearLayout>
 
         <!-- 出问题时最重要的一件事：把日志弄出来。 -->

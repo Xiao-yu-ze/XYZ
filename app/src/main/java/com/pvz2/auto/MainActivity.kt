@@ -77,33 +77,6 @@ class MainActivity : AppCompatActivity() {
      * （120 不开放，那是以前实测会把 system_server 饿死的档位）。
      * 改完要重建虚拟屏才生效，选中时给一句提示。
      */
-    private fun bindFpsSpinner(act: MainActivity) {
-        val sp = act.findViewById<android.widget.Spinner>(R.id.spFps) ?: return
-        val labels = arrayOf("60 fps", "30 fps")
-        val rates = floatArrayOf(60f, 30f)
-        sp.adapter = android.widget.ArrayAdapter(
-            act, android.R.layout.simple_spinner_item, labels
-        ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-        sp.setSelection(if (com.pvz2.auto.core.GameFps.REQUESTED_REFRESH_RATE <= 30f) 1 else 0, false)
-        sp.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(
-                parent: android.widget.AdapterView<*>?,
-                view: android.view.View?,
-                position: Int,
-                id: Long
-            ) {
-                val hz = rates[position]
-                if (hz == com.pvz2.auto.core.GameFps.REQUESTED_REFRESH_RATE) return
-                com.pvz2.auto.core.GameFps.setRate(act, hz)
-                android.widget.Toast.makeText(
-                    act, "帧率已设为 ${hz.toInt()}，重建虚拟屏后生效",
-                    android.widget.Toast.LENGTH_LONG
-                ).show()
-            }
-
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
-        }
-    }
 
     /** 第 2 页实例：别处（如第 5 页应用脚本）改动了脚本目录后要能让它重读。 */
     private var libraryPage: com.pvz2.auto.ui.page.LibraryPage? = null
@@ -400,7 +373,7 @@ class MainActivity : AppCompatActivity() {
         // 切到脚本库就重读一次目录：第 5 页刚生成的脚本要立刻能看到
         if (position == PAGE_SCRIPT) libraryPage?.reload()
         // 第 1 页那行「帧率 xx fps」就是帧率设置入口
-        if (position == PAGE_SCREEN) bindFpsSpinner(this@MainActivity)
+        
 
         val endless = position == PAGE_ENDLESS
         val gone = if (endless) View.GONE else View.VISIBLE
