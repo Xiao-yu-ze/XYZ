@@ -25,6 +25,8 @@ object ZConditionDescriber {
             Z.ConditionType.TIME_INTERVAL -> "时间区间内"
             Z.ConditionType.JS_EXPRESSION -> "JS 表达式"
             Z.ConditionType.CONDITION_SET -> "条件组"
+            Z.ConditionType.VAR_EQUALS ->
+                "变量 " + c.extra["varName"].toString() + " 等于 " + c.extra["expected"].toString()
             Z.ConditionType.AROUND -> "周围条件"
         }
 

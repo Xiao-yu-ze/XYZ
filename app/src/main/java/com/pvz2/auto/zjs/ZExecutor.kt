@@ -2322,7 +2322,26 @@ class ZExecutor(
         skipped: MutableList<Result.Skip>,
         depth: Int = 0
     ): Boolean {
-        if (depth > MAX_COND_DEPTH) {
+        
+            /*
+             * 变量比较（本机新增）：condition.extra 里放
+             *   varName  —— 变量名
+             *   expected —— 期望值（字符串比较，忽略首尾空白）
+             * 用于「按变量决定要不要执行某个组合动作」，比如起始关卡/后期种蓓蕾。
+             */
+            if (cond.type == Z.ConditionType.VAR_EQUALS) {
+                val name = cond.extra["varName"]?.toString()?.trim().orEmpty()
+                val want = cond.extra["expected"]?.toString()?.trim().orEmpty()
+                if (name.isEmpty()) {
+                    log("[条件] 变量比较缺 varName")
+                    return false
+                }
+                val got = scriptVars[name]?.trim().orEmpty()
+                val ok = got == want
+                log("[条件] 变量比较：$name=\"$got\" 期望 \"$want\" → ${if (ok) "成立" else "不成立"}")
+                return ok
+            }
+if (depth > MAX_COND_DEPTH) {
             // 畸形文件可能把条件自己套自己几百层 —— 直接算会 StackOverflowError，
             // 报出来比崩掉强（崩掉时界面只能显示"执行异常：null"）。
             log("   条件嵌套超过 $MAX_COND_DEPTH 层，视为不成立")

@@ -1012,7 +1012,9 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
         IMAGE("image"), TEXT("textFount"), COLOR("colorFound"),
         AI_CLOUD("aiCloud"), LIMIT_RUN_TIMES("limitRunTimes"), SCRIPT_RUN_STATE("scriptRunState"),
         RANDOM("random"), TIME_AFTER("timeAfter"), TIME_INTERVAL("timeInterval"),
-        JS_EXPRESSION("jsExpression"), CONDITION_SET("conditionSet"), AROUND("AroundCondition");
+        JS_EXPRESSION("jsExpression"), CONDITION_SET("conditionSet"), AROUND("AroundCondition"),
+        /** 变量比较：读取脚本变量与期望值比对（本机新增）。 */
+        VAR_EQUALS("varEquals");
 
         companion object {
             fun of(wire: String): ConditionType? = entries.firstOrNull { it.wire == wire }
