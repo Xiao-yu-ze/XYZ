@@ -2331,7 +2331,17 @@ class VirtualDisplaySession(
 
          */
 
-        const val PREVIEW_INTERVAL_MS = 33L
+        /*
+         * ★ 预览刷新间隔 = 用户选的帧率（原来写死 33ms ≈ 30fps）。
+         *
+         *   用户反馈："采集确实是 60 帧，但是游戏是 30 帧" —— 设备侧查到的
+         *   虚拟屏是 renderFrameRate 60.0、refreshRateOverride 60.0，游戏和采集都够；
+         *   真正卡在 30 的是**预览**这一路（用户看的正是预览）。
+         *   现在跟着帧率走：60 → 16ms，30 → 33ms。
+         */
+        val PREVIEW_INTERVAL_MS: Long
+            get() = (1000L / com.pvz2.auto.core.GameFps.REQUESTED_REFRESH_RATE
+                .toInt().coerceAtLeast(1)).coerceAtLeast(8L)
 
 
 
