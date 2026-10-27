@@ -3639,6 +3639,7 @@ class ZExecutor(
         val t = Thread {
             var lastNative = -1L
             var lastFrames = -1L
+            var lastDrops = -1L
             var lastFramesAt = 0L
             while (!stopped) {
                 try {
@@ -3648,17 +3649,30 @@ class ZExecutor(
                     val nativeMb = android.os.Debug.getNativeHeapAllocatedSize() / (1024 * 1024)
                     // 虚拟屏实际出帧率（≈ 游戏帧率），自己数出来，不靠 dumpsys
                     val frames = com.pvz2.auto.service.VirtualDisplaySession.frameCountProvider()
-                    val fps = if (lastFrames >= 0 && nowMs > lastFramesAt) {
-                        (frames - lastFrames) * 1000.0 / (nowMs - lastFramesAt)
+                    /*
+                     * ★ 帧率守卫：虚拟屏重建会让帧计数归零，差值变负；
+                     *   同一时刻若有两路写着也可能翻倍（曾报出 120.0fps 的假数）。
+                     *   所以只接受 0..200 的合理值，其余记 0。
+                     */
+                    val fps = if (lastFrames in 0..frames && nowMs > lastFramesAt) {
+                        ((frames - lastFrames) * 1000.0 / (nowMs - lastFramesAt))
+                            .takeIf { it in 0.0..200.0 } ?: 0.0
                     } else 0.0
                     lastFrames = frames
                     lastFramesAt = nowMs
+                    // 采集端因共享环三块都在用而主动丢弃的帧数（增量）
+                    val dropsNow = runCatching {
+                        com.pvz2.auto.shizuku.NativeCapture.droppedFrames()
+                    }.getOrDefault(0L)
+                    val dropDelta = if (lastDrops < 0) 0L else dropsNow - lastDrops
+                    lastDrops = dropsNow
                     val freeMb = readMemFreeMb()
                     val delta = if (lastNative < 0) 0 else nativeMb - lastNative
                     lastNative = nativeMb
                     log(
                         "[内存] Native=${nativeMb}MB (${if (delta >= 0) "+" else ""}$delta) " +
-                            "MemFree=${freeMb}MB 帧率=${String.format(java.util.Locale.US, "%.1f", fps)}fps"
+                            "MemFree=${freeMb}MB 帧率=${String.format(java.util.Locale.US, "%.1f", fps)}fps" +
+                            " 丢帧=${dropDelta}/30s"
                     )
                 } catch (t: Throwable) {
                     break
