@@ -71,3 +71,12 @@ app/src/main/assets/神器二阶.png
 app/src/main/assets/神器三阶.png
 app/src/main/assets/神器四阶.png
 app/src/main/assets/不要搬运这四个图片.txt
+
+# 本地调试产生的临时转储（截图/文本），不进仓库
+_*.txt
+_*.png
+_*.log
+
+# Python 缓存
+__pycache__/
+*.pyc
