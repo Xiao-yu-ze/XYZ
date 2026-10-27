@@ -159,11 +159,11 @@ class ZModelTest {
     // ------------------------------------------------------------ 条件
 
     @Test
-    fun `13 种条件都能解析`() {
+    fun `14 种条件都能解析`() {
         val wires = listOf(
             "image", "textFount", "colorFound", "aiCloud",
             "limitRunTimes", "scriptRunState", "random", "timeAfter",
-            "timeInterval", "jsExpression", "conditionSet", "AroundCondition"
+            "timeInterval", "jsExpression", "conditionSet", "AroundCondition", "varEquals"
         )
         for (w in wires) assertNotNull("认不出条件类型 [$w]", Z.ConditionType.of(w))
         assertEquals(12, Z.ConditionType.entries.size)
