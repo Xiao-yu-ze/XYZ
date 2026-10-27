@@ -1009,6 +1009,56 @@ return PosGroup(rec, par, oth)
                     help = ZFieldHelp.ofAction("pvzDeck")
                 )
             }
+            if (action.type == Z.ActionType.PVZ_ARTIFACT) {
+                val kind = e["pvzArtifact"]?.toString()?.trim().orEmpty()
+                rows += Row(
+                    "神器",
+                    PvzCoords.ARTIFACT_KINDS.firstOrNull { it.first == kind }?.second ?: "（未选）",
+                    Kind.ENUM,
+                    PvzCoords.ARTIFACT_KINDS.map { it.second },
+                    field = "pvzArtifact",
+                    help = ZFieldHelp.ofAction("pvzArtifact")
+                )
+                when (kind) {
+                    "gourd" -> {
+                        val size = e["pvzGourdSize"]?.toString()?.trim().orEmpty()
+                        rows += Row(
+                            "体型",
+                            if (size.isEmpty()) "大" else size,
+                            Kind.ENUM,
+                            PvzCoords.GOURD_SIZES.map { it.first },
+                            field = "pvzGourdSize",
+                            help = ZFieldHelp.ofAction("pvzGourdSize")
+                        )
+                    }
+                    "camera" -> {
+                        val mode = e["pvzCameraMode"]?.toString()?.trim().orEmpty()
+                        rows += Row(
+                            "复制粘贴",
+                            if (mode.isEmpty()) "复制" else mode,
+                            Kind.ENUM,
+                            PvzCoords.CAMERA_MODES.map { it.first },
+                            field = "pvzCameraMode",
+                            help = ZFieldHelp.ofAction("pvzCameraMode")
+                        )
+                    }
+                    "bean" -> {
+                        val rowNo = e["pvzRow"]?.toString().orEmpty()
+                        val colNo = e["pvzCol"]?.toString().orEmpty()
+                        val rr = rowNo.toIntOrNull()
+                        val cc = colNo.toIntOrNull()
+                        val pt = if (rr != null && cc != null) PvzCoords.cell(rr, cc) else null
+                        rows += Row(
+                            "释放位置",
+                            if (pt == null) "（未选）" else "第${rr}行第${cc}列 (${pt[0]},${pt[1]})",
+                            Kind.ENTER,
+                            field = "pvz.board",
+                            help = ZFieldHelp.ofAction("pvz.board")
+                        )
+                    }
+                    else -> Unit
+                }
+            }
             if (action.type == Z.ActionType.PVZ_SWITCH_FORM) {
                 // 切换次数：Spinner 只有 1/2/3（用户要求）
                 val times = e["pvzSwitchTimes"]?.toString().orEmpty()

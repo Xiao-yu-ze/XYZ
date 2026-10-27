@@ -522,7 +522,8 @@ object ZFieldEditor {
     private val EXTRA_INTS = setOf(
         "keyCode",
         // 游戏动作：卡槽 1-8、行 1-5、列 1-9（都是整数，空串=删键）
-        "pvzSlot", "pvzRow", "pvzCol", "pvzSwitchTimes", "pvzDeck"
+        "pvzSlot", "pvzRow", "pvzCol", "pvzSwitchTimes", "pvzDeck",
+        "pvzArtifact", "pvzGourdSize", "pvzCameraMode"
     )
 
     /** 游戏动作属于哪条链（缺省单次；空串=删键）。 */

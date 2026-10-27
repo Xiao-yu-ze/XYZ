@@ -97,12 +97,13 @@ class PvzActionTest {
     }
 
     @Test
-    fun `使用神器——从神器图标拖到格子`() {
+    fun `使用神器·魔豆——点神器图标再点释放格`() {
         val (r, rec) = run(
             """{"type":"使用神器","pvzArtifact":"bean","pvzRow":"2","pvzCol":"9"}"""
         )
         assertEquals(0, r.skipped.size)
-        assertEquals(listOf("swipe(749,703→1188,275,80ms)"), rec.calls)
+        // 魔豆不再拖动：点图标 → 500ms → 点释放格
+        assertEquals(listOf("tap(749,703)", "tap(1188,275)"), rec.calls)
     }
 
     @Test

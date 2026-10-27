@@ -3650,6 +3650,80 @@ class ZExecutor(
      *
      * 球果就是靠这个切形态：原本脚本里那个坐标点两下 = 切换次数 2。
      */
+    /**
+     * 「使用神器」：先点神器图标，等 [PvzCoords.ARTIFACT_TAP_GAP_MS]（500ms），再按种类点第二下。
+     *
+     * 用户给出的规则：
+     *  - 葫芦 → 「体型」大/中/小 → 点对应点位
+     *  - 魔豆 → 「释放位置」选一格 → 点那一格
+     *  - 相机 → 「复制 / 粘贴」→ 点对应点位
+     *  - 保龄球 / 棱镜塔 → 点一下神器位置就完（没有第二下）
+     *
+     * 也兼容旧值：gourd_s/gourd_m/gourd_l、camera_copy/camera_paste、bean。
+     */
+    private fun runPvzArtifact(
+        action: Z.Action,
+        index: Int,
+        label: String,
+        skipped: MutableList<Result.Skip>
+    ): Outcome? {
+        var kind = action.extra["pvzArtifact"]?.toString()?.trim().orEmpty()
+        var size = action.extra["pvzGourdSize"]?.toString()?.trim().orEmpty()
+        var mode = action.extra["pvzCameraMode"]?.toString()?.trim().orEmpty()
+        // 旧值兼容
+        when (kind) {
+            "gourd_s" -> { kind = "gourd"; if (size.isEmpty()) size = "小" }
+            "gourd_m" -> { kind = "gourd"; if (size.isEmpty()) size = "中" }
+            "gourd_l" -> { kind = "gourd"; if (size.isEmpty()) size = "大" }
+            "camera_copy" -> { kind = "camera"; if (mode.isEmpty()) mode = "复制" }
+            "camera_paste" -> { kind = "camera"; if (mode.isEmpty()) mode = "粘贴" }
+        }
+        if (PvzCoords.ARTIFACT_KINDS.none { it.first == kind }) {
+            val why = "使用神器缺「神器」（可选：" +
+                PvzCoords.ARTIFACT_KINDS.joinToString("、") { it.second } + "）"
+            skipped.add(Result.Skip(index, label, why))
+            log("[跳过] $why")
+            return null
+        }
+        val icon = PvzCoords.ARTIFACT
+        log("   神器：点神器图标 (${icon[0]},${icon[1]})")
+        inject.tap(icon[0], icon[1], 0)
+        waitBusy(PvzCoords.ARTIFACT_TAP_GAP_MS)
+
+        when (kind) {
+            "gourd" -> {
+                val pick = PvzCoords.GOURD_SIZES.firstOrNull { it.first == size }
+                    ?: PvzCoords.GOURD_SIZES.first { it.first == "中" }
+                log("   神器：葫芦·${pick.first} → (${pick.third[0]},${pick.third[1]})")
+                inject.tap(pick.third[0], pick.third[1], 0)
+            }
+            "camera" -> {
+                val pick = PvzCoords.CAMERA_MODES.firstOrNull { it.first == mode }
+                    ?: PvzCoords.CAMERA_MODES.first()
+                log("   神器：相机·${pick.first} → (${pick.second[0]},${pick.second[1]})")
+                inject.tap(pick.second[0], pick.second[1], 0)
+            }
+            "bean" -> {
+                val row = intExtra(action.extra, "pvzRow") ?: 0
+                val col = intExtra(action.extra, "pvzCol") ?: 0
+                val cell = if (row in 1..PvzCoords.ROWS && col in 1..PvzCoords.COLS) {
+                    PvzCoords.cell(row, col)
+                } else null
+                if (cell == null) {
+                    val why = "使用神器（魔豆）缺「释放位置」（行 $row / 列 $col）"
+                    skipped.add(Result.Skip(index, label, why))
+                    log("[跳过] $why")
+                    return null
+                }
+                log("   神器：魔豆 → 释放到 ${PvzCoords.cellLabel(row, col)} (${cell[0]},${cell[1]})")
+                inject.tap(cell[0], cell[1], 0)
+            }
+            else -> log("   神器：${PvzCoords.ARTIFACT_KINDS.first { it.first == kind }.second} 只需点一下")
+        }
+        intExtra(action.extra, "pvzPostMs")?.let { if (it > 0) waitBusy(it.toLong()) }
+        return Outcome()
+    }
+
     private fun runPvzSwitchForm(
         action: Z.Action,
         index: Int,
@@ -3930,6 +4004,11 @@ class ZExecutor(
                 }
                 log("   条件色带命中，执行")
             }
+        }
+
+        // 使用神器：独立实现（点神器位 → 等 500ms → 按种类点第二下）
+        if (action.type == Z.ActionType.PVZ_ARTIFACT) {
+            return runPvzArtifact(action, index, label, skipped)
         }
 
         val swipeMsRaw = intExtra(action.extra, "pvzSwipeMs")

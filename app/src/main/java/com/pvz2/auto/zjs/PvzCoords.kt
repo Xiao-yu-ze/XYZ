@@ -72,6 +72,33 @@ object PvzCoords {
 
     fun artifact(key: String?): Artifact? = ARTIFACTS.firstOrNull { it.key == key }
 
+    // ---------------------------------------------------------------- 使用神器
+
+    /** 神器种类（界面「神器」下拉的 5 项）。 */
+    val ARTIFACT_KINDS: List<Pair<String, String>> = listOf(
+        "gourd" to "葫芦神器",
+        "bowling" to "保龄球神器",
+        "bean" to "魔豆神器",
+        "prism" to "棱镜塔神器",
+        "camera" to "相机神器"
+    )
+
+    /** 葫芦的体型 → 点位（大/中/小）。坐标来自 MAA `神器_初始化_葫芦*体型`（720 基准）。 */
+    val GOURD_SIZES: List<Triple<String, String, IntArray>> = listOf(
+        Triple("大", "葫芦·大", intArrayOf(830, 577)),
+        Triple("中", "葫芦·中", intArrayOf(748, 577)),
+        Triple("小", "葫芦·小", intArrayOf(664, 573))
+    )
+
+    /** 相机的两种模式 → 点位。 */
+    val CAMERA_MODES: List<Pair<String, IntArray>> = listOf(
+        "复制" to intArrayOf(707, 570),
+        "粘贴" to intArrayOf(794, 570)
+    )
+
+    /** 点「神器图标」之后，等这么久再点第二个位置（用户要求 500ms）。 */
+    const val ARTIFACT_TAP_GAP_MS = 500L
+
     // ---------------------------------------------------------------- 切换形态
 
     /**
