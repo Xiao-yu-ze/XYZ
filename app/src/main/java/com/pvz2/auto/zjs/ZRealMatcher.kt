@@ -157,6 +157,24 @@ class ZRealMatcher(
         cachedFrameAt = 0L
     }
 
+    /** 上次存失败样本的时间 + 已存张数（限流用）。 */
+    private var lastShotAt = 0L
+    private var shotCount = 0
+
+    /**
+     * 失败样本是否还值得存：30 秒一张、总共最多 120 张。
+     *
+     * 原来的实现是无条件存 → 8 千多张 667MB。定位问题只需要零星几张。
+     */
+    private fun shouldSaveFailShot(): Boolean {
+        val now = System.currentTimeMillis()
+        if (shotCount >= 120) return false
+        if (now - lastShotAt < 30_000L) return false
+        lastShotAt = now
+        shotCount++
+        return true
+    }
+
     private fun frameForMatch(): org.opencv.core.Mat? {
         val now = System.currentTimeMillis()
         val c = cachedFrame
@@ -517,8 +535,14 @@ class ZRealMatcher(
         val lines = engine.recognize(ocrInput, 0.3)
         // 识别完就把滤镜产物放掉；后面只用 lines，不再碰这块 Mat
         filtered?.release()
-            // 诊断：分不清"画面上没字"和"OCR 没跑起来"时，这行日志能分开
-            runCatching {
+            /*
+             * ★ 这里以前**每次 OCR 都存一张 PNG**（不管成功失败）。
+             *
+             *   真机后果：ocr_fail 目录 8498 个文件 / 667MB，用户看着莫名其妙。
+             *   现在改成：**只在失败时**、**每 30 秒最多一张**、**总量不超过 120 张**，
+             *   够定位问题又不至于把存储塞满。
+             */
+            if (lines.isEmpty() && shouldSaveFailShot()) runCatching {
                 // 用 getExternalFilesDir：这是应用自己一定可写的位置，
                 // 之前从 savedDir.parentFile 推导，异常被 runCatching 吞掉，一枚图都没落下来。
                 val dir = java.io.File(ctx!!.getExternalFilesDir(null), "ocr_fail")
@@ -541,18 +565,6 @@ class ZRealMatcher(
                  * 存下来直接看图就定了。路径在应用外部目录，adb 能拉走：
                  *   /sdcard/Android/data/com.pvz2.auto/files/ocr_fail/
                  */
-                runCatching {
-                    val dir = java.io.File(
-                        com.pvz2.auto.zjs.ZjsRunner.savedDir(ctx).parentFile,
-                        "ocr_fail"
-                    )
-                    dir.mkdirs()
-                    val name = "fail_${System.currentTimeMillis()}.png"
-                    org.opencv.imgcodecs.Imgcodecs.imwrite(
-                        java.io.File(dir, name).absolutePath, region
-                    )
-                    Log.i(TAG, "OCR 失败样本已存：${java.io.File(dir, name).absolutePath}")
-                }
                 return emptyList()
             }
 

@@ -549,6 +549,35 @@ class MainActivity : AppCompatActivity() {
             exportLogs()
         }
 
+        /*
+         * 清理截图缓存：只删 ocr_fail 与 zjs_logs/on_error 里的 PNG，
+         * 脚本(.zjs) 和文本日志(.log) 都保留 —— 用户要求"只留日志和脚本"。
+         */
+        root.findViewById<MaterialButton>(R.id.btnCleanCache)?.setOnClickListener {
+            val before = com.pvz2.auto.zjs.CacheCleaner.size(this)
+            if (before.files == 0) {
+                android.widget.Toast.makeText(
+                    this, "没有需要清理的截图缓存", android.widget.Toast.LENGTH_SHORT
+                ).show()
+                return@setOnClickListener
+            }
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("清理截图缓存")
+                .setMessage(
+                    "将删除 ${before.files} 张调试截图，释放约 ${before.mb()} MB。\n" +
+                        "脚本 .zjs 和文本日志 .log 都会保留。"
+                )
+                .setPositiveButton("清理") { _, _ ->
+                    val r = com.pvz2.auto.zjs.CacheCleaner.clean(this)
+                    android.widget.Toast.makeText(
+                        this, "已删除 ${r.files} 张，释放 ${r.mb()} MB",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
+
         setupChannelPicker(root)
         refreshShizukuState()
     }

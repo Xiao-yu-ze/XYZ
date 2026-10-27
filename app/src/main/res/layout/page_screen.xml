@@ -166,6 +166,16 @@
             android:layout_marginTop="14dp"
             android:text="@string/btn_export_log" />
 
+        <!-- 调试截图会自己长大（ocr_fail 曾到 667MB），这里给一键清理；
+             只删截图，脚本和 .log 文本日志都留着。 -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCleanCache"
+            style="@style/AppButton.Outline"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/btn_clean_cache" />
+
         <TextView
             android:id="@+id/tvLogHint"
             style="@style/Text.Hint"

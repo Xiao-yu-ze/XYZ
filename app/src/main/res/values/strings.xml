@@ -48,6 +48,7 @@
     <string name="vd_no_content">虚拟屏已建，但取不到画面 —— 游戏可能没搬上去，或还没开始渲染。</string>
     <string name="vd_stopped">虚拟屏已停止</string>
     <string name="vd_failed_format">建失败：%1$s</string>
+    <string name="btn_clean_cache">清理截图缓存</string>
     <string name="btn_export_log">导出日志</string>
     <string name="hint_export_log">把关键日志存成文件并分享出来，排查问题用。不包含任何个人信息。</string>
     <string name="log_export_ok">日志已保存：%1$s</string>
