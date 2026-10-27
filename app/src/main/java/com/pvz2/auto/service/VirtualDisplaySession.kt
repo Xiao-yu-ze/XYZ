@@ -1785,12 +1785,6 @@ if (displayId <= 0) {
 
      */
 
-    /** 预览复用位图的串行化锁（并发进 publishPreview 会踩踏）。 */
-
-    private val previewLock = Any()
-
-    private var previewBmp: Bitmap? = null
-
     private fun publishPreview(frame: Mat) {
 
         val now = android.os.SystemClock.uptimeMillis()
@@ -1855,39 +1849,33 @@ if (displayId <= 0) {
 
         /*
 
-         * 全分辨率预览，复用同一张 Bitmap —— 但**必须加锁**。
+         * 每帧新建 Bitmap（原始做法）。
 
          *
 
-         *   上一版不加锁就复用，ImageReader 回调线程与轮询协程并发进这里
+         * 试过的两条路都不行：
 
-         *   一边写一边读 → SIGSEGV（publishPreview+0）。
+         *   ① 跨帧复用同一张 Bitmap → 硬件加速不会重传纹理（像素改了但
 
-         *   降到 1/3 又嫌糊（用户反馈"画面好糊"）。
+         *      generationId 没变）→ 画面冻住，只有触摸触发重绘时才动一下；
 
-         *   所以：保持原分辨率 + 只分配一次 + 用锁串行化。
+         *      不加锁还会并发踩踏 SIGSEGV。
+
+         *   ② 缩到 1/3 → 太糊。
+
+         * 所以回到新建：3.7MB/帧确实有分配压力，但那是**可见的正确性**，
+
+         * 不能拿画面去换。真嫌 GC 抖动，应该把预览降频，而不是复用同一实例。
 
          */
 
         val bitmap = runCatching {
 
-            synchronized(previewLock) {
+            val bmp = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888)
 
-                var bmp = previewBmp
+            Utils.matToBitmap(frame, bmp)
 
-                if (bmp == null || bmp.width != frame.width() || bmp.height != frame.height()) {
-
-                    bmp = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888)
-
-                    previewBmp = bmp
-
-                }
-
-                Utils.matToBitmap(frame, bmp)
-
-                bmp
-
-            }
+            bmp
 
         }.getOrNull() ?: return
 
