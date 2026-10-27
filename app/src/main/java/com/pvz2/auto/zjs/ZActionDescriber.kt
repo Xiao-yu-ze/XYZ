@@ -1056,14 +1056,6 @@ return PosGroup(rec, par, oth)
                 "落点",
                 if (pt == null) "（选好行列后显示）" else "(${pt[0]}, ${pt[1]})"
             )
-            rows += Row(
-                "属于哪条链",
-                PvzChainModel.label(PvzChainModel.chainOf(action)),
-                Kind.ENUM,
-                PvzChainModel.LABELS.map { it.second },
-                field = "pvzChain",
-                help = ZFieldHelp.ofAction("pvzChain")
-            )
                 rows += Row(
                     "在棋盘上选格子",
                     if (r != null && c != null) "第${r}行第${c}列 ›" else "点开选 ›",
@@ -1072,14 +1064,6 @@ return PosGroup(rec, par, oth)
                     help = ZFieldHelp.ofAction("pvz.board")
                 )
             }
-            rows += Row(
-                "属于哪条链",
-                PvzChainModel.label(PvzChainModel.chainOf(action)),
-                Kind.ENUM,
-                PvzChainModel.LABELS.map { it.second },
-                field = "pvzChain",
-                help = ZFieldHelp.ofAction("pvzChain")
-            )
         }
 
 
