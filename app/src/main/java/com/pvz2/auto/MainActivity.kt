@@ -1351,7 +1351,7 @@ class MainActivity : AppCompatActivity() {
      * 组合起来正好能把原因分开（见下面的判读逻辑）。
      */
 
-    /** Android 13 起通知权限才需要单独申请；更低版本视为已授予。 */
+    /** Android 高版本 起通知权限才需要单独申请；更低版本视为已授予。 */
     private fun notificationsGranted(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==

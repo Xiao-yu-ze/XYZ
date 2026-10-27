@@ -235,7 +235,7 @@ internal object VirtualDisplayCreator {
     /**
      * 生成 flags 候选列表，按成功率从高到低排。
      *
-     * ## `OWN_CONTENT_ONLY` 必须保留（这条是 Android 16 真机日志证明的）
+     * ## `OWN_CONTENT_ONLY` 必须保留（这条是 Android 高版本 真机日志证明的）
      *
      * 曾经以为「去掉 OWN_CONTENT_ONLY 能让 PUBLIC 生效」，于是把它排到了候选首位。
      * 真机上的后果是 `DisplayManagerService` 打了这两行：

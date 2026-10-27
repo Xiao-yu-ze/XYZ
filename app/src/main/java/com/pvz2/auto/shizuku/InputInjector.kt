@@ -11,7 +11,7 @@ import android.view.MotionEvent
 /**
  * 往指定 display 注入触摸。
  *
- * ## ⚠️ 这个类在 Android 16 上已经不能用于**指定副屏**
+ * ## ⚠️ 这个类在 Android 高版本 上已经不能用于**指定副屏**
  *
  * 真机（SDK 36）实测：`InputEvent.setDisplayId(int)` **被移除了**。
  *
@@ -170,7 +170,7 @@ internal object InputInjector {
 
     /** `InputEvent.setDisplayId(int)`。scrcpy 在 `InputEvent.class` 上取。 */
     internal fun setDisplayId(event: InputEvent, displayId: Int): Boolean = runCatching {
-        // ★ Android 16（SDK 36）移除了 InputEvent.setDisplayId(int)。
+        // ★ Android 高版本（SDK 36）移除了 InputEvent.setDisplayId(int)。
         //
         //   真机日志：`NoSuchMethodException: android.view.InputEvent.setDisplayId [int]`
         //   —— 每个注入的事件都在这行失败，于是"点了没反应"。

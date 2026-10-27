@@ -14,7 +14,7 @@ import android.view.MotionEvent
  *
  * ## 为什么不用 `InputEvent.setDisplayId`
  *
- * 那个方法在 Android 16 被移除了（真机报 `NoSuchMethodException`）。
+ * 那个方法在 Android 高版本 被移除了（真机报 `NoSuchMethodException`）。
  * 但 `MotionEvent.obtain(...)` 有一个**直接接收 displayId 参数**的重载，
  * 从 API 29 起就有 —— 走它就绕开了 setDisplayId。
  *
@@ -22,7 +22,7 @@ import android.view.MotionEvent
  *
  * 历史上 `InputManager.getInstance().injectInputEvent` 在这台机器上
  * **连主屏都被拒**（见 Pvz2UserService.tapOnDisplay 的注释）。那个现象
- * 强烈提示不是权限问题，而是 Android 13 起 `InputManager` 被
+ * 强烈提示不是权限问题，而是 Android 高版本 起 `InputManager` 被
  * `InputManagerGlobal` 取代、旧反射拿到 null。
  *
  * 所以这里按顺序试多条路径，**每条都记日志**。哪条成了由真机决定，
@@ -53,7 +53,7 @@ internal object MultiTouchInjector {
      * InputManager.injectInputEvent(...)                    InvocationTargetException
      * ```
      *
-     * 所以 Android 16 上可用的是 `InputManagerGlobal`；历史上
+     * 所以 Android 高版本 上可用的是 `InputManagerGlobal`；历史上
      * 「injectInputEvent 连主屏都被拒」是因为用的是已被取代的 `InputManager`。
      */
     private const val MODE_RESULT = 2
@@ -178,7 +178,7 @@ internal object MultiTouchInjector {
      * yPrecision, deviceId, edgeFlags, source, displayId, flags)` ——
      * 它是 `@hide`，编译期不可见。
      *
-     * 但**必须走这个重载**：它直接吃 displayId，绕开了 Android 16 已移除的
+     * 但**必须走这个重载**：它直接吃 displayId，绕开了 Android 高版本 已移除的
      * `InputEvent.setDisplayId`。公开的那个 14 参重载没有 displayId，
      * 造出来的事件进不了虚拟屏。
      *
@@ -308,8 +308,8 @@ internal object MultiTouchInjector {
     /**
      * 候选路径，按真机实测的可用性排序。
      *
-     * `InputManagerGlobal` 是 Android 13 起取代 `InputManager` 的入口。
-     * 探针（`_probe/MTProbe`）在这台 Android 16 上的结果：
+     * `InputManagerGlobal` 是 Android 高版本 起取代 `InputManager` 的入口。
+     * 探针（`_probe/MTProbe`）在这台 Android 高版本 上的结果：
      *
      * ```
      * InputManagerGlobal.getInstance()                      ok

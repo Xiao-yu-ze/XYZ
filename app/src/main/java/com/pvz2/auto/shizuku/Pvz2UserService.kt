@@ -200,7 +200,7 @@ class Pvz2UserService : IPvz2Service.Stub() {
         // 按 `DisplayDeviceInfo{...}` 逐个解析，**不靠 mDisplayId 定位**。
         //
         // 之前的做法是「往上找最近的 mDisplayId」来配对，但那一段的排版在
-        // Android 16 上变了 —— 结果永远匹配不上，日志里一直是
+        // Android 高版本 上变了 —— 结果永远匹配不上，日志里一直是
         // 「display=47 未找到」，而系统明明报了 FLAG_TRUSTED。
         //
         // 更可靠的做法：每个 DisplayDeviceInfo 里都带 uniqueId，而我们的屏
@@ -709,7 +709,7 @@ class Pvz2UserService : IPvz2Service.Stub() {
          * ## 为什么用 `input motionevent` 而不是 MotionEvent.obtain
          *
          * 自己构造 MotionEvent 需要 `InputEvent.setDisplayId(int)`，
-         * 而 **Android 16（SDK 36）把这个方法移除了** —— 真机上每个事件都报
+         * 而 **Android 高版本（SDK 36）把这个方法移除了** —— 真机上每个事件都报
          * `NoSuchMethodException`，点击和拖动全部失效。
          *
          * `input -d N motionevent DOWN/MOVE/UP x y` 是系统自带的命令，

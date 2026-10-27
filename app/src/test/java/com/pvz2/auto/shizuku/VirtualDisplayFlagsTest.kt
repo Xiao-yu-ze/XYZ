@@ -50,10 +50,10 @@ class VirtualDisplayFlagsTest {
         assertEquals(971, VirtualDisplayFlags.forSdk(31))
         assertEquals(971, VirtualDisplayFlags.forSdk(32))
 
-        // Android 13：加 TRUSTED 那一组
+        // Android 高版本：加 TRUSTED 那一组
         assertEquals(16331, VirtualDisplayFlags.forSdk(33))
 
-        // Android 14 及以后：再加 OWN_FOCUS + DEVICE_DISPLAY_GROUP
+        // Android 高版本 及以后：再加 OWN_FOCUS + DEVICE_DISPLAY_GROUP
         assertEquals(32715, VirtualDisplayFlags.forSdk(34))
         assertEquals(32715, VirtualDisplayFlags.forSdk(35))
         assertEquals(32715, VirtualDisplayFlags.forSdk(36))
@@ -87,7 +87,7 @@ class VirtualDisplayFlagsTest {
 
     @Test
     fun `真机实测的那组位必须都在`() {
-        // 来源：Lenovo TB323FU / Android 16 上建屏成功后，dumpsys display 报出的
+        // 来源：Lenovo 目标设备 / Android 高版本 上建屏成功后，dumpsys display 报出的
         // DisplayDeviceInfo 里真实带有这些 FLAG。它们是「窗口能挂上副屏」的充分条件，
         // 少一个都可能退回 MuMu 那种 untrusted 状态，所以钉死。
         val flags = VirtualDisplayFlags.forSdk(36)
@@ -99,7 +99,7 @@ class VirtualDisplayFlagsTest {
             "SHOULD_SHOW_SYSTEM_DECORATIONS" to VirtualDisplayFlags.SHOULD_SHOW_SYSTEM_DECORATIONS,
             "DESTROY_CONTENT_ON_REMOVAL" to VirtualDisplayFlags.DESTROY_CONTENT_ON_REMOVAL,
         )) {
-            assertTrue("Android 16 的 flags 缺 $name", (flags and bit) != 0)
+            assertTrue("Android 高版本 的 flags 缺 $name", (flags and bit) != 0)
         }
     }
 

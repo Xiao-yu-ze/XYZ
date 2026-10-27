@@ -23,7 +23,7 @@ interface TouchInjector {
      * 用户真机上报"用脚本会重启手机"。查到的实际是：
      * `system_server` 在 `SystemGesturesPointerEventListener.onPointerEvent` →
      * `RootWindowContainer.getTopFocusedDisplayContent` 里
-     * `Index 1 out of bounds for length 1` 崩掉（ColorOS 多显示分支的越界），
+     * `Index 1 out of bounds for length 1` 崩掉（厂商系统多显示分支的越界），
      * 内核并没有重启（uptime 24 天）。
      *
      * 触发点是一次触摸 DOWN 落在一个"已经不存在的副屏"上。

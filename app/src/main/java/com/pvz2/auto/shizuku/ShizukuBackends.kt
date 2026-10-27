@@ -71,7 +71,7 @@ class ShizukuTouchInjector(
      * - 返回 -1：调用方还没建好虚拟屏 → 不注入
      * - 列表里没有这个 id：虚拟屏已被系统回收/销毁 → 不注入
      *
-     * 为什么要这么严：ColorOS 的 WindowManager 在"显示列表只剩 1 个"时，
+     * 为什么要这么严：厂商系统的 WindowManager 在"显示列表只剩 1 个"时，
      * 一次落在副屏上的触摸 DOWN 会让 system_server 越界崩溃
      * （getTopFocusedDisplayContent: Index 1 out of bounds for length 1），
      * 表现成"手机重启"。宁可停脚本也不能发这一下。
@@ -180,7 +180,7 @@ class ShizukuTouchInjector(
         // 走 AIDL 到 shell 进程，用 `input -d N motionevent` 注入。
         //
         //   本地 `InputInjector` 那条路走不通：它要 `InputEvent.setDisplayId(int)`，
-        //   而 Android 16 把这个方法删了，每个事件都抛 NoSuchMethodException。
+        //   而 Android 高版本 把这个方法删了，每个事件都抛 NoSuchMethodException。
         //   `input` 命令是系统自带的，和一直能用的 `input -d N tap` 同一套权限。
         val service = client.peek() ?: run {
             Log.w(TAG, "手势失败：Shizuku 服务未连接")

@@ -7,7 +7,7 @@
 
 ## 一、结论：不是重启，是 `system_server` 崩了
 
-证据（真机 LENOVO TB323FU，2026-10-26 14:02）：
+证据（真机 目标设备 14:02）：
 
 ```text
 $ adb shell uptime
@@ -46,7 +46,7 @@ RootWindowContainer.getTopFocusedDisplayContent()
 这段是给**副屏/虚拟屏**准备的路径。当「显示列表只剩 1 个」而事件仍带着副屏身份
 （虚拟屏刚被销毁/正在重建的窗口期）时，下标 1 就越界。system_server 死 → 框架重启。
 
-**这是 ColorOS 窗口管理的 bug，我们无法根治**，只能避免踩进去。
+**这是 厂商系统窗口管理的 bug，我们无法根治**，只能避免踩进去。
 
 ## 三、已经做的规避
 
@@ -106,7 +106,7 @@ load average:  14.33                ← 平时 7~8
 1. **触发条件不是"我们注入的事件"**，而是"**虚拟屏存在时，任何快速连续的点按**"——
    手动点在主屏上同样能踩到 `SystemGesturesPointerEventListener.onDown` 那条
    `getTopFocusedDisplayContent` 越界路径。
-2. 这台机器（ColorOS）在多显示场景下这条路径本身有问题，**只要虚拟屏活着就有概率**。
+2. 这台机器（厂商系统）在多显示场景下这条路径本身有问题，**只要虚拟屏活着就有概率**。
 3. 本次表现是：App + VD + Shizuku 会话一起消失（观感=重启），但内核没重启。
 
 ### 因此的规避建议（按有效性排序）

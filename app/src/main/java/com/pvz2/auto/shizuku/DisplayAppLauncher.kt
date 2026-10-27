@@ -355,7 +355,7 @@ internal object DisplayAppLauncher {
      *
      * ## 为什么不能用 `ActivityThread.systemMain()`
      *
-     * Android 16 真机日志给出了确凿证据：
+     * Android 高版本 真机日志给出了确凿证据：
      *
      * ```
      * W/DisplayAppLauncher: 取系统 PackageManager 失败

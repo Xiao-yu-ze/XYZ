@@ -61,7 +61,7 @@ import java.io.FileOutputStream
  *  * 虚拟屏与它的帧消费端（ImageReader）。
  *
  * 它是前台服务是为了让进程在游戏占屏时有足够优先级活着。前台服务**类型**必须与
- * manifest 一致，否则 Android 14 会直接抛异常：
+ * manifest 一致，否则 Android 高版本 会直接抛异常：
  *
  *  * 本应用只有一条路 —— Shizuku -> `specialUse`。
  *    （MediaProjection + 无障碍的降级路线已按需求整体移除：没有 MediaProjection
@@ -298,7 +298,7 @@ class AutomationService : Service() {
         // 用 STICKY：虚拟屏挂在本服务上，服务被系统回收时屏会跟着没。
         // 重新创建后 onCreate 会重建 vdSession，但**不会**自动重新建屏 ——
         // 屏一旦丢了就得用户重新点一次，这是当前实现的已知限制。
-        // 之所以不选 NOT_STICKY：Android 16 对 specialUse 前台服务回收更积极，
+        // 之所以不选 NOT_STICKY：Android 高版本 对 specialUse 前台服务回收更积极，
         // 实测点完「启动」后没一会儿服务就没了、屏也跟着释放
         //（第一次真机日志就是这个现象：导出时屏已经消失）。
         return START_STICKY
@@ -878,7 +878,7 @@ class AutomationService : Service() {
      * 只传一种前台服务类型：`specialUse`。
      *
      * 降级路线（MediaProjection）移除之后就不再有第二种类型，也就不需要按后端分支。
-     * Android 14 起必须显式声明类型，且要与 manifest 里的 `foregroundServiceType` 一致。
+     * Android 高版本 起必须显式声明类型，且要与 manifest 里的 `foregroundServiceType` 一致。
      * `ServiceCompat.startForeground` 是官方推荐的写法。
      */
     private fun startForegroundCompat() {
