@@ -987,6 +987,18 @@ return PosGroup(rec, par, oth)
                     help = ZFieldHelp.ofAction("pvzSlot")
                 )
             }
+            if (action.type == Z.ActionType.PVZ_SWITCH_DECK) {
+                // 选择编队：只有 1-6（用户："编队最多 6 个"）
+                val deck = e["pvzDeck"]?.toString().orEmpty()
+                rows += Row(
+                    "选择编队",
+                    if (deck.isBlank() || deck == "0") "（未选）" else "编队 $deck",
+                    Kind.ENUM,
+                    (1..PvzCoords.DECK_COUNT).map { it.toString() },
+                    field = "pvzDeck",
+                    help = ZFieldHelp.ofAction("pvzDeck")
+                )
+            }
             if (action.type == Z.ActionType.PVZ_SWITCH_FORM) {
                 // 切换次数：Spinner 只有 1/2/3（用户要求）
                 val times = e["pvzSwitchTimes"]?.toString().orEmpty()
