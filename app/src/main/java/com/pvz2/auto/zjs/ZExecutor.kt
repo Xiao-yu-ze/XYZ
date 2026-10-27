@@ -3638,17 +3638,27 @@ class ZExecutor(
         if (memWatch != null) return
         val t = Thread {
             var lastNative = -1L
+            var lastFrames = -1L
+            var lastFramesAt = 0L
             while (!stopped) {
                 try {
                     Thread.sleep(30_000)
+                    val nowMs = System.currentTimeMillis()
                     if (stopped) break
                     val nativeMb = android.os.Debug.getNativeHeapAllocatedSize() / (1024 * 1024)
+                    // 虚拟屏实际出帧率（≈ 游戏帧率），自己数出来，不靠 dumpsys
+                    val frames = com.pvz2.auto.service.VirtualDisplaySession.frameCountProvider()
+                    val fps = if (lastFrames >= 0 && nowMs > lastFramesAt) {
+                        (frames - lastFrames) * 1000.0 / (nowMs - lastFramesAt)
+                    } else 0.0
+                    lastFrames = frames
+                    lastFramesAt = nowMs
                     val freeMb = readMemFreeMb()
                     val delta = if (lastNative < 0) 0 else nativeMb - lastNative
                     lastNative = nativeMb
                     log(
                         "[内存] Native=${nativeMb}MB (${if (delta >= 0) "+" else ""}$delta) " +
-                            "MemFree=${freeMb}MB"
+                            "MemFree=${freeMb}MB 帧率=${String.format(java.util.Locale.US, "%.1f", fps)}fps"
                     )
                 } catch (t: Throwable) {
                     break

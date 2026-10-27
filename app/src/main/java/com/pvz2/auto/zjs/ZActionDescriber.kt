@@ -1009,6 +1009,33 @@ return PosGroup(rec, par, oth)
                     help = ZFieldHelp.ofAction("pvzDeck")
                 )
             }
+            /*
+             * 点下一波：真正该调的是「点几次」和「间隔」。
+             *
+             * 用户踩过：把「等待」改成 100ms 发现没生效 —— 因为「等待」是动作**前**
+             * 的等待（只等一次），点与点之间的间隔是 `pvzWaveInterval`，而界面
+             * 之前没有这一行，根本改不到。现在两项都摆出来。
+             */
+            if (action.type == Z.ActionType.PVZ_WAVE) {
+                val times = e["pvzWaveTimes"]?.toString().orEmpty()
+                val gap = e["pvzWaveInterval"]?.toString().orEmpty()
+                rows += Row(
+                    "点几次",
+                    if (times.isBlank()) "1" else times,
+                    Kind.ENUM,
+                    (1..20).map { it.toString() } + listOf("30", "50", "70", "100", "200"),
+                    field = "pvzWaveTimes",
+                    help = ZFieldHelp.ofAction("pvzWaveTimes")
+                )
+                rows += Row(
+                    "每次间隔(ms)",
+                    if (gap.isBlank()) "100" else gap,
+                    Kind.ENUM,
+                    listOf("10", "20", "30", "50", "100", "150", "200", "300"),
+                    field = "pvzWaveInterval",
+                    help = ZFieldHelp.ofAction("pvzWaveInterval")
+                )
+            }
             if (action.type == Z.ActionType.PVZ_ARTIFACT) {
                 val kind = e["pvzArtifact"]?.toString()?.trim().orEmpty()
                 rows += Row(

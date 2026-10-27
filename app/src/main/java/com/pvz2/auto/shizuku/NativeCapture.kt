@@ -78,5 +78,15 @@ internal object NativeCapture {
 
     private external fun nativeRelease()
 
+    /**
+     * 调试开关：只取帧不拷回内存（对照实验用，见 capture.cpp 的 g_noCopy）。
+     * 打开后预览会黑、识别会失败 —— 这是预期。
+     */
+    fun setNoCopy(on: Boolean) {
+        runCatching { nativeSetNoCopy(on) }
+    }
+
+    private external fun nativeSetNoCopy(on: Boolean)
+
     private external fun nativeDroppedFrames(): Long
 }

@@ -342,6 +342,19 @@ class VirtualDisplaySession(
 
             //   直接报"没有指定共享区路径"、建屏失败 —— 真机上就是这么暴露的。
 
+            /*
+             * 对照实验开关：files/no_copy 存在 → 采集只取帧不拷贝。
+             * 想验证"3.7MB/帧的拷回是不是卡顿原因"时，创建这个文件再重建虚拟屏。
+             */
+            val noCopyFlag = runCatching {
+                java.io.File(
+                    (callerContext.getExternalFilesDir(null) ?: return@runCatching false),
+                    "no_copy"
+                ).exists()
+            }.getOrDefault(false)
+            com.pvz2.auto.shizuku.NativeCapture.setNoCopy(noCopyFlag)
+            if (noCopyFlag) Log.w(TAG, "对照实验：采集关闭拷贝（预览会黑、识别会失败）")
+
             if (!attachFrameRing(service, VD_WIDTH, VD_HEIGHT)) {
 
                 Log.e(TAG, "共享帧环建立失败，放弃建屏")
@@ -784,6 +797,7 @@ class VirtualDisplaySession(
 
 
 
+
     /** 建好共享区并把路径告诉服务端，等 native 建屏时 mmap 它。 */
 
     private fun attachFrameRing(service: IPvz2Service, w: Int, h: Int): Boolean {
@@ -819,6 +833,7 @@ class VirtualDisplaySession(
             service.setPendingFramePath(path)
 
             frameRing = ring
+            frameCountProvider = { ring.frameCount() }
             publishRing(ring)
             Log.i(TAG, "共享帧环就绪 ${w}x$h：$path")
 
@@ -1752,6 +1767,12 @@ class VirtualDisplaySession(
 
      */
 
+    /** 预览复用的小图与 Bitmap（避免每帧新建 720p Bitmap 造成 GC 抖动）。 */
+
+    private var previewSmall: Mat? = null
+
+    private var previewBmp: Bitmap? = null
+
     private fun publishPreview(frame: Mat) {
 
         val now = android.os.SystemClock.uptimeMillis()
@@ -1772,11 +1793,63 @@ class VirtualDisplaySession(
 
         // [POLL_INTERVAL_MS] 那个 120ms 的空转等待，见下面的注释。
 
+        /*
+
+         * ★ 复用一张小图，不再每帧新建 720p Bitmap。
+
+         *
+
+         *   原来：每帧 Bitmap.createBitmap(1280,720,ARGB_8888) = 3.7MB 新对象，
+
+         *   而为了防崩又不能 recycle → 预览每秒 37~60MB 托管内存分配 →
+
+         *   ART 频繁 GC → 主线程被 GC 停顿 → 画面一卡一卡。
+
+         *
+
+         *   用户实测佐证：帧伤植物的伤害和 120 帧打出来差不多 ——
+
+         *   游戏本身满帧，卡的是我们显示给他看的那一路。
+
+         */
+
+        val sw = (frame.width() / PREVIEW_DOWNSCALE).coerceAtLeast(1)
+
+        val sh = (frame.height() / PREVIEW_DOWNSCALE).coerceAtLeast(1)
+
         val bitmap = runCatching {
 
-            val bmp = Bitmap.createBitmap(frame.width(), frame.height(), Bitmap.Config.ARGB_8888)
+            var small = previewSmall
 
-            Utils.matToBitmap(frame, bmp)
+            if (small == null || small.width() != sw || small.height() != sh) {
+
+                small?.release()
+
+                small = Mat(sw, sh, frame.type())
+
+                previewSmall = small
+
+            }
+
+            org.opencv.imgproc.Imgproc.resize(
+
+                frame, small, small.size(), 0.0, 0.0,
+
+                org.opencv.imgproc.Imgproc.INTER_AREA
+
+            )
+
+            var bmp = previewBmp
+
+            if (bmp == null || bmp.width != sw || bmp.height != sh) {
+
+                bmp = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
+
+                previewBmp = bmp
+
+            }
+
+            Utils.matToBitmap(small, bmp)
 
             bmp
 
@@ -2184,6 +2257,15 @@ class VirtualDisplaySession(
         const val VD_NAME = "pvz2-virtual"
 
         const val VD_WIDTH = 1280
+
+    /**
+     * 给"运行期自检"读的帧计数来源：虚拟屏一共产出了多少帧。
+     *
+     * 游戏每渲染一帧，虚拟屏输出面就有一帧写进共享区，所以 ≈ 游戏实际帧率，
+     * 且**不依赖 dumpsys**（PVZ2 是 SurfaceView/GL，gfxinfo 统计不到它）。
+     */
+    @Volatile
+    var frameCountProvider: () -> Long = { 0L }
 
         const val VD_HEIGHT = 720
 

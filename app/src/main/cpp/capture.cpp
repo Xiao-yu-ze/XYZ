@@ -115,6 +115,15 @@ std::mutex g_mutex;
 
 std::atomic<int64_t> g_dropped{0};
 
+/**
+ * 调试开关：只取帧、**不拷回内存**。
+ *
+ * 用途：验证"每帧 3.7MB 的 GPU→CPU 拷回"是不是掉帧的原因。
+ * 打开后不再调用 AImage_getPlaneData（不映射 CPU 缓冲），
+ * 共享区里没有新帧 —— 预览会黑、识别会失败，这是预期的对照状态。
+ */
+std::atomic<bool> g_noCopy{false};
+
 // ------------------------------------------------------------ 共享区访问
 
 inline std::atomic<int32_t> &StateAt(uint8_t *shared, int index) {
@@ -176,6 +185,11 @@ int AcquireWriteIndex(Capturer *c) {
 void WriteFrameLocked(Capturer *c, AImage *image) {
     int32_t rowStride = 0, width = 0, height = 0, dataLength = 0;
     uint8_t *pixels = nullptr;
+
+    // 对照实验：不映射、不拷贝，缓冲区立刻释放，生产者不受阻。
+    if (g_noCopy.load(std::memory_order_relaxed)) {
+        return;
+    }
 
     if (AImage_getPlaneRowStride(image, 0, &rowStride) != AMEDIA_OK ||
         AImage_getWidth(image, &width) != AMEDIA_OK ||
@@ -433,6 +447,12 @@ Java_com_pvz2_auto_shizuku_NativeCapture_nativeRelease(JNIEnv * /*env*/, jclass 
 }
 
 /** 因三块缓冲全被占用而丢掉的帧数。调试用。 */
+JNIEXPORT void JNICALL
+Java_com_pvz2_auto_shizuku_NativeCapture_nativeSetNoCopy(
+        JNIEnv *, jclass, jboolean on) {
+    g_noCopy.store(on == JNI_TRUE, std::memory_order_relaxed);
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_pvz2_auto_shizuku_NativeCapture_nativeDroppedFrames(JNIEnv * /*env*/, jclass /*clazz*/) {
     return g_dropped.load(std::memory_order_acquire);
