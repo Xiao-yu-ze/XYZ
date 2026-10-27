@@ -825,7 +825,10 @@ return PosGroup(rec, par, oth)
     private val PVZ_TYPES = setOf(
         Z.ActionType.PVZ_PLANT, Z.ActionType.PVZ_FEED, Z.ActionType.PVZ_SHOVEL,
         Z.ActionType.PVZ_TAP_CELL, Z.ActionType.PVZ_ARTIFACT,
-        Z.ActionType.PVZ_WAVE, Z.ActionType.PVZ_SPEED, Z.ActionType.PVZ_SWITCH_DECK
+        Z.ActionType.PVZ_WAVE, Z.ActionType.PVZ_SPEED, Z.ActionType.PVZ_SWITCH_DECK,
+        Z.ActionType.PVZ_SUPPLY, Z.ActionType.PVZ_START_BATTLE,
+        Z.ActionType.PVZ_ENTER_CHECK, Z.ActionType.PVZ_SETTLE,
+        Z.ActionType.PVZ_SWITCH_FORM
     )
 
     private val CLICK_FAMILY = setOf(
@@ -967,7 +970,13 @@ return PosGroup(rec, par, oth)
          * 像素点位由 [PvzCoords] 查表，改表不用改脚本。
          */
         if (action.type in PVZ_TYPES) {
-            if (action.type == Z.ActionType.PVZ_PLANT) {
+            /*
+             * 卡槽：种植物和**切换形态**都要（切换形态的 Y 就取卡槽坐标的 Y）。
+             * 行/列只对种植物有意义 —— 切换形态是"在种子卡上连点"，跟棋盘无关。
+             */
+            if (action.type == Z.ActionType.PVZ_PLANT ||
+                action.type == Z.ActionType.PVZ_SWITCH_FORM
+            ) {
                 val slot = e["pvzSlot"]?.toString().orEmpty()
                 rows += Row(
                     "卡槽",
@@ -978,7 +987,27 @@ return PosGroup(rec, par, oth)
                     help = ZFieldHelp.ofAction("pvzSlot")
                 )
             }
-            val rowNo = e["pvzRow"]?.toString().orEmpty()
+            if (action.type == Z.ActionType.PVZ_SWITCH_FORM) {
+                // 切换次数：Spinner 只有 1/2/3（用户要求）
+                val times = e["pvzSwitchTimes"]?.toString().orEmpty()
+                rows += Row(
+                    "切换次数",
+                    if (times.isBlank()) "1 次" else "$times 次",
+                    Kind.ENUM,
+                    (1..PvzCoords.SWITCH_FORM_MAX_TIMES).map { it.toString() },
+                    field = "pvzSwitchTimes",
+                    help = ZFieldHelp.ofAction("pvzSwitchTimes")
+                )
+                rows += Row(
+                    "点击落点",
+                    "(${PvzCoords.SWITCH_FORM_X}, ${
+                        e["pvzSlot"]?.toString()?.toIntOrNull()
+                            ?.let { PvzCoords.slot(it)?.get(1) } ?: "?"
+                    })"
+                )
+            }
+            if (action.type == Z.ActionType.PVZ_PLANT) {
+                val rowNo = e["pvzRow"]?.toString().orEmpty()
             val colNo = e["pvzCol"]?.toString().orEmpty()
             rows += Row(
                 "行",
@@ -1012,12 +1041,21 @@ return PosGroup(rec, par, oth)
                 field = "pvzChain",
                 help = ZFieldHelp.ofAction("pvzChain")
             )
+                rows += Row(
+                    "在棋盘上选格子",
+                    if (r != null && c != null) "第${r}行第${c}列 ›" else "点开选 ›",
+                    Kind.ENTER,
+                    field = "pvz.board",
+                    help = ZFieldHelp.ofAction("pvz.board")
+                )
+            }
             rows += Row(
-                "在棋盘上选格子",
-                if (r != null && c != null) "第${r}行第${c}列 ›" else "点开选 ›",
-                Kind.ENTER,
-                field = "pvz.board",
-                help = ZFieldHelp.ofAction("pvz.board")
+                "属于哪条链",
+                PvzChainModel.label(PvzChainModel.chainOf(action)),
+                Kind.ENUM,
+                PvzChainModel.LABELS.map { it.second },
+                field = "pvzChain",
+                help = ZFieldHelp.ofAction("pvzChain")
             )
         }
 

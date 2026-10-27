@@ -1102,6 +1102,9 @@ class ZExecutor(
             Z.ActionType.PVZ_SETTLE ->
                 runPvzGate(action, index, label, skipped)
 
+            Z.ActionType.PVZ_SWITCH_FORM ->
+                runPvzSwitchForm(action, index, label, skipped)
+
             // ---- 多指滑动
             Z.ActionType.MULTI_SWIPE -> {
                 /*
@@ -3620,6 +3623,51 @@ class ZExecutor(
                 ?: -1L
         }
     }.getOrDefault(-1L)
+
+    /**
+     * 「切换形态」：在 **(固定 X = 163, 卡槽对应的 Y)** 那个点连点 N 下。
+     *
+     * 用户说明：
+     *  - "你记住这个坐标的 X 坐标，他是不变的" —— 所以 X 固定 163
+     *  - "Y 随卡槽号走，卡槽坐标就用我们的就行" —— Y 取 [PvzCoords.slot]
+     *  - "切换次数是 spinner，只能 1/2/3，选几次就点几次"
+     *  - "每次点击的间隔和现在这个间隔一样" / "maa 缺省默认是 200ms"
+     *
+     * 球果就是靠这个切形态：原本脚本里那个坐标点两下 = 切换次数 2。
+     */
+    private fun runPvzSwitchForm(
+        action: Z.Action,
+        index: Int,
+        label: String,
+        skipped: MutableList<Result.Skip>
+    ): Outcome? {
+        val slotNo = intExtra(action.extra, "pvzSlot") ?: 0
+        if (slotNo !in 1..8) {
+            val why = "切换形态缺卡槽（应为 1..8，实际 $slotNo）"
+            skipped.add(Result.Skip(index, label, why))
+            log("[跳过] $why")
+            return null
+        }
+        val times = (intExtra(action.extra, "pvzSwitchTimes") ?: 1)
+            .coerceIn(1, PvzCoords.SWITCH_FORM_MAX_TIMES)
+        val slot = PvzCoords.slot(slotNo)
+        if (slot == null) {
+            val why = "切换形态取不到卡槽$slotNo 的坐标"
+            skipped.add(Result.Skip(index, label, why))
+            log("[跳过] $why")
+            return null
+        }
+        val x = PvzCoords.SWITCH_FORM_X
+        val y = slot[1]
+        log("   切换形态：卡槽$slotNo → ($x,$y) 点击 $times 次（间隔 ${PvzCoords.SWITCH_FORM_INTERVAL_MS}ms）")
+        for (i in 1..times) {
+            if (stopped) return null
+            inject.tap(x, y, 0)
+            if (i < times) waitBusy(PvzCoords.SWITCH_FORM_INTERVAL_MS)
+        }
+        intExtra(action.extra, "pvzPostMs")?.let { if (it > 0) waitBusy(it.toLong()) }
+        return Outcome()
+    }
 
     private fun runPvzGate(
         action: Z.Action,

@@ -72,6 +72,20 @@ object PvzCoords {
 
     fun artifact(key: String?): Artifact? = ARTIFACTS.firstOrNull { it.key == key }
 
+    // ---------------------------------------------------------------- 切换形态
+
+    /**
+     * 切换形态点击的 **固定 X**（用户确认："这个坐标的 X 坐标是不变的"）。
+     * MAA 原值就是 720 基准的 163，不需要换算。
+     */
+    const val SWITCH_FORM_X = 163
+
+    /** 切换形态每次点击之间的间隔（MAA 缺省 200ms）。 */
+    const val SWITCH_FORM_INTERVAL_MS = 200L
+
+    /** 切换形态最多切几下。 */
+    const val SWITCH_FORM_MAX_TIMES = 3
+
     // ---------------------------------------------------------------- 切换编队
 
     /** 编队最多 6 个（用户确认）。 */

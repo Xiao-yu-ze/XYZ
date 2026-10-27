@@ -492,7 +492,9 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
     /* 进关判定：认出卡槽区绿点 = 已进关，顺手点加速。 */
     PVZ_ENTER_CHECK("进关判定", executable = true),
     /* 识别结算：认出「继续挑战」并点它 = 这一局结束。 */
-    PVZ_SETTLE("识别结算", executable = true);
+    PVZ_SETTLE("识别结算", executable = true),
+    /* 切换形态：在「固定 X + 卡槽 Y」那个点连点 N 下（球果切形态就是点两下）。 */
+    PVZ_SWITCH_FORM("切换形态", executable = true);
 
         companion object {
             /**
