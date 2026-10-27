@@ -249,24 +249,56 @@ void WriteFrameLocked(Capturer *c, AImage *image) {
  * 这里是整条链路的关键：只要这个函数及时返回，队列就有空缓冲，
  * SurfaceFlinger 就不会被阻塞。所以它必须快，而且不能等任何人。
  */
-void OnImageAvailable(void *context, AImageReader *reader) {
+/*
+ * ★ 取帧/拷贝从监听回调里**搬到独立线程**。
+ *
+ *   回调跑在 ImageReader 自己的线程上；原来的写法在回调里直接做
+ *   1280×720×4 ≈ 3.7MB 的逐行 memcpy（还在 mutex 里）。只要这一次拷贝没返回，
+ *   那块缓冲就没归还，SurfaceFlinger 取不到空缓冲就得等 —— 生产者（游戏出帧）
+ *   被我们拖住，表现就是"卡一下"。
+ *
+ *   现在：回调只置一个标志 + 唤醒工作线程，立刻返回；真正的 acquire + 拷贝
+ *   在工作线程里做。队列里的中间帧由 acquireLatest 自动丢弃。
+ */
+std::mutex g_frameLock;
+std::condition_variable g_frameCv;
+std::atomic<bool> g_framePending{false};
+std::atomic<bool> g_workerRunning{false};
+
+void CaptureWorker() {
+    while (true) {
+        {
+            std::unique_lock<std::mutex> lk(g_frameLock);
+            g_frameCv.wait(lk, [] { return g_framePending.load(); });
+        }
+        g_framePending.store(false);
+
+        Capturer *c = g_capturer;
+        if (c == nullptr || c->reader == nullptr || c->shared == nullptr) {
+            break;   // 采集端已释放
+        }
+        AImage *image = nullptr;
+        if (AImageReader_acquireLatestImage(c->reader, &image) == AMEDIA_OK && image != nullptr) {
+            {
+                std::lock_guard<std::mutex> lock(c->writeMutex);
+                WriteFrameLocked(c, image);
+            }
+            AImage_delete(image);
+        }
+    }
+    g_workerRunning.store(false);
+}
+
+void OnImageAvailable(void *context, AImageReader *) {
     auto *c = static_cast<Capturer *>(context);
     if (c == nullptr || c->shared == nullptr) {
         return;
     }
-
-    AImage *image = nullptr;
-    // acquireLatest：积压的旧帧没有处理价值，直接丢。
-    // 配合 5 个缓冲，正常情况下每次只积压 0~1 帧。
-    if (AImageReader_acquireLatestImage(reader, &image) != AMEDIA_OK || image == nullptr) {
-        return;
+    if (!g_workerRunning.exchange(true)) {
+        std::thread(CaptureWorker).detach();
     }
-
-    {
-        std::lock_guard<std::mutex> lock(c->writeMutex);
-        WriteFrameLocked(c, image);
-    }
-    AImage_delete(image);
+    g_framePending.store(true);
+    g_frameCv.notify_one();
 }
 
 void ReleaseLocked() {
