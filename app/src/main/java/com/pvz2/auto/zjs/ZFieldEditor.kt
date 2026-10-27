@@ -522,8 +522,7 @@ object ZFieldEditor {
     private val EXTRA_INTS = setOf(
         "keyCode",
         // 游戏动作：卡槽 1-8、行 1-5、列 1-9（都是整数，空串=删键）
-        "pvzSlot", "pvzRow", "pvzCol", "pvzSwitchTimes", "pvzDeck",
-        "pvzArtifact", "pvzGourdSize", "pvzCameraMode"
+        "pvzSlot", "pvzRow", "pvzCol", "pvzSwitchTimes", "pvzDeck"
     )
 
     /** 游戏动作属于哪条链（缺省单次；空串=删键）。 */
@@ -531,6 +530,12 @@ object ZFieldEditor {
 
     /** 字符串型 extra。空串 = 删掉这个键。 */
     private val EXTRA_STRINGS = setOf(
+        /*
+         * 游戏动作·使用神器的三项：都是**字符串**，不能放进 EXTRA_INTS。
+         * 踩过的坑：放整型里 → 写"葫芦神器"时 toIntOrNull() 得 null →
+         * 键被删掉 → 界面永远显示「未选」。
+         */
+        "pvzArtifact", "pvzGourdSize", "pvzCameraMode",
         "jumpToPosition", "aimActionPosition", "appPackageName",
         "link", "promptType", "promptText", "inputText",
         // ★ 运行JS代码 / 执行脚本 的参数。没有这两项时，界面上改完会弹
@@ -585,6 +590,14 @@ object ZFieldEditor {
 
         field in EXTRA_CHAINS ->
             action.copy(extra = extraWith(action.extra, field, chainKeyOf(value)))
+
+        // 神器：界面显示中文（葫芦神器…），落盘必须写 key（gourd…）
+        field == "pvzArtifact" -> {
+            val t = value.trim()
+            val key = com.pvz2.auto.zjs.PvzCoords.ARTIFACT_KINDS
+                .firstOrNull { it.second == t }?.first ?: t
+            action.copy(extra = extraWith(action.extra, field, key.ifEmpty { null }))
+        }
 
         /*
          * `vars`（设置变量）：界面用 `名字=值;名字2=值2` 表达。
