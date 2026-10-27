@@ -71,36 +71,37 @@ class MainActivity : AppCompatActivity() {
     const val PAGE_ENDLESS = 4
 
     /**
-     * 选虚拟屏帧率（30 / 60）。入口就是第 1 页那行「帧率 30 fps（采集 + 游戏）」。
+     * 第 1 页「帧率」下拉——**仿照上面的「渠道服」Spinner**，不做长按。
      *
-     * 原来帧率写死 30（怕 120fps 把系统搞崩），后来查清闪退真因不是帧率，
-     * 于是开放成 30/60 让用户自己权衡；120 仍然不给（那条 1.8GB/s 取帧带宽是实测过的）。
+     * 选项只有 30 / 60：虚拟屏刷新率 + 采集帧率 + 预览刷新率三者一起跟这个值走
+     * （120 不开放，那是以前实测会把 system_server 饿死的档位）。
+     * 改完要重建虚拟屏才生效，选中时给一句提示。
      */
-    private fun showFpsDialog(act: MainActivity) {
-        val cur = com.pvz2.auto.core.GameFps.REQUESTED_REFRESH_RATE
-        val checked = if (cur <= 30f) 0 else 1
-        androidx.appcompat.app.AlertDialog.Builder(act)
-            .setTitle("虚拟屏帧率（采集 + 游戏，当前 ${cur.toInt()}）")
-            .setSingleChoiceItems(arrayOf("30 帧（省电 / 更稳）", "60 帧（更顺滑）"), checked) { dlg, which ->
-                val hz = if (which == 0) 30f else 60f
+    private fun bindFpsSpinner(act: MainActivity) {
+        val sp = act.findViewById<android.widget.Spinner>(R.id.spFps) ?: return
+        val labels = arrayOf("60 fps", "30 fps")
+        val rates = floatArrayOf(60f, 30f)
+        sp.adapter = android.widget.ArrayAdapter(
+            act, android.R.layout.simple_spinner_item, labels
+        ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        sp.setSelection(if (com.pvz2.auto.core.GameFps.REQUESTED_REFRESH_RATE <= 30f) 1 else 0, false)
+        sp.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?,
+                view: android.view.View?,
+                position: Int,
+                id: Long
+            ) {
+                val hz = rates[position]
+                if (hz == com.pvz2.auto.core.GameFps.REQUESTED_REFRESH_RATE) return
                 com.pvz2.auto.core.GameFps.setRate(act, hz)
-                dlg.dismiss()
-                findingsRefreshFps(act)
                 android.widget.Toast.makeText(
-                    act,
-                    "帧率已设为 ${hz.toInt()}，下次重建虚拟屏生效",
+                    act, "帧率已设为 ${hz.toInt()}，重建虚拟屏后生效",
                     android.widget.Toast.LENGTH_LONG
                 ).show()
             }
-            .setNegativeButton("取消", null)
-            .show()
-    }
 
-    /** 把第 1 页那行帧率文字刷成当前值，并让它可点。 */
-    private fun findingsRefreshFps(act: MainActivity) {
-        act.findViewById<TextView>(R.id.tvGameFps)?.apply {
-            text = "${com.pvz2.auto.core.GameFps.REQUESTED_REFRESH_RATE.toInt()} fps（采集 + 游戏）"
-            setOnClickListener { showFpsDialog(act) }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
         }
     }
 
@@ -399,7 +400,7 @@ class MainActivity : AppCompatActivity() {
         // 切到脚本库就重读一次目录：第 5 页刚生成的脚本要立刻能看到
         if (position == PAGE_SCRIPT) libraryPage?.reload()
         // 第 1 页那行「帧率 xx fps」就是帧率设置入口
-        if (position == PAGE_SCREEN) findingsRefreshFps(this@MainActivity)
+        if (position == PAGE_SCREEN) bindFpsSpinner(this@MainActivity)
 
         val endless = position == PAGE_ENDLESS
         val gone = if (endless) View.GONE else View.VISIBLE

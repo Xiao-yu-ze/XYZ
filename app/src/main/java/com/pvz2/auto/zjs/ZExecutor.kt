@@ -340,6 +340,8 @@ class ZExecutor(
         val actions = script.actions
         if (actions.isEmpty()) return Result(0, emptyList(), "脚本里没有动作")
 
+        startMemoryWatch()
+
         // ★ 不要在这里重置 stopped。
         //   stop() 可能比 run() 更早到达（RUN 后立刻 STOP），
         //   重置等于把那次停止吞掉。每个 run 用新的执行器实例，默认就是 false。
@@ -3570,6 +3572,55 @@ class ZExecutor(
      * 都带 `pvzWaitMs`（默认 20000）的等待上限，等不到就明确跳过并说明，
      * 不会像以前那样无限等。
      */
+    /**
+     * 运行期内存自检：每 30 秒往日志里写一条 Native Heap / MemFree / PSS。
+     *
+     * 为什么要它：崩溃前几分钟到底是不是内存在涨，过去只能靠我在电脑上反复
+     * 抓 meminfo —— 用户那边一旦崩了就什么都看不到。现在自己记，崩了直接看日志。
+     *
+     * 只读 `/proc/self/statm` 与 `Debug`，不额外启动进程、不开线程池。
+     */
+    private var memWatch: Thread? = null
+
+    private fun startMemoryWatch() {
+        if (memWatch != null) return
+        val t = Thread {
+            var lastNative = -1L
+            while (!stopped) {
+                try {
+                    Thread.sleep(30_000)
+                    if (stopped) break
+                    val nativeMb = android.os.Debug.getNativeHeapAllocatedSize() / (1024 * 1024)
+                    val freeMb = readMemFreeMb()
+                    val delta = if (lastNative < 0) 0 else nativeMb - lastNative
+                    lastNative = nativeMb
+                    log(
+                        "[内存] Native=${nativeMb}MB (${if (delta >= 0) "+" else ""}$delta) " +
+                            "MemFree=${freeMb}MB"
+                    )
+                } catch (t: Throwable) {
+                    break
+                }
+            }
+        }
+        t.isDaemon = true
+        t.name = "zjs-mem-watch"
+        memWatch = t
+        t.start()
+    }
+
+    /** 从 /proc/meminfo 读 MemFree（MB）。读不到返回 -1。 */
+    private fun readMemFreeMb(): Long = runCatching {
+        java.io.File("/proc/meminfo").useLines { lines ->
+            lines.firstOrNull { it.startsWith("MemFree:") }
+                ?.split(Regex("\\s+"))
+                ?.getOrNull(1)
+                ?.toLongOrNull()
+                ?.div(1024)
+                ?: -1L
+        }
+    }.getOrDefault(-1L)
+
     private fun runPvzGate(
         action: Z.Action,
         index: Int,

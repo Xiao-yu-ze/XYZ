@@ -149,21 +149,13 @@
                 android:layout_height="wrap_content"
                 android:text="@string/label_game_fps" />
 
-            <TextView
-                android:id="@+id/tvGameFps"
-                style="@style/Text.Body"
+            <Spinner
+                android:id="@+id/spFps"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:text="@string/label_game_fps_fixed" />
+                android:layout_weight="1" />
         </LinearLayout>
-
-        <TextView
-            style="@style/Text.Hint"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/hint_game_fps" />
 
         <!-- 出问题时最重要的一件事：把日志弄出来。 -->
         <com.google.android.material.button.MaterialButton
