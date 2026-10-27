@@ -46,10 +46,10 @@ object PvzSupplyChain {
      * 确定在补给界面了再接着往下走，你这直接就点查看了"。
      * 所以进链第一件事是等这个色块出现，等不到就不点查看。
      */
-    val SUPPLY_UI_ROI = intArrayOf(1085, 84, 1111, 117)
+    val SUPPLY_UI_ROI = intArrayOf(723, 56, 740, 78)
 
     /** 补给界面判据的色域中点。 */
-    const val SUPPLY_UI_COLOR = "#9AD216"
+    const val SUPPLY_UI_COLOR = "#9CDF10"
 
     /** 等补给界面最多多久，等不到就跳过（不瞎点）。 */
     const val SUPPLY_UI_WAIT_MS = 10_000L
@@ -94,7 +94,8 @@ object PvzSupplyChain {
      * 注意顺序就是候选顺序 —— 谁先命中谁执行。
      */
     val defaultOrder: List<String> =
-        listOf("全部植物", "橙色植物", "蓝色植物", "紫色植物", "神器")
+        // 顺序照 MAA 的候选表：全部 > 橙 > 蓝 > 神器 > 紫
+        listOf("全部植物", "橙色植物", "蓝色植物", "神器", "紫色植物")
 
     // ---------------------------------------------------------------- 造节点
 
