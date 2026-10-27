@@ -3728,9 +3728,14 @@ class ZExecutor(
                     log("   认出 $what (${h.x},${h.y})，点它")
                     inject.tap(h.x, h.y, 0)
                 } else {
-                    // 进关：命中绿点后点加速（yuan_big 的做法）
-                    log("   已进关，点加速 (${PvzCoords.SPEED_ON_ENTER[0]},${PvzCoords.SPEED_ON_ENTER[1]})")
-                    inject.tap(PvzCoords.SPEED_ON_ENTER[0], PvzCoords.SPEED_ON_ENTER[1], 0)
+                    /*
+                     * 进关判定：认出绿点就结束，**不再自动点加速**。
+                     *
+                     * 用户要求："进关判定节点识别到进入关卡后会自动点一下加速键，
+                     * 把这个自动点加速取消了"。加速由用户在链里自己放「点加速」节点，
+                     * 时间点由他控制（有些关卡开局不能马上加速）。
+                     */
+                    log("   已进关（不自动点加速）")
                 }
                 intExtra(action.extra, "pvzPostMs")?.let { if (it > 0) waitBusy(it.toLong()) }
                 return Outcome()
