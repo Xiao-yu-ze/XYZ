@@ -166,7 +166,7 @@ class ZModelTest {
             "timeInterval", "jsExpression", "conditionSet", "AroundCondition", "varEquals"
         )
         for (w in wires) assertNotNull("认不出条件类型 [$w]", Z.ConditionType.of(w))
-        assertEquals(12, Z.ConditionType.entries.size)
+        assertEquals(wires.size, Z.ConditionType.entries.size)
     }
 
     @Test
