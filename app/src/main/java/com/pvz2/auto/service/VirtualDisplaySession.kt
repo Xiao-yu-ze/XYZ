@@ -355,7 +355,13 @@ class VirtualDisplaySession(
             com.pvz2.auto.shizuku.NativeCapture.setNoCopy(noCopyFlag)
             if (noCopyFlag) Log.w(TAG, "对照实验：采集关闭拷贝（预览会黑、识别会失败）")
 
-            if (!attachFrameRing(service, VD_WIDTH, VD_HEIGHT)) {
+            Log.i(TAG, "建屏诊断①：拿到 Shizuku 服务，准备建共享帧环")
+
+
+
+
+
+if (!attachFrameRing(service, VD_WIDTH, VD_HEIGHT)) {
 
                 Log.e(TAG, "共享帧环建立失败，放弃建屏")
 
@@ -365,7 +371,13 @@ class VirtualDisplaySession(
 
 
 
-            service.createDisplayWithCapture(
+            Log.i(TAG, "建屏诊断②：帧环就绪，开始 createDisplayWithCapture($VD_WIDTH×$VD_HEIGHT dpi=$VD_DPI)")
+
+
+
+
+
+service.createDisplayWithCapture(
 
                 VD_NAME, VD_WIDTH, VD_HEIGHT, VD_DPI,
 
@@ -377,7 +389,13 @@ class VirtualDisplaySession(
 
             .getOrDefault(-1)
 
-        if (displayId <= 0) {
+        Log.i(TAG, "建屏诊断③：createDisplayWithCapture 返回 displayId=$displayId")
+
+
+
+
+
+if (displayId <= 0) {
 
             update {
 
@@ -1813,45 +1831,59 @@ class VirtualDisplaySession(
 
          */
 
+        /*
+
+         * ★ 缩小后再转换，但**不跨帧复用 Bitmap**。
+
+         *
+
+         *   上一版为了省分配复用了同一张 Bitmap，真机直接 SIGSEGV 崩在
+
+         *   publishPreview（ImageReader 回调线程与轮询协程会并发进这里，
+
+         *   共享的 Mat/Bitmap 被一边写一边读）。
+
+         *
+
+         *   现在：小图 Mat 每次新建（426×240×4 ≈ 409KB，比原来的 3.7MB 小 9 倍，
+
+         *   GC 压力已降一个数量级），Bitmap 也每帧新建但同样只有 409KB。
+
+         *   牺牲一点分配，换来不崩。
+
+         */
+
         val sw = (frame.width() / PREVIEW_DOWNSCALE).coerceAtLeast(1)
 
         val sh = (frame.height() / PREVIEW_DOWNSCALE).coerceAtLeast(1)
 
         val bitmap = runCatching {
 
-            var small = previewSmall
+            val small = Mat()
 
-            if (small == null || small.width() != sw || small.height() != sh) {
+            try {
 
-                small?.release()
+                org.opencv.imgproc.Imgproc.resize(
 
-                small = Mat(sw, sh, frame.type())
+                    frame, small, org.opencv.core.Size(sw.toDouble(), sh.toDouble()),
 
-                previewSmall = small
+                    0.0, 0.0, org.opencv.imgproc.Imgproc.INTER_AREA
 
-            }
+                )
 
-            org.opencv.imgproc.Imgproc.resize(
+                if (small.empty()) return@runCatching null
 
-                frame, small, small.size(), 0.0, 0.0,
+                val bmp = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
 
-                org.opencv.imgproc.Imgproc.INTER_AREA
+                Utils.matToBitmap(small, bmp)
 
-            )
+                bmp
 
-            var bmp = previewBmp
+            } finally {
 
-            if (bmp == null || bmp.width != sw || bmp.height != sh) {
-
-                bmp = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
-
-                previewBmp = bmp
+                runCatching { small.release() }
 
             }
-
-            Utils.matToBitmap(small, bmp)
-
-            bmp
 
         }.getOrNull() ?: return
 
