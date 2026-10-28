@@ -1081,6 +1081,24 @@ return PosGroup(rec, par, oth)
                     field = "pvzWaveInterval",
                     help = ZFieldHelp.ofAction("pvzWaveInterval")
                 )
+                /*
+                 * 只读换算：点几轮大概要多久。
+                 *
+                 * 这是**显示**，不落盘 —— 用户真正关心的是"这一轮点波大约几秒"，
+                 * 而脚本里存的是次数和间隔。以前这个换算（次数 = (秒-400)/100）
+                 * 是我在生成脚本时手算的，属于"把用户语言的秒藏进脚本常量"，
+                 * 改起来必须重算。现在界面直接告诉他。
+                 */
+                val tN = times.toIntOrNull()
+                val gN = (if (gap.isBlank()) "100" else gap).toIntOrNull()
+                if (tN != null && tN > 0 && gN != null && gN >= 0) {
+                    val sec = tN.toDouble() * gN / 1000.0
+                    rows += Row(
+                        "一轮约",
+                        String.format(java.util.Locale.US, "%.1f 秒", sec) +
+                            "（$tN 次 × ${gN}ms，不含其它节点耗时）"
+                    )
+                }
             }
             if (action.type == Z.ActionType.PVZ_ARTIFACT) {
                 val kind = e["pvzArtifact"]?.toString()?.trim().orEmpty()
