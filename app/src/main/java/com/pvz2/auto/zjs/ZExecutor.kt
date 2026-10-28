@@ -2273,10 +2273,26 @@ class ZExecutor(
      * 睡眠切 20ms 小片，保证「停止」能及时生效。
      */
     private fun evaluateWithRetry(
-        cond: Z.Condition,
+        condIn: Z.Condition,
         index: Int,
         skipped: MutableList<Result.Skip>
     ): Boolean {
+
+        /*
+         * timeoutMs（本机新增）：用户填毫秒，这里折成「次数 × 间隔」。
+         * 向上取整 —— 宁可多等一轮也不能早退（早退=条件没等到就跳过该节点）。
+         * 间隔缺省 1000ms。
+         */
+        val cond = condIn.timeoutMs?.let { ms ->
+            val gap = (condIn.repeatWhenFalseRepeatDelay ?: 1000).coerceAtLeast(20)
+            val times = if (ms <= 0) 0 else (ms + gap - 1) / gap
+            condIn.copy(
+                repeatWhenFalse = true,
+                repeatWhenFalseLimitTimes = times,
+                repeatWhenFalseRepeatDelay = gap,
+                timeoutMs = null
+            )
+        } ?: condIn
         /*
          * ★ 「判不了」和「不成立」必须分开。
          *

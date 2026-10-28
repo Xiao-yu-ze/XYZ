@@ -1034,6 +1034,8 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
         val repeatWhenFalse: Boolean = false,
         val repeatWhenFalseLimitTimes: Int? = 0,
         val repeatWhenFalseRepeatDelay: Int? = 1000,
+        /** 「识别直到超时(ms)」—— 本机新增：按毫秒表达，执行器换算成次数。 */
+        val timeoutMs: Int? = null,
         val checkBeforeDelay: Boolean = false,
         val desc: String? = null,
         val posData: PosData? = null,
@@ -1046,6 +1048,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
             if (repeatWhenFalse) put("repeatWhenFalse", true)
             repeatWhenFalseLimitTimes?.let { put("repeatWhenFalseLimitTimes", it) }
             repeatWhenFalseRepeatDelay?.let { put("repeatWhenFalseRepeatDelay", it) }
+            timeoutMs?.let { put("timeoutMs", it) }
             if (checkBeforeDelay) put("checkBeforeDelay", true)
             desc?.let { put("desc", it) }
             posData?.let {
@@ -1119,6 +1122,7 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
                     repeatWhenFalse = o.optBoolean("repeatWhenFalse", false),
                     repeatWhenFalseLimitTimes = o.optIntOrNull("repeatWhenFalseLimitTimes"),
                     repeatWhenFalseRepeatDelay = o.optIntOrNull("repeatWhenFalseRepeatDelay"),
+                    timeoutMs = o.optIntOrNull("timeoutMs"),
                     checkBeforeDelay = o.optBoolean("checkBeforeDelay", false),
                     desc = o.optString("desc").takeIf { it.isNotEmpty() },
                     posData = posObj?.let { PosData.parse(it) },
