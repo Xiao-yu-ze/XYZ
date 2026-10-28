@@ -1180,6 +1180,8 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
 
     /** 整个脚本：一个 baseInfo + 一串动作。 */
     data class Script(
+        /** 解析失败被跳过的行（行号 + 原因）。不落盘，仅运行开始时告警。 */
+        val badLines: List<String> = emptyList(),
         val baseInfo: BaseInfo = BaseInfo(),
         val actions: List<Action> = emptyList(),
         /**

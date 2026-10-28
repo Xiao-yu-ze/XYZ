@@ -248,6 +248,7 @@ object ZjsFileFormat {
             // 内嵌子脚本行的**原文**。保存时要逐字节写回去（见 Z.Script.linkedFiles）。
             val linkedRaw = ArrayList<String>()
             val bad = ArrayList<Int>()
+            val badDetail = ArrayList<String>()
 
             for ((idx, line) in nonBlank.drop(1)) {
                 try {
@@ -260,7 +261,10 @@ object ZjsFileFormat {
                         continue
                     }
                     val action = Z.Action.parse(obj)
-                    if (action == null) bad.add(idx + 1) else actions.add(action)
+                    if (action == null) {
+                        bad.add(idx + 1)
+                        badDetail.add("第 ${idx + 2} 条：动作类型「${obj.optString("type")}」本机认不出，已跳过")
+                    } else actions.add(action)
                 } catch (t: Throwable) {
                     bad.add(idx + 1)
                 }

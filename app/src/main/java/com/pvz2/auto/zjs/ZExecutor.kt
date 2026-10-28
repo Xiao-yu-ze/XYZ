@@ -340,6 +340,11 @@ class ZExecutor(
      *        （那种脚本会一直转，用户只能强杀应用）
      */
     fun run(script: Z.Script, maxSteps: Int = 100_000): Result {
+        /* 解析阶段被跳过的行必须报出来：以前只进 Logcat，脚本少几步而日志显示完成。 */
+        if (script.badLines.isNotEmpty()) {
+            log("[脚本] 有 ${script.badLines.size} 条动作解析失败，本次不会执行：")
+            script.badLines.forEach { log("   $it") }
+        }
         val actions = script.actions
         if (actions.isEmpty()) return Result(0, emptyList(), "脚本里没有动作")
 
