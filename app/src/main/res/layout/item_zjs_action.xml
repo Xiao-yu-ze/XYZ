@@ -75,13 +75,22 @@
             android:orientation="horizontal"
             android:visibility="gone">
 
+            <!--
+                进度条按 Material 3 的线性指示器规格做：
+                  · 厚度 10dp（4dp 是 M3 的最小值，列表里 4dp 太细看不清）
+                  · 进度色 = 主题 primary，底轨半透明灰（深浅色主题都能看清）
+                  · 两端圆角（API 21+ 用 ClipRRect 效果，靠 progressDrawable 兜）
+                之前是 6dp + 系统默认的黄色，又细又不显眼。
+            -->
             <ProgressBar
                 android:id="@+id/pbAction"
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="0dp"
-                android:layout_height="6dp"
+                android:layout_height="10dp"
                 android:layout_weight="1"
-                android:max="1000" />
+                android:max="1000"
+                android:progressBackgroundTint="#33808080"
+                android:progressTint="?attr/colorPrimary" />
 
             <TextView
                 android:id="@+id/tvActionRunCount"
