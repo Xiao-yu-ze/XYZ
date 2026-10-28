@@ -397,6 +397,20 @@ private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
             Kind.SWITCH, field = "checkBeforeDelay"
         )
 
+        /**
+         * 「识别直到出现」：开着就一直识别到条件成立，最多等 timeoutMs 毫秒。
+         * 关掉 = 只判一次（这是默认，也是本次改动前的唯一行为）。
+         * 只有开了才显示毫秒输入框 —— 关着还显示会让人以为它在等。
+         */
+        rows += Row(
+            "识别直到出现",
+            if (c.timeoutMs != null) "是" else "否",
+            Kind.SWITCH,
+            field = "cond.timeoutSwitch"
+        )
+        c.timeoutMs?.let { ms ->
+            rows += Row("最多等(ms)", "$ms", Kind.NUMBER, field = "cond.timeoutMs")
+        }
         return rows
     }
 
@@ -408,6 +422,32 @@ private fun labelOf(dict: List<Pair<String, String>>, wire: String?): String =
      * `cond.*` 是位置对象里的字段，其余落在通用字段或 `extra` 里。
      */
     fun apply(condition: Z.Condition, field: String, value: String): Z.Condition? {
+        /*
+         * 「识别直到出现 / 最多等(ms)」。
+         *
+         * 必须放在 cond.* 分流**之前**：那两个字段也以 cond. 开头，
+         * 否则会被 applyPosition 当成坐标字段吃掉（表现=点了没反应）。
+         *
+         * 关掉时同时清空 repeatWhenFalse 三件套，避免"界面关着、文件里还在反复检查"。
+         */
+        if (field == "cond.timeoutSwitch") {
+            val on = value == "是"
+            return if (on) {
+                condition.copy(timeoutMs = condition.timeoutMs ?: 20000, repeatWhenFalse = true)
+            } else {
+                condition.copy(
+                    timeoutMs = null,
+                    repeatWhenFalse = false,
+                    repeatWhenFalseLimitTimes = 0,
+                    repeatWhenFalseRepeatDelay = 1000
+                )
+            }
+        }
+        if (field == "cond.timeoutMs") {
+            val ms = value.trim().toIntOrNull() ?: return null
+            if (ms !in 500..600_000) return null
+            return condition.copy(timeoutMs = ms, repeatWhenFalse = true)
+        }
         if (field.startsWith("cond.")) return applyPosition(condition, field, value)
 
         return when (field) {
