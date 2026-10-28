@@ -4113,31 +4113,7 @@ if (depth > MAX_COND_DEPTH) {
          *   UI 那块色带 ROI[115,250,7,45] 色域 250,140,0~255,167,18 命中才滑，
          *   没命中就直接跳到点波2。以前我把它们做成无条件滑动 —— 那是错的。
          */
-        /* ⚠️ 已废弃：与新脚本一律改用条件 colorFound（见 docs/NODES_AND_FIELDS.md）。
-         *    这里仅为兼容老脚本保留。 */
-        action.extra["pvzNeedColor"]?.toString()?.takeIf { it.isNotBlank() }?.let { spec ->
-            val a = spec.split(",")
-            if (a.size >= 5) {
-                val r = intArrayOf(
-                    a[0].trim().toIntOrNull() ?: 0, a[1].trim().toIntOrNull() ?: 0,
-                    a[2].trim().toIntOrNull() ?: 0, a[3].trim().toIntOrNull() ?: 0
-                )
-                val posColor = Z.PosData(
-                    type = Z.PosType.COLOR, color = a[4].trim(),
-                    similarPercent = a.getOrNull(5)?.trim()?.toIntOrNull() ?: 85,
-                    limitArea = ZArea.fromPxRect(
-                        r[0], r[1], r[2] - r[0], r[3] - r[1],
-                        PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
-                    )
-                )
-                val hit = matcher.findColor(posColor, r)
-                if (hit.isEmpty()) {
-                    log("   条件色带没命中（$spec），跳过这一条")
-                    return null
-                }
-                log("   条件色带命中，执行")
-            }
-        }
+        /* pvzNeedColor 已删除：新脚本一律用条件 colorFound（见 docs/NODES_AND_FIELDS.md）。 */
 
         val swipeMsRaw = intExtra(action.extra, "pvzSwipeMs")
         val swipeMs = (swipeMsRaw ?: 0).takeIf { it > 0 } ?: PvzCoords.SWIPE_MS
