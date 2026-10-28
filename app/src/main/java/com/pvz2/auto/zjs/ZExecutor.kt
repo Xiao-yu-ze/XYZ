@@ -3452,9 +3452,30 @@ if (depth > MAX_COND_DEPTH) {
         var extraChanged = false
         for ((field, def) in vars) {
             if (!field.startsWith("pvz")) continue
-            val literal = literalOf(def)
-                ?: evalVarExpression(def.optString("valueExp").trim(), def.optString("varType"))
-                ?: return VarsApplied(action, field)
+            val exp = def.optString("valueExp").trim()
+            val type = def.optString("varType")
+            /*
+             * ★ 先看这段 valueExp 是不是"代码"。
+             *
+             *   真机日志暴露过：`varType=string` + `valueExp=zdjl.getVar('心塔_点波次数')`
+             *   时，literalOf 把整段表达式当成字面量字符串返回，于是
+             *   pvzWaveTimes 被写成 "zdjl.getVar('心塔_点波次数')" 这串文本，
+             *   点波只点 1 次，日志还写着「变量→extra：pvzWaveTimes = zdjl.getVar(...)」。
+             *
+             *   判据：含 `(` 或 `zdjl.` 就不是普通字符串，按表达式求值。
+             */
+            val looksLikeCode = type in JS_VAR_TYPES || exp.contains("(") || exp.contains("zdjl.")
+            val literal = if (looksLikeCode) {
+                /*
+                 * 注意：这里**强制按 expression 求值**。
+                 * evalVarExpression 只认 varType=expression/random，而脚本里常写成
+                 * varType=string + valueExp=zdjl.getVar(...)；直接传 "string" 会求值失败，
+                 * 又退回字面量（就是真机那个"点波只点一次"的 bug）。
+                 */
+                evalVarExpression(exp, "expression") ?: literalOf(def)
+            } else {
+                literalOf(def) ?: evalVarExpression(exp, type)
+            } ?: return VarsApplied(action, field)
             if (!extraChanged) {
                 extra = LinkedHashMap(extra)
                 extraChanged = true
