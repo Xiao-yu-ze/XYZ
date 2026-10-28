@@ -76,6 +76,8 @@ object ZjsFileFormat {
         // 3) 空动作要跳过（SPEC.md:711 `actionsIgnoreEmpty`）。
         //    数组里可能有 null（解析失败的那条），落盘时不能变成 "null" 一行。
         script.actions.forEach { lines += it.toJson().toString() }
+        // 认不出的动作：原样写回，绝不丢（见 Z.Script.badRaw）
+        lines += script.badRaw
 
         return lines.joinToString(CRLF)
     }
@@ -249,6 +251,7 @@ object ZjsFileFormat {
             val linkedRaw = ArrayList<String>()
             val bad = ArrayList<Int>()
             val badDetail = ArrayList<String>()
+            val badRaw = ArrayList<String>()
 
             for ((idx, line) in nonBlank.drop(1)) {
                 try {
@@ -264,6 +267,7 @@ object ZjsFileFormat {
                     if (action == null) {
                         bad.add(idx + 1)
                         badDetail.add("第 ${idx + 2} 条：动作类型「${obj.optString("type")}」本机认不出，已跳过")
+                        badRaw.add(line)
                     } else actions.add(action)
                 } catch (t: Throwable) {
                     bad.add(idx + 1)

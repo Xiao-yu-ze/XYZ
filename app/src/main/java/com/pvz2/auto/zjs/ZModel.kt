@@ -1198,8 +1198,12 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
          * 重新序列化就不再是"原样"了；而这些行要逐字节写回去（SPEC.md:709-712）。
          */
         val linkedFiles: List<String> = emptyList(),
-        val extra: MutableMap<String, Any?> = LinkedHashMap()
-    ) {
+        val extra: MutableMap<String, Any?> = LinkedHashMap(),
+        /**
+         * 解析失败那些行的**原始文本**。保存时原样写回 —— 否则用户打开含未知动作类型的
+         * 脚本、什么都没改就保存，那几行会被永久删掉（真发生过：`提示` 应为 `系统提示`）。
+         */
+        val badRaw: List<String> = emptyList(),) {
         fun toJson(): JSONObject = JSONObject().apply {
             put("baseInfo", baseInfo.toJson())
             put("actions", JSONArray().apply { actions.forEach { put(it.toJson()) } })
