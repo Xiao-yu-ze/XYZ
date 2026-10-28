@@ -1719,6 +1719,9 @@ class ZExecutor(
                     val why = "等待候选超时（${timeout}ms），按 参考管线 语义结束任务"
                     skipped.add(Result.Skip(index, label, why))
                     log("[等待候选] $why")
+                    /* 必须同时置 stopped：这段在候选循环的 lambda 里，单靠 return Outcome 只从 lambda 返回，
+                     * 外层会继续执行后面的节点（真机日志就是这样：说完"结束任务"又跑了第 2/3/4 条）。 */
+                    stopped = true
                     return Outcome(abort = why)
                 }
                         if (to.isNotEmpty()) {
