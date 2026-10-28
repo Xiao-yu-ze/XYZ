@@ -1016,6 +1016,52 @@ return PosGroup(rec, par, oth)
              * 的等待（只等一次），点与点之间的间隔是 `pvzWaveInterval`，而界面
              * 之前没有这一行，根本改不到。现在两项都摆出来。
              */
+            /*
+             * 时长类参数（以前只能在脚本里手写 JSON）：
+             *   拖动时长 pvzSwipeMs —— 只有拖动类节点有（种植物/喂豆/铲除/点击格子）
+             *   识别等待 pvzWaitMs  —— 只有要识别的节点有（开始战斗/进关判定/识别结算）
+             *   之后等待 pvzPostMs  —— 所有游戏节点都有
+             */
+            if (action.type == Z.ActionType.PVZ_PLANT ||
+                action.type == Z.ActionType.PVZ_FEED ||
+                action.type == Z.ActionType.PVZ_SHOVEL ||
+                action.type == Z.ActionType.PVZ_TAP_CELL
+            ) {
+                val swipe = e["pvzSwipeMs"]?.toString().orEmpty()
+                rows += Row(
+                    "拖动时长(ms)",
+                    if (swipe.isBlank()) "200（默认）" else swipe,
+                    Kind.ENUM,
+                    listOf("80", "100", "200", "300", "500"),
+                    field = "pvzSwipeMs",
+                    help = ZFieldHelp.ofAction("pvzSwipeMs")
+                )
+            }
+            if (action.type == Z.ActionType.PVZ_START_BATTLE ||
+                action.type == Z.ActionType.PVZ_ENTER_CHECK ||
+                action.type == Z.ActionType.PVZ_SETTLE
+            ) {
+                val wait = e["pvzWaitMs"]?.toString().orEmpty()
+                rows += Row(
+                    "识别等待(ms)",
+                    if (wait.isBlank()) "20000（默认）" else wait,
+                    Kind.NUMBER,
+                    emptyList(),
+                    field = "pvzWaitMs",
+                    help = ZFieldHelp.ofAction("pvzWaitMs")
+                )
+            }
+            run {
+                val post = e["pvzPostMs"]?.toString().orEmpty()
+                rows += Row(
+                    "之后等待(ms)",
+                    if (post.isBlank()) "200（默认）" else post,
+                    Kind.NUMBER,
+                    emptyList(),
+                    field = "pvzPostMs",
+                    help = ZFieldHelp.ofAction("pvzPostMs")
+                )
+            }
             if (action.type == Z.ActionType.PVZ_WAVE) {
                 val times = e["pvzWaveTimes"]?.toString().orEmpty()
                 val gap = e["pvzWaveInterval"]?.toString().orEmpty()

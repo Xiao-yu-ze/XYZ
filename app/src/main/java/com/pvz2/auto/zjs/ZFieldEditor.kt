@@ -523,6 +523,7 @@ object ZFieldEditor {
         "keyCode",
         // 游戏动作：卡槽 1-8、行 1-5、列 1-9（都是整数，空串=删键）
         "pvzSlot", "pvzRow", "pvzCol", "pvzSwitchTimes", "pvzDeck",
+        "pvzWaitMs", "pvzSwipeMs", "pvzPostMs",
         "pvzWaveTimes", "pvzWaveInterval"
     )
 
