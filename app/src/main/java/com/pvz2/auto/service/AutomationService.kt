@@ -148,8 +148,17 @@ class AutomationService : Service() {
                 // 包名由界面传进来（渠道选择），这里不再有硬编码默认值 ——
                 // 硬编码过 OPPO 渠道的包名，用户装别的渠道就启动不了。
                 val pkg = intent.getStringExtra(EXTRA_TARGET_PACKAGE)
+                /*
+                 * 三条诊断日志。
+                 *
+                 * 起因：从 adb 发 ACTION_VD_START，intent 明明被服务收到，虚拟屏却没建出来，
+                 * 而 logcat 里**我们一条日志都没有** —— 看不出一哪一步断的。
+                 * 这三条分别对应：收到请求 / 注入器结果 / 建屏有没有抛。
+                 */
+                Log.i(TAG, "VD_START: 收到建屏请求 pkg=$pkg")
                 if (pkg.isNullOrBlank()) {
                     BotState.setStatus("没有指定游戏包名")
+                    Log.w(TAG, "VD_START: 包名为空，不建屏")
                 } else {
                     scope.launch {
                         // ★ 先把注入器建起来。
@@ -162,9 +171,15 @@ class AutomationService : Service() {
                         //
                         //   在这里建：建屏和建注入器本来就该一起完成，
                         //   用户看见画面时，注入器必然已经就绪。
-                        runCatching { ensureInjector() }
-                            .onFailure { Log.e(TAG, "建屏后创建注入器失败", it) }
-                        vdSession.start(pkg)
+                        val inj = runCatching { ensureInjector() }
+                        inj.onSuccess { Log.i(TAG, "VD_START: 注入器就绪") }
+                        inj.onFailure { Log.e(TAG, "VD_START: 注入器创建失败", it) }
+                        try {
+                            vdSession.start(pkg)
+                            Log.i(TAG, "VD_START: vdSession.start 返回")
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "VD_START: vdSession.start 抛异常", t)
+                        }
                     }
                 }
             }
