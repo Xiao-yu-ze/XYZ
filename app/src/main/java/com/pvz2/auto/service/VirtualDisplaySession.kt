@@ -929,6 +929,11 @@ if (displayId <= 0) {
         }
     }
 
+    /** 采集耗时统计（每 120 帧打一条）。3.69MB × 60fps ≈ 221MB/s，是不是瓶颈靠量。 */
+    private var copyFrames = 0
+    private var copyGetMsSum = 0.0
+    private var copyPutMsSum = 0.0
+
     private fun readFrameFromRing(): Mat? {
         val ring = frameRing ?: return null
         val w = ring.width
@@ -948,12 +953,29 @@ if (displayId <= 0) {
         //   共享文件里的字节，不能只信状态行。
         val need = w * h * 4
         if (frameBytes.size != need) frameBytes = ByteArray(need)
+        val t0 = System.nanoTime()
         direct.position(0)
         direct.get(frameBytes, 0, need)
+        val t1 = System.nanoTime()
 
         synchronized(frameLock) {
             val rgba = frameRgba ?: return null
             rgba.put(0, 0, frameBytes, 0, need)
+        }
+        val t2 = System.nanoTime()
+        copyGetMsSum += (t1 - t0) / 1_000_000.0
+        copyPutMsSum += (t2 - t1) / 1_000_000.0
+        copyFrames++
+        if (copyFrames >= 120) {
+            val g = String.format(java.util.Locale.US, "%.2f", copyGetMsSum / copyFrames)
+            val p = String.format(java.util.Locale.US, "%.2f", copyPutMsSum / copyFrames)
+            android.util.Log.i(
+                "PVZ_CAP",
+                "[采集] 近 ${copyFrames} 帧：get 平均 ${g}ms，put 平均 ${p}ms（${w}x${h}）"
+            )
+            copyFrames = 0
+            copyGetMsSum = 0.0
+            copyPutMsSum = 0.0
         }
         return frameRgba
     }

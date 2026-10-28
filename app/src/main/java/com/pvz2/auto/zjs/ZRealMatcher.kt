@@ -1189,9 +1189,23 @@ class ZRealMatcher(
         }
         val result = Mat()
         try {
+            val tMatch0 = System.nanoTime()
             org.opencv.imgproc.Imgproc.matchTemplate(
                 region, tmpl, result, org.opencv.imgproc.Imgproc.TM_CCOEFF_NORMED
             )
+            /*
+             * 匹配耗时埋点：只打慢的（>=50ms）。
+             * 全分辨率 matchTemplate 可能比取帧还贵，改不改（金字塔）要靠这个数据说话。
+             */
+            val matchMs = (System.nanoTime() - tMatch0) / 1_000_000.0
+            if (matchMs >= 50.0) {
+                android.util.Log.i(
+                    "PVZ_MATCH",
+                    "[匹配] 模板 ${tmpl.width()}x${tmpl.height()} 范围 " +
+                        "${region.width()}x${region.height()} 耗时 " +
+                        String.format(java.util.Locale.US, "%.1f", matchMs) + "ms"
+                )
+            }
             val bestCorr = org.opencv.core.Core.minMaxLoc(result).maxVal
 
             /*
