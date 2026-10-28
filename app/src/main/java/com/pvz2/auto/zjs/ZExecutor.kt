@@ -295,6 +295,15 @@ class ZExecutor(
     private val callStack = ArrayList<Pair<Int, String>>()
 
     /**
+     * 被「等待候选超时结束」这类分支强制停下时记下的原因。
+     *
+     * 那些分支写在 lambda 里，`return Outcome(abort=…)` 只从 lambda 返回，
+     * abort 传不到最终摘要，于是日志只有"执行 N 条"，看不出是超时停的。
+     * 这里单独记一份，摘要里一并打印。
+     */
+    private var forcedStopReason: String? = null
+
+    /**
      * 当前「监听套监听」的层数。
      *
      * 「执行脚本」有 8 层限制、「条件嵌套」有 8 层限制，**唯独监听没有**。
@@ -680,7 +689,7 @@ class ZExecutor(
         }
     
         val summary = "执行 $executed 条，跳过 ${skipped.size} 条" +
-            (failReason?.let { "，停止原因：$it" } ?: "")
+            (failReason?.let { "，停止原因：$it" } ?: forcedStopReason?.let { "，停止原因：$it" } ?: "")
         log("===== 结束：$summary =====")
         // 子脚本只写自己的汇总行，日志文件归父脚本关
         if (!isSubScript) runCatching { com.pvz2.auto.core.ZjsLog.endRun(summary) }
@@ -1722,6 +1731,7 @@ class ZExecutor(
                     /* 必须同时置 stopped：这段在候选循环的 lambda 里，单靠 return Outcome 只从 lambda 返回，
                      * 外层会继续执行后面的节点（真机日志就是这样：说完"结束任务"又跑了第 2/3/4 条）。 */
                     stopped = true
+                    forcedStopReason = why
                     return Outcome(abort = why)
                 }
                         if (to.isNotEmpty()) {
