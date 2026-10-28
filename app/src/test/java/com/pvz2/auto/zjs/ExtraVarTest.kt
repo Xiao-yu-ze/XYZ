@@ -71,4 +71,25 @@ class ExtraVarTest {
         )
         assertEquals(2, rec.calls.count { it.startsWith("tap(") })
     }
+
+    /**
+     * 组合动作（运行多个动作）**里面**的点波也要吃变量。
+     *
+     * 真机证据：主脚本跑起来时，第 1 关里那句点波只点了 1 次，日志也没有
+     * 「变量→extra：pvzWaveTimes = …」——说明子动作里的 `__vars` 根本没被解析。
+     */
+    @Test
+    fun `组合动作里的点波也吃变量`() {
+        val rec = run(
+            "{\"type\":\"运行JS代码\",\"jsCode\":\"zdjl.setVar('t','4')\"}",
+            "{\"type\":\"运行多个动作\",\"scriptSet\":[" +
+                "{\"type\":\"点下一波\",\"pvzWaveInterval\":\"10\"," +
+                "\"__vars\":{\"pvzWaveTimes\":{\"varType\":\"string\",\"varScope\":\"script\"," +
+                "\"valueExp\":\"zdjl.getVar('t')\"}}}]}"
+        )
+        assertEquals(
+            "子动作里的变量应生效（点 4 次），实际：${rec.calls}",
+            4, rec.calls.count { it.startsWith("tap(") }
+        )
+    }
 }

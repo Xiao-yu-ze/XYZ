@@ -2992,10 +2992,27 @@ if (depth > MAX_COND_DEPTH) {
                 }
                 val kid = kids[ci]
                 val kidLabel = "$label › 子${ci + 1}「${ZScriptIO.actionLabel(kid)}」"
+                /*
+                 * ★ 子动作也要做变量代换。
+                 *
+                 *   以前只在外层循环调用 applyLiteralVars，组合动作里的子动作
+                 *   完全不做 —— 真机表现：主脚本第 1 关的点波写着
+                 *   `__vars.pvzWaveTimes = zdjl.getVar('心塔_点波次数')`，
+                 *   跑起来只点 1 次，日志连「变量→extra」那行都没有。
+                 */
+                val kidVars = applyLiteralVars(kid)
+                if (kidVars.blockedField != null) {
+                    val why = "__vars：字段「${kidVars.blockedField}」由变量定义，但取值求不出来"
+                    log("第 ${index + 1} 条「$kidLabel」 $why")
+                    childSkips.add(Result.Skip(index, kidLabel, why))
+                    ci++
+                    continue
+                }
+                val kidReal = kidVars.action
                 ran++
                 // 子动作：识别失败只跳过这一条（不牵连外层任务）
                 val outcome = executeWithRepeat(
-                    kid, index, kidLabel, childSkips, abortOnRecognitionFail = false
+                    kidReal, index, kidLabel, childSkips, abortOnRecognitionFail = false
                 )
             
                 // 停止：协议默认语义就是全停，子列表不能把它吞掉
