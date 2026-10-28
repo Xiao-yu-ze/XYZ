@@ -2283,16 +2283,15 @@ class ZExecutor(
          * 向上取整 —— 宁可多等一轮也不能早退（早退=条件没等到就跳过该节点）。
          * 间隔缺省 1000ms。
          */
-        val cond = condIn.timeoutMs?.let { ms ->
-            val gap = (condIn.repeatWhenFalseRepeatDelay ?: 1000).coerceAtLeast(20)
-            val times = if (ms <= 0) 0 else (ms + gap - 1) / gap
-            condIn.copy(
-                repeatWhenFalse = true,
-                repeatWhenFalseLimitTimes = times,
-                repeatWhenFalseRepeatDelay = gap,
-                timeoutMs = null
-            )
-        } ?: condIn
+        /*
+         * timeoutMs（本机新增）：**按墙钟时间截止**。
+         * 之前折成「次数 = 超时 ÷ 间隔」，但每轮识别本身要 3 秒上下，
+         * 于是"等 6 秒"实际等 19 秒。改成记截止时刻，识别耗时自然计入。
+         */
+        val cond = if (condIn.timeoutMs != null) {
+            condIn.copy(repeatWhenFalse = true, repeatWhenFalseLimitTimes = 0, timeoutMs = null)
+        } else condIn
+        val deadline = condIn.timeoutMs?.let { System.currentTimeMillis() + it } ?: 0L
         /*
          * ★ 「判不了」和「不成立」必须分开。
          *
@@ -2349,6 +2348,10 @@ class ZExecutor(
         val startedAt = System.currentTimeMillis()
         while (!stopped) {
             if (limit > 0 && retries >= limit) break
+            if (deadline > 0 && System.currentTimeMillis() >= deadline) {
+                log("   [条件] 已到识别超时（${condIn.timeoutMs}ms，判了 ${retries + 1} 次），按不成立处理")
+                break
+            }
             var slept = 0
             while (slept < gap && !stopped) {
                 Thread.sleep(20L)
@@ -4133,7 +4136,11 @@ if (depth > MAX_COND_DEPTH) {
 
         val swipeMsRaw = intExtra(action.extra, "pvzSwipeMs")
         val swipeMs = (swipeMsRaw ?: 0).takeIf { it > 0 } ?: PvzCoords.SWIPE_MS
-        if (swipeMsRaw == null && action.extra.keys.any { it.contains("pvz") }) {
+        if (swipeMsRaw == null && action.type in listOf(
+                Z.ActionType.PVZ_PLANT, Z.ActionType.PVZ_FEED,
+                Z.ActionType.PVZ_SHOVEL, Z.ActionType.PVZ_TAP_CELL
+            )
+            ) {
             log("   [诊断] pvzSwipeMs 没读到；extra 里有：${action.extra.keys.filter { it.contains("pvz") }}")
         }
         val at = PvzCoords.cellLabel(row, col)
