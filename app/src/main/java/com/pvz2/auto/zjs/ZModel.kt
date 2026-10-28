@@ -415,6 +415,9 @@ enum class ActionType(val wire: String, val controlRunType: String? = null, val 
      * 而监听槽位也会拒绝把它当动作执行。
      */
     RUN_MULTI("运行多个动作", executable = true),
+
+    /** 调用子链：跳到「起始」跑，跑到「结束」就回弹继续（本机新增）。 */
+    CALL_SUB("调用子链", executable = true),
         CONTROL_JUMP("控制执行", "jumpTo", executable = true),
         /*
          * ★ setJumpId / pause 执行器里**没有分支**（ZExecutor 的 when 零引用），

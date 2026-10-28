@@ -291,6 +291,9 @@ class ZExecutor(
      */
     private var subShellDepth = 0
 
+    /** 「调用子链」的返回栈：元素 = (回到第几条继续, 结束节点标识)。 */
+    private val callStack = ArrayList<Pair<Int, String>>()
+
     /**
      * 当前「监听套监听」的层数。
      *
@@ -418,7 +421,19 @@ class ZExecutor(
             intervalLast.clear()
 
             var pc = 0
-            while (pc < actions.size && !stopped) {
+            /*
+             * 「调用子链」返回栈：元素 = (回到第几条继续, 结束节点标识)
+             * 结束标识为空串 = 跑到列表末尾自然返回。
+             */
+            callStack.clear()
+            while (!stopped) {
+                if (pc >= actions.size) {
+                    if (callStack.isEmpty()) break
+                    val back = callStack.removeAt(callStack.size - 1)
+                    log("[调用子链] 子链跑到末尾，回到第 ${back.first + 1} 条继续")
+                    pc = back.first
+                    continue
+                }
                 if (++steps > maxSteps) {
                     return Result(executed, skipped, "执行步数超过 $maxSteps，可能有死循环")
                 }
@@ -519,6 +534,16 @@ class ZExecutor(
                 // 「动作运行状态」条件要查别的动作跑成功没有 —— 这里记一笔。
                 // stop/jump 也算成功（它们确实按意图执行了）。
                 actionOutcome[pc] = outcome.abort == null && !outcome.condSkipped
+                /* 「调用子链」回弹：刚执行完的这条就是子链结束节点 → 忽略它自己的 next，回到调用处继续。 */
+                if (callStack.isNotEmpty()) {
+                    val (backPc, stopId) = callStack.last()
+                    if (stopId.isNotEmpty() && rawAction.common.jumpId == stopId) {
+                        callStack.removeAt(callStack.size - 1)
+                        log("[调用子链] 到达结束节点「$stopId」，回到第 ${backPc + 1} 条继续")
+                        pc = backPc
+                        continue
+                    }
+                }
                 com.pvz2.auto.core.ScriptRunState.finishAction(pc)
 
                 /*
@@ -1717,6 +1742,24 @@ class ZExecutor(
              * 「运行多个动作」。以前整块跳过：脚本"跑完 N 条"，游戏一步没动。
              */
             Z.ActionType.RUN_MULTI -> runMulti(action, index, label, skipped)
+            Z.ActionType.CALL_SUB -> {
+                val runId = action.extra["callRun"]?.toString()?.trim().orEmpty()
+                val backId = action.extra["callBack"]?.toString()?.trim().orEmpty()
+                if (runId.isEmpty()) {
+                    val why = "调用子链缺「起始节点」"
+                    skipped.add(Result.Skip(index, label, why))
+                    log("[跳过] $why")
+                    return null
+                }
+                if (callStack.size >= MAX_SUB_SHELL_DEPTH) {
+                    val why = "调用子链嵌套超过 $MAX_SUB_SHELL_DEPTH 层"
+                    skipped.add(Result.Skip(index, label, why))
+                    return null
+                }
+                callStack.add((index + 1) to backId)
+                log("   调用子链：从「$runId」开始" + (if (backId.isEmpty()) "（跑到末尾返回）" else "，到「$backId」返回"))
+                return Outcome(jumpTo = runId)
+            }
 
 
 
