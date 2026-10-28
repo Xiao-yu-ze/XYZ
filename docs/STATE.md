@@ -37,3 +37,39 @@
 - 用户改过的脚本不要覆盖：先 pull → 只改该改的 → push → 再 pull 核对
 - 不猜：结论要有日志/代码证据
 - 加新节点/字段前先查 docs/NODES_AND_FIELDS.md，避免重复造轮子
+## 后续计划（按优先级，每步都要真机验证）
+
+### 第 0 步 · 验收未证改动（先做）
+- 跑主脚本 → 日志应有 `喂豆电大4 … 等待 5000ms`
+- 不对就回滚：`cp 心塔_二号阵_BOSS关.zjs.bak 心塔_二号阵_BOSS关.zjs`
+
+### 第 1 梯队 · 变量真正生效
+1. `extra` 字段支持变量（pvzWaveTimes / pvzPostMs / pvzSwipeMs）：
+   在 `ZExecutor.applyLiteralVars` 的 WATCHED_VAR_FIELDS 循环后，补一段把
+   `vars` 里以 `pvz` 开头的键代换进 `action.extra`（值是字符串）。注意 tail 处要
+   把新的 extra 一起 copy 进返回的 action。
+2. 点波次数接 `心塔_点波次数`（依赖 1）
+3. `后期种蓓蕾` 用 varEquals 条件挂在抛花后的种蓓蕾组合动作上
+
+### 第 2 梯队 · 未实测脚本
+4. 补给（判据 723,56 / 神器在紫前 / 确定次数）
+5. BOSS 关（格子版 + 电大4 等 5 秒 + 收尾识别结算）
+
+### 第 3 梯队 · 主脚本结构收口
+6. 用「调用子链」替掉跳转：结算/补给/BOSS 各自 起始=结束=同一 jumpId，
+   跑完自动回弹；结算只维护一份
+
+### 第 4 梯队 · UI
+7. 字段分组折叠（基础/时机/识别/高级，没填的收起）
+8. 帮助写关联与冲突：repeatCount×pvzWaveTimes 相乘、duration 在游戏节点无效、
+   delay(前) vs pvzPostMs(后)、改 jumpId 会断链
+9. 组合动作进度条真机看效果（引擎已上报、UI 已接）
+
+### 第 5 梯队 · 技术债
+10. 坐标拆分：PvzCoords 的 36 个数据声明搬到 app/src/main/coords-private/，
+    build.gradle 按目录二选一，仓库里只留 0 值样例（逐批编译）
+11. 是否缺豆判定（缺 MAA 色值参数）
+12. 卡顿复测（跑满 60 秒读 帧率= / 丢帧=）
+
+### 明确不做
+断网处理 / 虚拟屏改帧率 / pipe_over / pvzNeedColor（已删）
