@@ -45,6 +45,15 @@ object ScriptRunState {
         val lastRoundMs: Double = 0.0,
         val hits: Map<String, Long> = emptyMap(),
         val message: String = "未运行",
+
+        /** 当前执行到第几个动作（1 起），0 = 未知 */
+        val stepIndex: Int = 0,
+        /** 当前动作列表总长度（组合动作内是**子动作**的数量） */
+        val stepTotal: Int = 0,
+        /** 当前动作的描述（界面显示「3/20 · 种蓓蕾1」） */
+        val stepLabel: String = "",
+        /** 当前动作类型（种植物/等待候选/…） */
+        val stepType: String = "",
         /** 当前正在执行的动作下标（zjs）。-1 = 没在跑。 */
         val currentIndex: Int = -1,
         /** 当前动作的名字，界面直接显示。 */

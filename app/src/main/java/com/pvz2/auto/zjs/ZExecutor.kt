@@ -436,6 +436,22 @@ class ZExecutor(
                 resetRecognizeStats()
                 val nodeStartedAt = System.currentTimeMillis()
                 log("── [${pc + 1}/${actions.size}] ${rawAction.type.wire} · $label")
+                    /*
+                     * 实时执行位置上报。
+                     *
+                     * 之前界面只能按"延时/时长/重复次数"估算进度，组合动作里估不准，
+                     * 于是进度条卡在某个子动作不动（用户报的就是这个）。
+                     * 这里在**每个动作真正开始前**把 (第几个/共几个/描述/类型)
+                     * 推到进程级状态，界面按它显示真实进度。
+                     */
+                    com.pvz2.auto.core.ScriptRunState.update { st ->
+                        st.copy(
+                            stepIndex = pc + 1,
+                            stepTotal = actions.size,
+                            stepLabel = label,
+                            stepType = rawAction.type.wire
+                        )
+                    }
 
                 /*
                  * ★ __vars：字段被变量化时，脚本格式落盘会**把原字段删掉**

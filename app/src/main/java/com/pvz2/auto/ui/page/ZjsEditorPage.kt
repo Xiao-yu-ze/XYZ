@@ -2439,7 +2439,19 @@ class ZjsEditorPage(
                         if (st <= 0L) 0L
                         else (android.os.SystemClock.uptimeMillis() - st) / 1000
                     }
-                    val p = runState.actionProgress()
+                    /*
+                     * ★ 真实进度：用执行器上报的「第几个 / 共几个」，
+                     *   而不是按延时估算。
+                     *
+                     *   估算在组合动作里必错：子动作的时长取决于识别是否命中、
+                     *   是否等待超时，估出来的条会卡住不动（用户报的问题）。
+                     *   上报值拿不到时（比如等待候选没有固定步数）才回落到估算。
+                     */
+                    val live = com.pvz2.auto.core.ScriptRunState.state.value
+                    val realP = if (live.running && live.stepTotal > 0) {
+                        live.stepIndex.toFloat() / live.stepTotal
+                    } else -1f
+                    val p = if (realP in 0f..1f) realP else runState.actionProgress()
                     if (p < 0f) pbAction.isIndeterminate = true
                     else {
                         pbAction.isIndeterminate = false
@@ -2451,10 +2463,12 @@ class ZjsEditorPage(
                      * 一条识别等上 392 次、27 秒是常态（参考管线 的 timeout + rate_limit），
                      * 界面上如果只有"1.4s"在跳，用户分不清它是在拼命识别还是卡死。
                      */
+                    val stepText = if (live.running && live.stepTotal > 0)
+                        "${live.stepIndex}/${live.stepTotal} · " else ""
                     tvRunCount.text = when {
                         runState.retryCount > 0 -> "识别 ${runState.retryCount} 次 · ${elapsed}s"
                         done > 0 -> "×${done + 1} · ${elapsed}s"
-                        else -> "${elapsed}s"
+                        else -> "${stepText}${elapsed}s"
                     }
                     // 原因太长，塞进这一行会把进度条挤没；它在第 2 页状态行和日志里都有。
 
