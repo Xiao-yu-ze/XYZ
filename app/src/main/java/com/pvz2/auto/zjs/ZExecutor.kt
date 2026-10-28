@@ -3399,7 +3399,7 @@ if (depth > MAX_COND_DEPTH) {
          *   这里把超出代换能力的字段明确记下来（日志 + 结果里的跳过原因），
          *   不装作求值成功。
          */
-        val unsupported = vars.keys.filter { it !in WATCHED_VAR_FIELDS }
+        val unsupported = vars.keys.filter { it !in WATCHED_VAR_FIELDS && !it.startsWith("pvz") }
         if (unsupported.isNotEmpty()) {
             log(
                 "   变量：字段 ${unsupported.joinToString("、")} 由变量定义，" +
@@ -3440,7 +3440,33 @@ if (depth > MAX_COND_DEPTH) {
                 }
             }
         }
-        return if (changed) VarsApplied(action.copy(common = common)) else VarsApplied(action)
+
+        /*
+         * 游戏节点私有参数（extra）也支持变量：`pvzWaveTimes` / `pvzPostMs` / `pvzSwipeMs` 等。
+         *
+         * 这些键不在 WATCHED_VAR_FIELDS 里（那是协议标准字段），但协议落盘时**同样**会把
+         * 被变量化的原字段删掉。结果就是：界面下拉选了"7 秒"，脚本里根本没有
+         * `pvzWaveTimes`，执行时按默认值跑 —— 变量看着生效、实际无效。
+         */
+        var extra = action.extra
+        var extraChanged = false
+        for ((field, def) in vars) {
+            if (!field.startsWith("pvz")) continue
+            val literal = literalOf(def)
+                ?: evalVarExpression(def.optString("valueExp").trim(), def.optString("varType"))
+                ?: return VarsApplied(action, field)
+            if (!extraChanged) {
+                extra = LinkedHashMap(extra)
+                extraChanged = true
+            }
+            extra[field] = literal.text
+            log("   变量→extra：$field = ${literal.text}")
+        }
+        return if (changed || extraChanged) {
+            VarsApplied(action.copy(common = common, extra = extra))
+        } else {
+            VarsApplied(action)
+        }
     }
 
     /** 从变量定义里取字面量；返回 null = 这个变量不是字面量（求不出来）。 */
