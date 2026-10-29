@@ -3704,7 +3704,18 @@ if (depth > MAX_COND_DEPTH) {
         val order = (action.extra["pvzSupplyOrder"]?.toString() ?: "")
             .split("|").map { it.trim() }.filter { it.isNotEmpty() }
             .ifEmpty { PvzSupplyChain.defaultOrder }
+        /*
+         * ★ CATEGORY_AREA 是 MAA 的 roi 写法：[x, y, 宽, 高]。
+         *
+         *   这里曾经按"左 上 右 下"去算 w/h：
+         *     w = 909 - 194 = 715
+         *     h = 80  - 237 = -157   ← 负数
+         *   limitArea 于是变成上边 237、下边 80 的"倒矩形"，
+         *   OCR 在这一块当然一个字都认不出 —— 真机表现就是"直接点了第一张卡片"。
+         *   统一按 x,y,w,h 解释，matcher 用的 rect 再换算成 l,t,r,b。
+         */
         val area = PvzSupplyChain.CATEGORY_AREA
+        val catRect = intArrayOf(area[0], area[1], area[0] + area[2], area[1] + area[3])
         fun tapPt(pt: IntArray) { inject.tap(pt[0], pt[1], 0) }
         fun sleep(ms: String) { ms.toIntOrNull()?.let { if (it > 0) waitBusy(it.toLong()) } }
         fun textPos(name: String) = Z.PosData(
@@ -3759,7 +3770,7 @@ if (depth > MAX_COND_DEPTH) {
         var picked: String? = null
         for (name in order) {
             if (stopped) return null
-            val hits = matcher.findText(textPos(name), area)
+            val hits = matcher.findText(textPos(name), catRect)
             if (hits.isNotEmpty()) {
                 val h = hits.first()
                 log("   选补给：认出「$name」(${h.x},${h.y})，点它")
@@ -3781,11 +3792,11 @@ if (depth > MAX_COND_DEPTH) {
                 val loose = Z.PosData(
                     type = Z.PosType.TEXT, text = name, similarPercent = 60,
                     limitArea = ZArea.fromPxRect(
-                        area[0], area[1], area[2] - area[0], area[3] - area[1],
+                        area[0], area[1], area[2], area[3],
                         PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
                     )
                 )
-                val hits = matcher.findText(loose, area)
+                val hits = matcher.findText(loose, catRect)
                 if (hits.isNotEmpty()) {
                     val h = hits.first()
                     log("   选补给：宽容匹配认出「$name」(${h.x},${h.y})，点它")

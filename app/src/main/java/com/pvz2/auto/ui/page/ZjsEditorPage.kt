@@ -2504,7 +2504,13 @@ class ZjsEditorPage(
                         (inner.background as? com.pvz2.auto.ui.widget.ProgressFillDrawable)
                             ?: com.pvz2.auto.ui.widget.ProgressFillDrawable().also { inner.background = it }
                     }
-                    fill?.setFraction(if (p in 0f..1f) p else -1f)
+                    /*
+                     * 只有"正在跑的这一条"才染色。
+                     *
+                     * 之前用 p（可能来自估算的 actionProgress=1.0）会让跑完的节点
+                     * 一直留着绿色 —— 看上去像它还在跑。
+                     */
+                    fill?.setFraction(if (isLiveNode && p in 0f..1f) p else -1f)
                     /*
                      * 文字行：这个节点在干什么、卡在哪、还有多久。
                      *
