@@ -3807,6 +3807,14 @@ if (depth > MAX_COND_DEPTH) {
             }
         }
         if (picked == null) {
+            /*
+             * 认不出时把那一块 OCR 的原始结果打出来。
+             *
+             * 之前只能看到"一个分类都没认出"，分不清是"区域错了"、"字太小"
+             * 还是"确实没有这几个标签"。matcher.lastReason() 里就是识别器
+             * 对这一块的原话（几行、内容、最高相似度），直接抄进日志。
+             */
+            log("   选补给：分类区 OCR 原始结果 → " + matcher.lastReason())
             // 兜底：参考管线 `buji_补给` 点第一个卡片
             log("   选补给：一个分类都没认出 → 兜底点第一个卡片")
             tapPt(PvzSupplyChain.FALLBACK_FIRST_CARD)
