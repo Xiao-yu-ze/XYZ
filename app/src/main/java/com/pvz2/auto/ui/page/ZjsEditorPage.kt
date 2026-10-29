@@ -2495,11 +2495,16 @@ class ZjsEditorPage(
                         else -> -1f
                     }
                     val p = if (frac in 0f..1f) frac else if (isLiveNode) -1f else runState.actionProgress()
-                    if (p < 0f) pbAction.isIndeterminate = true
-                    else {
-                        pbAction.isIndeterminate = false
-                        pbAction.progress = (p * pbAction.max).toInt()
+                    /*
+                     * 进度不再用独立进度条，直接染在卡片白底上（见 [ProgressFillDrawable]）。
+                     * 独立的那条隐藏掉，省一行高度。
+                     */
+                    pbAction.visibility = View.GONE
+                    val fill = (itemView as? android.view.ViewGroup)?.getChildAt(0)?.let { inner ->
+                        (inner.background as? com.pvz2.auto.ui.widget.ProgressFillDrawable)
+                            ?: com.pvz2.auto.ui.widget.ProgressFillDrawable().also { inner.background = it }
                     }
+                    fill?.setFraction(if (p in 0f..1f) p else -1f)
                     /*
                      * 文字行：这个节点在干什么、卡在哪、还有多久。
                      *

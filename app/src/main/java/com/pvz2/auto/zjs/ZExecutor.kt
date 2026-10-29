@@ -3769,6 +3769,33 @@ if (depth > MAX_COND_DEPTH) {
             }
         }
         if (picked == null) {
+            /*
+             * 第二遍：放宽到 60% 只找「全部」。
+             *
+             * 90% 那一遍在真机上一条都没认出（玩家反馈：直接点了第一张卡片）。
+             * MAA 用的 ROI/文字原值不变，变的只是我们 OCR 的容差 —— 分类栏是
+             * 半透明底上的小字，OCR 认出来常常只有六七成相似度。
+             */
+            for (name in listOf("全部植物", "全部")) {
+                if (stopped) return null
+                val loose = Z.PosData(
+                    type = Z.PosType.TEXT, text = name, similarPercent = 60,
+                    limitArea = ZArea.fromPxRect(
+                        area[0], area[1], area[2] - area[0], area[3] - area[1],
+                        PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
+                    )
+                )
+                val hits = matcher.findText(loose, area)
+                if (hits.isNotEmpty()) {
+                    val h = hits.first()
+                    log("   选补给：宽容匹配认出「$name」(${h.x},${h.y})，点它")
+                    inject.tap(h.x, h.y, 0)
+                    picked = name
+                    break
+                }
+            }
+        }
+        if (picked == null) {
             // 兜底：参考管线 `buji_补给` 点第一个卡片
             log("   选补给：一个分类都没认出 → 兜底点第一个卡片")
             tapPt(PvzSupplyChain.FALLBACK_FIRST_CARD)
