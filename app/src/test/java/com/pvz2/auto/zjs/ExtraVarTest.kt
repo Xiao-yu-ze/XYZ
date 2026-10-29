@@ -112,4 +112,28 @@ class ExtraVarTest {
         // 变量不存在 → 比较不成立 → 取反成立 → 该条应执行（这里只能看整体跑完不报错）
         assertEquals(0, rec.calls.size)
     }
+
+    /** 进度条要显示"当前节点自己的状态"，这里锁住引擎→状态的这一段。 */
+    @Test
+    fun `运行状态带上节点级进度`() {
+        com.pvz2.auto.core.ScriptRunState.reset()
+        run(
+            "{\"type\":\"点下一波\",\"pvzWaveTimes\":\"3\",\"pvzWaveInterval\":\"10\"}"
+        )
+        val st = com.pvz2.auto.core.ScriptRunState.state.value
+        assertEquals("点波最后应上报到 第3次的上一个计数", 2L, st.repeatDone)
+        assertEquals("点波上限应上报", 3, st.repeatLimit)
+
+        com.pvz2.auto.core.ScriptRunState.reset()
+        run(
+            "{\"type\":\"等待候选\",\"waitTimeoutMs\":\"1500\",\"waitIntervalMs\":\"200\"," +
+                "\"candidates\":[{\"jumpTo\":\"x\",\"condition\":{\"type\":\"textFount\"," +
+                "\"text\":{\"type\":\"text\",\"text\":\"绝对不存在\"," +
+                "\"limitArea\":\"0 0 100 100\",\"similarPercent\":99}}}]}"
+        )
+        assertEquals(
+            "等待候选的等待上限应上报给界面",
+            1500, com.pvz2.auto.core.ScriptRunState.state.value.nodeTimeoutMs
+        )
+    }
 }

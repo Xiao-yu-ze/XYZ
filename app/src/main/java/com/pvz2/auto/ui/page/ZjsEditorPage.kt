@@ -2469,27 +2469,64 @@ class ZjsEditorPage(
                      *   上报值拿不到时（比如等待候选没有固定步数）才回落到估算。
                      */
                     val live = com.pvz2.auto.core.ScriptRunState.state.value
-                    val realP = if (live.running && live.stepTotal > 0) {
-                        live.stepIndex.toFloat() / live.stepTotal
-                    } else -1f
-                    val p = if (realP in 0f..1f) realP else runState.actionProgress()
+                    val isLiveNode = live.running && live.currentIndex == index
+                    /*
+                     * 进度条 = **当前这一条自己**的进行中比例。
+                     *
+                     * 原来是「第几个/共几个」：5 个节点跑到第 2 个就显示 40%，
+                     * 而脚本其实卡在那一条的识别循环里，条却在慢慢爬 ——
+                     * 既不说明在干什么，也看不出卡没卡。
+                     *
+                     * 现在的优先级：
+                     *   ① 有超时上限 → 已等 / 上限（识别等待最能反映"卡不卡"）
+                     *   ② 有重复次数 → 第几次 / 上限
+                     *   ③ 有子动作   → 第几个 / 共几个
+                     *   ④ 都没有     → 不确定动画
+                     */
+                    val nowMs = android.os.SystemClock.uptimeMillis()
+                    val liveElapsedS = if (live.actionStartedAt > 0L)
+                        (nowMs - live.actionStartedAt) / 1000f else 0f
+                    val timeoutS = live.nodeTimeoutMs / 1000f
+                    val frac = when {
+                        !isLiveNode -> -1f
+                        timeoutS > 0f -> (liveElapsedS / timeoutS).coerceIn(0f, 1f)
+                        live.repeatLimit > 0 -> live.repeatDone.toFloat() / live.repeatLimit
+                        live.subTotal > 0 -> live.subIndex.toFloat() / live.subTotal
+                        else -> -1f
+                    }
+                    val p = if (frac in 0f..1f) frac else if (isLiveNode) -1f else runState.actionProgress()
                     if (p < 0f) pbAction.isIndeterminate = true
                     else {
                         pbAction.isIndeterminate = false
                         pbAction.progress = (p * pbAction.max).toInt()
                     }
                     /*
-                     * 把"识别了几次"直接摆在节点上。
+                     * 文字行：这个节点在干什么、卡在哪、还有多久。
                      *
-                     * 一条识别等上 392 次、27 秒是常态（参考管线 的 timeout + rate_limit），
-                     * 界面上如果只有"1.4s"在跳，用户分不清它是在拼命识别还是卡死。
+                     * 一条识别等上几百次、几十秒是常态，界面上只跳一个秒数，
+                     * 用户分不清它是在拼命识别还是已经卡死。
                      */
-                    val stepText = if (live.running && live.stepTotal > 0)
-                        "${live.stepIndex}/${live.stepTotal} · " else ""
-                    tvRunCount.text = when {
-                        runState.retryCount > 0 -> "识别 ${runState.retryCount} 次 · ${elapsed}s"
-                        done > 0 -> "×${done + 1} · ${elapsed}s"
-                        else -> "${stepText}${elapsed}s"
+                    if (isLiveNode) {
+                        val head = if (live.subTotal > 0)
+                            "子 ${live.subIndex}/${live.subTotal}「${live.subLabel}」"
+                        else "第 ${live.currentIndex + 1} 条「${live.currentLabel}」"
+                        val parts = ArrayList<String>()
+                        parts.add(head)
+                        if (live.retryCount > 0) parts.add("识别 ${live.retryCount} 次")
+                        parts.add(
+                            if (timeoutS > 0f)
+                                "已 ${"%.1f".format(liveElapsedS)}s / 上限 ${timeoutS.toInt()}s"
+                            else "已 ${"%.1f".format(liveElapsedS)}s"
+                        )
+                        if (live.repeatLimit > 0) parts.add("循环 ${live.repeatDone + 1}/${live.repeatLimit}")
+                        else if (live.repeatDone > 0) parts.add("循环 ${live.repeatDone + 1}/∞")
+                        tvRunCount.text = parts.joinToString(" · ")
+                    } else {
+                        tvRunCount.text = when {
+                            runState.retryCount > 0 -> "识别 ${runState.retryCount} 次 · ${elapsed}s"
+                            done > 0 -> "×${done + 1} · ${elapsed}s"
+                            else -> "${elapsed}s"
+                        }
                     }
                     // 原因太长，塞进这一行会把进度条挤没；它在第 2 页状态行和日志里都有。
 
@@ -2506,7 +2543,7 @@ class ZjsEditorPage(
                      * 「动作类型 + 组名」记忆，同一类动作反复改时不用每次都点。
                      */
                     val rowsAll = ZActionDescriber.describe(action)
-                    val order = listOf("基础", "时机", "识别", "高级")
+                    val order = listOf("基础", "位置", "时间", "识别", "高级")
                     val grouped = LinkedHashMap<String, MutableList<ZActionDescriber.Row>>()
                     rowsAll.forEach { r ->
                         grouped.getOrPut(groupOf(r)) { mutableListOf() }.add(r)
@@ -2565,16 +2602,33 @@ class ZjsEditorPage(
             /** 每类动作每个分组的展开状态（key = 类型#组名）。 */
     private val groupOpen = HashMap<String, Boolean>()
 
-    /** 字段归到哪个分组。按 field 前缀判，找不到就归「基础」。 */
+    /**
+     * 字段归到哪个分组。
+     *
+     * 分成 5 组而不是 4 组：原来「基础」里塞了类型/触发/坐标/行列/槽位，
+     * 一展开就是一屏，等于没分组。现在坐标和游戏坐标单独成「位置」。
+     *
+     * 组名用「时间」不用「时机」—— 动作里本来就有个字段叫「时机」，
+     * 分组标题和字段同名时，用户看到两个「时机」以为是重复渲染。
+     */
     private fun groupOf(row: ZActionDescriber.Row): String {
         val f = row.field
+        val label = row.label
         return when {
             f.startsWith("cond.") || f.startsWith("cb.") ||
                 f == "jumpId" || f == "desc" || f == "controlRunType" -> "高级"
-            f.startsWith("pos.") || f.startsWith("tmpl.") || f == "posData" -> "识别"
+            f.startsWith("tmpl.") || f == "posData" ||
+                label.contains("模板") || label.contains("阈值") || label.contains("相似度") ||
+                label.contains("范围") -> "识别"
+            f.startsWith("pos.") || f.startsWith("pvzSlot") || f.startsWith("pvzRow") ||
+                f.startsWith("pvzCol") || f == "pvzArtifact" || f == "pvzGourdSize" ||
+                label.contains("卡槽") || label.contains("行") || label.contains("列") ||
+                label.contains("坐标") -> "位置"
             f.startsWith("delay") || f.startsWith("duration") || f.startsWith("repeat") ||
                 f == "pvzPostMs" || f == "pvzWaitMs" || f == "pvzSwipeMs" ||
-                f == "timeoutMs" || f == "checkBeforeDelay" -> "时机"
+                f == "timeoutMs" || f == "checkBeforeDelay" ||
+                label.contains("等待") || label.contains("时长") || label.contains("重复") ||
+                label.contains("时机") -> "时间"
             else -> "基础"
         }
     }

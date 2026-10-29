@@ -75,7 +75,24 @@ object ScriptRunState {
         /** 最近一次重试失败的具体原因（实测到的色值/文字）。 */
         val retryReason: String = "",
         /** 失败在第几条（0 基）。-1 = 没失败。界面用它把那条标红。 */
-        val failedIndex: Int = -1
+        val failedIndex: Int = -1,
+
+    /*
+     * 下面这几个是「当前节点自己的状态」，进度条靠它们精确显示，而不是拿
+     * 第几个/共几个糊弄 —— 5 个节点跑第 2 个就显示 2/5，看不出它在干什么。
+     */
+    /** 这个节点已经重复了几次。 */
+    val repeatDone: Long = 0L,
+    /** 这个节点的重复上限（repeatCount，0 = 无限）。 */
+    val repeatLimit: Int = 0,
+    /** 这个节点这次最多等多久(ms)，0 = 没有超时概念。 */
+    val nodeTimeoutMs: Int = 0,
+    /** 当前在第几个子动作（运行多个动作）。 */
+    val subIndex: Int = 0,
+    /** 子动作总数。 */
+    val subTotal: Int = 0,
+    /** 子动作的名字，点进去之前也能看出在跑哪一条。 */
+    val subLabel: String = ""
     ) {
         /**
          * 当前动作的完成度 0~1，界面拿它画进度条。
@@ -136,9 +153,38 @@ object ScriptRunState {
                 expectedMs = expectedMs,
                 retryCount = 0,
                 retryReason = "",
+                repeatDone = 0L,
+                repeatLimit = 0,
+                nodeTimeoutMs = 0,
+                subIndex = 0,
+                subTotal = 0,
+                subLabel = "",
                 message = label
             )
         }
+    }
+
+    /** 进入某个节点的子动作 [i]/[total]「[label]」。 */
+    fun enterChild(parent: String, i: Int, total: Int, label: String) {
+        update {
+            it.copy(
+                stepLabel = parent,
+                subIndex = i,
+                subTotal = total,
+                subLabel = label,
+                message = "$parent › 子$i/$total「$label」"
+            )
+        }
+    }
+
+    /** 这个节点的等待上限（等待候选 / 开始战斗 / 进关判定 / 识别结算）。 */
+    fun nodeTimeout(ms: Int) {
+        update { it.copy(nodeTimeoutMs = ms.coerceAtLeast(0)) }
+    }
+
+    /** 这个节点重复到第几次 / 上限多少。 */
+    fun repeatProgress(done: Long, limit: Int) {
+        update { it.copy(repeatDone = done, repeatLimit = limit) }
     }
 
     /** 任务失败：记下失败的那一条，界面标红并用它做顶部提示。 */

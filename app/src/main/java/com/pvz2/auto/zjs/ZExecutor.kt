@@ -1661,6 +1661,8 @@ class ZExecutor(
                 }
                 val timeout = action.waitTimeoutMs ?: 0
                 val interval = (action.waitIntervalMs ?: 200).coerceAtLeast(20)
+                // 把等待上限报给界面：进度条要显示「已等 / 上限」，不然只有秒数在跳。
+                if (timeout > 0) com.pvz2.auto.core.ScriptRunState.nodeTimeout(timeout)
                 val startedAt = System.currentTimeMillis()
                 var round = 0
                 while (!stopped) {
@@ -3023,6 +3025,9 @@ if (depth > MAX_COND_DEPTH) {
                 val kidReal = kidVars.action
                 ran++
                 // 子动作：识别失败只跳过这一条（不牵连外层任务）
+                com.pvz2.auto.core.ScriptRunState.enterChild(
+                    label, ci + 1, kids.size, ZScriptIO.actionLabel(kidReal)
+                )
                 val outcome = executeWithRepeat(
                     kidReal, index, kidLabel, childSkips, abortOnRecognitionFail = false
                 )
@@ -4014,6 +4019,7 @@ if (depth > MAX_COND_DEPTH) {
         skipped: MutableList<Result.Skip>
     ): Outcome? {
         val waitMs = (intExtra(action.extra, "pvzWaitMs") ?: 20_000).coerceIn(500, 600_000)
+        com.pvz2.auto.core.ScriptRunState.nodeTimeout(waitMs)
         val deadline = System.currentTimeMillis() + waitMs
         val interval = 200L
 
@@ -4147,6 +4153,7 @@ if (depth > MAX_COND_DEPTH) {
             val gap = (intExtra(action.extra, "pvzWaveInterval") ?: 300).coerceIn(0, 10_000)
             for (i in 1..times) {
                 if (stopped) break
+                com.pvz2.auto.core.ScriptRunState.repeatProgress((i - 1).toLong(), times)
                 log(
                     "   点「${fixed.second}」(${fixed.first[0]},${fixed.first[1]})" +
                         if (times > 1) " 第 $i/$times 次" else ""
