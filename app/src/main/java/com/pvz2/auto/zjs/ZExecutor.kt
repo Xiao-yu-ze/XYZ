@@ -2434,8 +2434,20 @@ class ZExecutor(
                 }
                 val got = scriptVars[name]?.trim().orEmpty()
                 val ok = got == want
-                log("[条件] 变量比较：$name=\"$got\" 期望 \"$want\" → ${if (ok) "成立" else "不成立"}")
-                return ok
+                /*
+                 * ★ 必须走 applyInvert。
+                 *
+                 *   这个分支是提前 return 的，最初漏掉了取反：脚本里写
+                 *   「心塔_起始关卡 ≠ 3-149关（取反）」时，比较结果为 false，
+                 *   取反没生效就当成"不成立"跳过 —— 用户选「2关」，第2关被直接跳过。
+                 *   日志会打「结果=false 取反=true」，看着像取反了，实际没有。
+                 */
+                val eff = applyInvert(cond, ok)
+                log(
+                    "[条件] 变量比较：$name=\"$got\" 期望 \"$want\" → 原始 ${if (ok) "成立" else "不成立"}" +
+                        (if (cond.runWhenFalse) "，取反后 ${if (eff) "成立" else "不成立"}" else "")
+                )
+                return eff
             }
 if (depth > MAX_COND_DEPTH) {
             // 畸形文件可能把条件自己套自己几百层 —— 直接算会 StackOverflowError，
@@ -4048,13 +4060,20 @@ if (depth > MAX_COND_DEPTH) {
                     inject.tap(h.x, h.y, 0)
                 } else {
                     /*
-                     * 进关判定：认出绿点就结束，**不再自动点加速**。
+                     * 进关判定：默认**不自动点加速**（用户要求过：有些关卡开局不能马上加速，
+                     * 由他在链里自己放「点加速」控制时机）。
                      *
-                     * 用户要求："进关判定节点识别到进入关卡后会自动点一下加速键，
-                     * 把这个自动点加速取消了"。加速由用户在链里自己放「点加速」节点，
-                     * 时间点由他控制（有些关卡开局不能马上加速）。
+                     * 但 MAA 的 `2_xinta3_判断是否进入关内` 是 ColorMatch + Click[1171,37]，
+                     * 也就是"认出绿点就顺手点加速"。所以给节点加一个开关
+                     * `pvzClickSpeed`（是/否，默认否），心塔 3-149 关的链里设成"是"，
+                     * 就能与 MAA 一致，同时不影响其它脚本。
                      */
-                    log("   已进关（不自动点加速）")
+                    if (boolExtra(action, "pvzClickSpeed")) {
+                        log("   已进关 → 点加速 (${PvzCoords.SPEED_ON_ENTER[0]},${PvzCoords.SPEED_ON_ENTER[1]})")
+                        inject.tap(PvzCoords.SPEED_ON_ENTER[0], PvzCoords.SPEED_ON_ENTER[1], 0)
+                    } else {
+                        log("   已进关（不自动点加速）")
+                    }
                 }
                 intExtra(action.extra, "pvzPostMs")?.let { if (it > 0) waitBusy(it.toLong()) }
                 return Outcome()

@@ -537,7 +537,7 @@ object ZFieldEditor {
          * 踩过的坑：放整型里 → 写"葫芦神器"时 toIntOrNull() 得 null →
          * 键被删掉 → 界面永远显示「未选」。
          */
-        "pvzArtifact", "pvzGourdSize", "pvzCameraMode",
+        "pvzArtifact", "pvzGourdSize", "pvzCameraMode", "pvzClickSpeed",
         "jumpToPosition", "aimActionPosition", "appPackageName",
         "link", "promptType", "promptText", "inputText",
         // ★ 运行JS代码 / 执行脚本 的参数。没有这两项时，界面上改完会弹

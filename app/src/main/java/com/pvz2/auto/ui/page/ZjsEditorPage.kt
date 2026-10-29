@@ -214,6 +214,18 @@ class ZjsEditorPage(
     }
 
     /** 当前层要显示的动作列表。 */
+    /** 临时追踪：把编辑动作写进 files/edit_trace.log（logcat 在这台 ROM 上看不到）。 */
+    private fun traceEdit(msg: String) {
+        runCatching {
+            val f = java.io.File(host.filesDir, "edit_trace.log")
+            if (f.length() > 200_000) f.delete()
+            f.appendText(
+                java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+                    .format(java.util.Date()) + "  " + msg + "\n"
+            )
+        }
+    }
+
     private fun currentActions(): List<Z.Action> {
         val s = script ?: return emptyList()
         dropStaleNav()
@@ -236,10 +248,11 @@ class ZjsEditorPage(
             script = s.copy(actions = newList)
             return
         }
-        val owner = actionAtIndex(f.path) ?: return
+        val owner = actionAtIndex(f.path) ?: run { traceEdit("commit: actionAtIndex 失败 path="+"${f.path}"); return }
         if (f.scriptSetChild) {
             // 子动作是**一串**（不是槽位那一条），整串替换即可
             val newRoot = writeActionAt(s.actions, f.path, owner.copy(scriptSet = newList))
+            traceEdit("commit scriptSet: newList="+"${newList.size} newRoot="+"${newRoot != null}")
             if (newRoot != null) script = s.copy(actions = newRoot)
             return
         }
@@ -550,8 +563,14 @@ class ZjsEditorPage(
          *   · 插入 → 槽位变成两条 → 只有第一条生效，用户以为改了其实是覆盖；
          *   · 复制 → 同上，凭空多出一条永远不会被保存的动作。
          * 槽位里只有两种有意义的操作：换成别的动作类型、清空这个监听槽位。
+         *
+         * ★ 但「运行多个动作」的子动作列表**不是槽位**，它本来就是**一串**动作。
+         *
+         *   原来判据写成 `navStack.isNotEmpty()` —— 只要下潜过一层就当成槽位，
+         *   于是子动作列表里长按只看到"换成别的动作 / 删除这条（清空该监听）"，
+         *   「插入」「复制」全被吞掉。正确判据是"当前这一帧是不是槽位帧"。
          */
-        val inSlot = navStack.isNotEmpty()
+        val inSlot = navStack.lastOrNull()?.scriptSetChild?.not() ?: false
         val items = if (inSlot) {
             arrayOf("换成别的动作", "删除这条（清空该监听）")
         } else {
@@ -2137,8 +2156,10 @@ class ZjsEditorPage(
             else -> currentActions().size
         }
         val list = currentActions().toMutableList()
+        traceEdit("addAction type=${type.wire} at=$at 当前层=$"+"{list.size} 层=${navStack.lastOrNull()?.let { "scriptSet=" + it.scriptSetChild + " path=" + it.path }}")
         list.add(at, fresh)
         commitActions(list)
+        traceEdit("addAction 之后 层="+"${currentActions().size} 顶层="+"${script?.actions?.size}")
         adapter.submit(currentActions())
         expandedIndex = at
         adapter.notifyItemChanged(at)

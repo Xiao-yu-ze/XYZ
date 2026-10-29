@@ -1037,6 +1037,20 @@ return PosGroup(rec, par, oth)
                     help = ZFieldHelp.ofAction("pvzSwipeMs")
                 )
             }
+            if (action.type == Z.ActionType.PVZ_ENTER_CHECK) {
+                /*
+                 * MAA 的「判断是否进入关内」是 ColorMatch + Click[1171,37]：
+                 * 认出绿点就顺手点加速。默认关（老脚本行为不变），心塔 3-149 链里设成「是」。
+                 */
+                val sp = e["pvzClickSpeed"]?.toString().orEmpty()
+                rows += Row(
+                    "进关后点加速",
+                    if (sp.isBlank()) "否" else sp,
+                    Kind.SWITCH,
+                    field = "pvzClickSpeed",
+                    help = ZFieldHelp.of("pvzClickSpeed")
+                )
+            }
             if (action.type == Z.ActionType.PVZ_START_BATTLE ||
                 action.type == Z.ActionType.PVZ_ENTER_CHECK ||
                 action.type == Z.ActionType.PVZ_SETTLE

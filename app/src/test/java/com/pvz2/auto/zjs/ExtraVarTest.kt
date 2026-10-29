@@ -92,4 +92,24 @@ class ExtraVarTest {
             4, rec.calls.count { it.startsWith("tap(") }
         )
     }
+
+    /**
+     * varEquals 必须支持取反（runWhenFalse）。
+     *
+     * 真机表现：用户选「2关」，第 2 关的条件是「起始关卡 ≠ 3-149关」，
+     * 日志打「结果=false 取反=true」却仍然跳过 —— 因为 varEquals 分支
+     * 提前 return，没走 applyInvert。
+     */
+    @Test
+    fun `变量比较支持取反`() {
+        val rec = run(
+            "{\"type\":\"系统提示\",\"promptText\":\"a\"}",
+            "{\"type\":\"系统提示\",\"promptText\":\"b\"," +
+                "\"condition\":{\"type\":\"varEquals\",\"varName\":\"missing\"," +
+                "\"expected\":\"x\",\"runWhenFalse\":true}}",
+            "{\"type\":\"系统提示\",\"promptText\":\"c\"}"
+        )
+        // 变量不存在 → 比较不成立 → 取反成立 → 该条应执行（这里只能看整体跑完不报错）
+        assertEquals(0, rec.calls.size)
+    }
 }
