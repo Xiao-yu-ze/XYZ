@@ -4007,8 +4007,16 @@ if (depth > MAX_COND_DEPTH) {
 
         // 判据
         val (roi, pos) = when (action.type) {
+            /*
+             * 进关绿点：#9EDF12 是 MAA `判断是否进入关内` 的色域中点
+             * （lower [148,213,8] ~ upper [168,233,28] → (158,223,18)）。
+             *
+             * 原来写的是 #9AD216 = (154,210,22)，G=210 **低于 MAA 下限 213**，
+             * 属于"看起来一样、其实落在容差外"的颜色 —— 审计时必须按数值比，
+             * 不能按"绿色"这个印象比。
+             */
             Z.ActionType.PVZ_ENTER_CHECK -> PvzCoords.ENTER_ROI to Z.PosData(
-                type = Z.PosType.COLOR, color = "#9AD216", similarPercent = 85,
+                type = Z.PosType.COLOR, color = "#9EDF12", similarPercent = 85,
                 limitArea = ZArea.fromPxRect(
                     PvzCoords.ENTER_ROI[0], PvzCoords.ENTER_ROI[1],
                     PvzCoords.ENTER_ROI[2] - PvzCoords.ENTER_ROI[0],
@@ -4111,7 +4119,12 @@ if (depth > MAX_COND_DEPTH) {
              * 默认 1 次 / 300ms —— 点波是"催一波"，玩家经常连点两三下；
              * 次数写成 1 时行为和以前完全一致。
              */
-            val times = (intExtra(action.extra, "pvzWaveTimes") ?: 1).coerceIn(1, 50)
+            /*
+             * 上限 50 是拍脑袋定的。MAA 的心塔链是 repeat=70（点波 70 次 / 20ms），
+             * 被夹到 50 时日志只显示「第 1/50 次」，看不出被截断 —— 点波数量不足
+             * 会让波次推进不到位。放到 999，够用且仍能挡住手滑写成几千。
+             */
+            val times = (intExtra(action.extra, "pvzWaveTimes") ?: 1).coerceIn(1, 999)
             val gap = (intExtra(action.extra, "pvzWaveInterval") ?: 300).coerceIn(0, 10_000)
             for (i in 1..times) {
                 if (stopped) break
