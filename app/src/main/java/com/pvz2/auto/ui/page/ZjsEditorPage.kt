@@ -2379,9 +2379,26 @@ class ZjsEditorPage(
          * （展开态以前每次编辑都会被重置，所以这个组合碰不到；
          * 现在编辑会保持展开，就撞上了）。
          */
+        /** 已经绑定过的 holder，按位置缓存：只用来做"轻量重画"。 */
+        private val holders = android.util.SparseArray<Holder>()
+
+        /** 上一次被点亮的条目，用来在切换时把它擦干净。 */
+        private var lastLive = -1
+
+        /**
+         * 每 33ms 调一次：只更新"正在跑的那一条"的背景进度和那行文字。
+         *
+         * 以前这里是 notifyItemChanged(i) —— 整条重新 bind，展开态要重建十几个
+         * 字段行，于是展开的节点卡成幻灯片、折叠的却很顺。现在直接摸 holder。
+         */
         fun refreshProgress() {
             val i = runState.currentIndex
-            if (i in items.indices && i != expandedIndex) notifyItemChanged(i)
+            if (i != lastLive) {
+                holders.get(lastLive)?.clearLive()
+                lastLive = i
+            }
+            val h = holders.get(i)
+            if (h != null) h.tickLive() else if (i in items.indices) notifyItemChanged(i)
         }
 
         override fun getItemCount(): Int = items.size
@@ -2393,7 +2410,15 @@ class ZjsEditorPage(
         }
 
         override fun onBindViewHolder(holder: Holder, position: Int) {
+            holders.put(position, holder)
             holder.bind(position, items[position], position == expandedIndex)
+        }
+
+        override fun onViewRecycled(holder: Holder) {
+            for (k in 0 until holders.size()) {
+                if (holders.valueAt(k) === holder) { holders.removeAt(k); break }
+            }
+            super.onViewRecycled(holder)
         }
         private inner class Holder(v: View) : RecyclerView.ViewHolder(v) {
             private val tvIndex: TextView = v.findViewById(R.id.tvActionIndex)
@@ -2403,6 +2428,53 @@ class ZjsEditorPage(
             private val llProgress: LinearLayout = v.findViewById(R.id.llActionProgress)
             private val pbAction: android.widget.ProgressBar = v.findViewById(R.id.pbAction)
             private val tvRunCount: TextView = v.findViewById(R.id.tvActionRunCount)
+
+            /** 卡片白底那个可绘制对象（进度直接染在卡面上）。 */
+            private fun fillDrawable(): com.pvz2.auto.ui.widget.ProgressFillDrawable? {
+                val inner = (itemView as? android.view.ViewGroup)?.getChildAt(0) ?: return null
+                return (inner.background as? com.pvz2.auto.ui.widget.ProgressFillDrawable)
+                    ?: com.pvz2.auto.ui.widget.ProgressFillDrawable().also { inner.background = it }
+            }
+
+            /** 把这一条的绿色擦掉（不是当前运行的那条时用）。 */
+            fun clearLive() {
+                fillDrawable()?.setFraction(-1f)
+            }
+
+            /**
+             * 轻量刷新：只算"当前节点自己的进度"和那一行文字，不碰字段、不重建视图。
+             *
+             * 逻辑与 [bind] 里的那段一致 —— 那边是"刚绑定时"的初值，这里是每 33ms 的增量。
+             */
+            fun tickLive() {
+                val live = com.pvz2.auto.core.ScriptRunState.state.value
+                if (!live.running) { clearLive(); return }
+                val nowMs = android.os.SystemClock.uptimeMillis()
+                val elapsedS = if (live.actionStartedAt > 0L)
+                    (nowMs - live.actionStartedAt) / 1000f else 0f
+                val timeoutS = live.nodeTimeoutMs / 1000f
+                val frac = when {
+                    timeoutS > 0f -> (elapsedS / timeoutS).coerceIn(0f, 1f)
+                    live.repeatLimit > 0 -> live.repeatDone.toFloat() / live.repeatLimit
+                    live.subTotal > 0 -> live.subIndex.toFloat() / live.subTotal
+                    else -> -1f
+                }
+                fillDrawable()?.setFraction(frac)
+                val head = if (live.subTotal > 0)
+                    "子 ${live.subIndex}/${live.subTotal}「${live.subLabel}」"
+                else "第 ${live.currentIndex + 1} 条「${live.currentLabel}」"
+                val parts = ArrayList<String>()
+                parts.add(head)
+                if (live.retryCount > 0) parts.add("识别 ${live.retryCount} 次")
+                parts.add(
+                    if (timeoutS > 0f)
+                        "已 ${"%.1f".format(elapsedS)}s / 上限 ${timeoutS.toInt()}s"
+                    else "已 ${"%.1f".format(elapsedS)}s"
+                )
+                if (live.repeatLimit > 0) parts.add("循环 ${live.repeatDone + 1}/${live.repeatLimit}")
+                else if (live.repeatDone > 0) parts.add("循环 ${live.repeatDone + 1}/∞")
+                tvRunCount.text = parts.joinToString(" · ")
+            }
 
             fun bind(index: Int, action: Z.Action, expanded: Boolean) {
                 tvIndex.text = (index + 1).toString()
