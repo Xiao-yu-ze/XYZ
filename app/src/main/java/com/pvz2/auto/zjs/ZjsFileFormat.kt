@@ -271,6 +271,8 @@ object ZjsFileFormat {
                     } else actions.add(action)
                 } catch (t: Throwable) {
                     bad.add(idx + 1)
+                    badDetail.add("第 ${idx + 2} 条：JSON 解析失败（${t.message}），已跳过")
+                    badRaw.add(line)
                 }
             }
 
@@ -279,6 +281,16 @@ object ZjsFileFormat {
                     baseInfo = baseInfo,
                     actions = actions,
                     linkedFiles = linkedRaw,
+                    /*
+                     * ★ 这两个必须传给 Z.Script。
+                     *
+                     *   之前只传给了 ParseResult（badLines = bad），Z.Script 里始终是空表，
+                     *   于是执行器开头那段"有 N 条动作解析失败"的告警**永远不会执行** ——
+                     *   真机验证过：脚本里 3 条 `type:"跳转"` 被丢弃，日志一个字都没提，
+                     *   只是在跑的时候"节点数从 14 变成 11"。
+                     */
+                    badLines = badDetail,
+                    badRaw = badRaw,
                     // baseInfo 行里我们不认识的键，提到脚本级 extra。
                     // 写回时它们会并回第 1 行 —— 这样往返不丢字段。
                     extra = baseInfoLineExtra(baseInfoLine.value)
