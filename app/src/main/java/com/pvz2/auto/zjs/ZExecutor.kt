@@ -3775,10 +3775,21 @@ if (depth > MAX_COND_DEPTH) {
         }
         sleep(PvzSupplyChain.DELAY_CATEGORY)
 
-        // 确定1
+        /*
+         * 确定 ×3 —— 照 MAA `通用_神器补给_确定1/2/3`：
+         *
+         *   确定1 Click[950,921] pre1000
+         *   确定2 Click[950,921] pre2000
+         *   确定3 Click[950,921] pre2000 → [Anchor]
+         *
+         * 以前我们只点两次、中间还插了一段「提示」弹窗识别。真机结果是
+         * 点完仍在补给界面没退出（探针：绿点/查看都还在），于是后面的
+         * BOSS 链等「开始战斗」白等 60 秒。MAA 这条链里没有提示弹窗那一步，
+         * 就老老实实点三次、每次都等足。
+         */
         log("   选补给：确定1")
         tapPt(PvzSupplyChain.CONFIRM)
-        waitBusy(300)
+        waitBusy(1000)
 
         // 提示弹窗（选到有上限的补给会弹）
         val tipHits = matcher.findText(
@@ -3794,18 +3805,40 @@ if (depth > MAX_COND_DEPTH) {
             PvzSupplyChain.TIP_AREA
         )
         if (tipHits.isNotEmpty()) {
-            log("   选补给：出现「提示」（补给有上限），点掉 ($ {PvzSupplyChain.TIP_TAP[0]},${PvzSupplyChain.TIP_TAP[1]})")
+            log("   选补给：出现「提示」（补给有上限），点掉 (${PvzSupplyChain.TIP_TAP[0]},${PvzSupplyChain.TIP_TAP[1]})")
             tapPt(PvzSupplyChain.TIP_TAP)
-            waitBusy(300)
+            waitBusy(500)
         }
 
-        // 确定3 / 确定4
+        log("   选补给：确定2")
+        tapPt(PvzSupplyChain.CONFIRM)
+        waitBusy(2000)
         log("   选补给：确定3")
         tapPt(PvzSupplyChain.CONFIRM)
-        sleep(PvzSupplyChain.DELAY_CONFIRM3)
-        log("   选补给：确定4")
-        tapPt(PvzSupplyChain.CONFIRM)
-        sleep(PvzSupplyChain.DELAY_CONFIRM4)
+        waitBusy(2000)
+
+        /*
+         * 收尾自检：确认真的离开补给界面。
+         *
+         * 没离开就是没领成功（以前会静默往下走，然后在 BOSS 链白等 60 秒）。
+         */
+        if (!stopped) {
+            val still = matcher.findColor(
+                Z.PosData(
+                    type = Z.PosType.COLOR, color = PvzSupplyChain.SUPPLY_UI_COLOR, similarPercent = 85,
+                    limitArea = ZArea.fromPxRect(
+                        uiRoi[0], uiRoi[1], uiRoi[2] - uiRoi[0], uiRoi[3] - uiRoi[1],
+                        PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
+                    )
+                ),
+                uiRoi
+            )
+            if (still.isNotEmpty()) {
+                log("   选补给：三次确定后仍在补给界面 —— 这次没领到，继续往下（不影响主循环）")
+            } else {
+                log("   选补给：已离开补给界面")
+            }
+        }
         return Outcome()
     }
 
@@ -4034,7 +4067,7 @@ if (depth > MAX_COND_DEPTH) {
              * 不能按"绿色"这个印象比。
              */
             Z.ActionType.PVZ_ENTER_CHECK -> PvzCoords.ENTER_ROI to Z.PosData(
-                type = Z.PosType.COLOR, color = "#9EDF12", similarPercent = 85,
+                type = Z.PosType.COLOR, color = "#9AD216", similarPercent = 85,
                 limitArea = ZArea.fromPxRect(
                     PvzCoords.ENTER_ROI[0], PvzCoords.ENTER_ROI[1],
                     PvzCoords.ENTER_ROI[2] - PvzCoords.ENTER_ROI[0],
