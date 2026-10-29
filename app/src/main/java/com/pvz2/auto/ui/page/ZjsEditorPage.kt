@@ -2498,8 +2498,32 @@ class ZjsEditorPage(
                 llFields.visibility = if (expanded) View.VISIBLE else View.GONE
 
                 if (expanded) {
-                    ZActionDescriber.describe(action).forEach { row ->
-                        llFields.addView(makeRow(row, index))
+                    /*
+                     * 字段分组（基础 / 时机 / 识别 / 高级）。
+                     *
+                     * 一个动作展开后原本十几行连着铺，找「条件」得滚很久；
+                     * 分组后「基础」默认展开，其余按需点开 —— 展开状态按
+                     * 「动作类型 + 组名」记忆，同一类动作反复改时不用每次都点。
+                     */
+                    val rowsAll = ZActionDescriber.describe(action)
+                    val order = listOf("基础", "时机", "识别", "高级")
+                    val grouped = LinkedHashMap<String, MutableList<ZActionDescriber.Row>>()
+                    rowsAll.forEach { r ->
+                        grouped.getOrPut(groupOf(r)) { mutableListOf() }.add(r)
+                    }
+                    order.forEach { name ->
+                        val list = grouped[name] ?: return@forEach
+                        if (list.isEmpty()) return@forEach
+                        val key = "${action.type.wire}#$name"
+                        val open = groupOpen.getOrPut(key) { name == "基础" }
+                        val filled = list.count { it.value.isNotBlank() && it.value != "-" && it.value != "不设置" }
+                        llFields.addView(
+                            makeGroupHeader(name, list.size, filled, open) {
+                                groupOpen[key] = !open
+                                notifyItemChanged(index)
+                            }
+                        )
+                        if (open) list.forEach { row -> llFields.addView(makeRow(row, index)) }
                     }
                 }
 
@@ -2538,7 +2562,42 @@ class ZjsEditorPage(
             /**
              * 动作卡片里的一行。渲染交给 [buildRowView]，这里只决定"点了做什么"。
              */
-            private fun makeRow(row: ZActionDescriber.Row, actionIndex: Int): View =
+            /** 每类动作每个分组的展开状态（key = 类型#组名）。 */
+    private val groupOpen = HashMap<String, Boolean>()
+
+    /** 字段归到哪个分组。按 field 前缀判，找不到就归「基础」。 */
+    private fun groupOf(row: ZActionDescriber.Row): String {
+        val f = row.field
+        return when {
+            f.startsWith("cond.") || f.startsWith("cb.") ||
+                f == "jumpId" || f == "desc" || f == "controlRunType" -> "高级"
+            f.startsWith("pos.") || f.startsWith("tmpl.") || f == "posData" -> "识别"
+            f.startsWith("delay") || f.startsWith("duration") || f.startsWith("repeat") ||
+                f == "pvzPostMs" || f == "pvzWaitMs" || f == "pvzSwipeMs" ||
+                f == "timeoutMs" || f == "checkBeforeDelay" -> "时机"
+            else -> "基础"
+        }
+    }
+
+    /** 分组标题行：点一下折叠/展开。 */
+    private fun makeGroupHeader(
+        name: String,
+        total: Int,
+        filled: Int,
+        open: Boolean,
+        onToggle: () -> Unit
+    ): View = View.inflate(host, android.R.layout.simple_list_item_1, null).apply {
+        findViewById<TextView>(android.R.id.text1).apply {
+            text = (if (open) "▾ " else "▸ ") + name + "  ($filled/$total)"
+            textSize = 12f
+            setTextColor(0xFF666666.toInt())
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            setBackgroundColor(0x11808080)
+        }
+        setOnClickListener { onToggle() }
+    }
+
+    private fun makeRow(row: ZActionDescriber.Row, actionIndex: Int): View =
                 buildRowView(
                     row = row,
                     imageData = imageDataFor(row.field, actionIndex),
