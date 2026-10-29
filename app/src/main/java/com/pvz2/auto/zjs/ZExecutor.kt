@@ -3718,10 +3718,19 @@ if (depth > MAX_COND_DEPTH) {
         val catRect = intArrayOf(area[0], area[1], area[0] + area[2], area[1] + area[3])
         fun tapPt(pt: IntArray) { inject.tap(pt[0], pt[1], 0) }
         fun sleep(ms: String) { ms.toIntOrNull()?.let { if (it > 0) waitBusy(it.toLong()) } }
+        /*
+         * 分类标签：区域用 MAA 的 [194,237,909,80]（= x,y,宽,高），相似度用 80。
+         *
+         * 两处都是真机实测出来的：
+         *  · 区域必须按 x,y,宽,高 解释。按"左上右下"算会得到 h = 80-237 = -157 的
+         *    倒矩形，OCR 一个字都认不出（这正是以前"直接点第一张卡片"的原因）。
+         *  · 相似度 80 才认得出。同一块区域、同样文字，90% 一条都不中，
+         *    80% 立刻 100% 命中（自检_21 点「蓝色植物」就是 80% 认出来的）。
+         */
         fun textPos(name: String) = Z.PosData(
-            type = Z.PosType.TEXT, text = name, similarPercent = 90,
+            type = Z.PosType.TEXT, text = name, similarPercent = 80,
             limitArea = ZArea.fromPxRect(
-                area[0], area[1], area[2] - area[0], area[3] - area[1],
+                area[0], area[1], area[2], area[3],
                 PvzCoords.BASE_WIDTH, PvzCoords.BASE_HEIGHT
             )
         )
